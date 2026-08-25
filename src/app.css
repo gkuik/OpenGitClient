@@ -1,0 +1,56 @@
+/* Thème sombre sobre + variables partagées par les composants. */
+:root {
+  --bg: #1a1b1e;
+  --bg-raised: #26272b;
+  --border: #34353a;
+  --text: #e4e4e7;
+  --text-dim: #9ca3af;
+  --text-faint: #6b7280;
+  --accent: #4f46e5;
+  --accent-bg: rgba(79, 70, 229, 0.22);
+  --accent-soft: #a5b4fc;
+  --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
+  /* Les deux colonnes latérales partagent la même largeur ; un seul point de réglage. */
+  --sidebar-w: 300px;
+
+  color-scheme: dark;
+  font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+  background: var(--bg);
+  color: var(--text);
+  /*
+    Application desktop : le document lui-même ne doit jamais défiler, seuls les
+    panneaux internes le font. `overflow: hidden` empêche tout débordement de
+    pousser la page, et `overscroll-behavior: none` supprime le rebond élastique
+    de WKWebView, qui donne l'impression de faire glisser toute l'application.
+  */
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+#app {
+  height: 100%;
+  overflow: hidden;
+}
+
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: #3a3b40;
+  border-radius: 6px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
