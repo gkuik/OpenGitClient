@@ -61,6 +61,12 @@ export const api = {
   /** Bascule de branche ; renvoie les infos du dépôt à jour. */
   checkoutBranch: (name: string) => call<RepoInfo>("checkout_branch", { name }),
   listStashes: () => call<StashEntry[]>("list_stashes"),
+  /** Applique un stash sans le retirer de la pile. */
+  stashApply: (index: number) => call<void>("stash_apply", { index }),
+  /** Applique un stash puis le retire (git stash pop). */
+  stashPop: (index: number) => call<void>("stash_pop", { index }),
+  /** Retire un stash sans l'appliquer (irréversible). */
+  stashDrop: (index: number) => call<void>("stash_drop", { index }),
   /** Page d'historique du graph. Recharger depuis `skip = 0` après toute mutation. */
   commitGraph: (skip: number, limit: number) =>
     call<CommitGraphPage>("commit_graph", { skip, limit }),

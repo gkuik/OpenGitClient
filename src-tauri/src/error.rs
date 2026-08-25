@@ -28,6 +28,9 @@ pub enum AppError {
     #[error("Commit introuvable")]
     CommitNotFound,
 
+    #[error("Application du stash impossible : conflit avec les modifications locales")]
+    StashConflict,
+
     #[error("{0}")]
     Git(String),
 
@@ -46,6 +49,7 @@ impl AppError {
             AppError::MissingSignature => "MissingSignature",
             AppError::CheckoutConflict => "CheckoutConflict",
             AppError::CommitNotFound => "CommitNotFound",
+            AppError::StashConflict => "StashConflict",
             AppError::Git(_) => "Git",
             AppError::Io(_) => "Io",
         }

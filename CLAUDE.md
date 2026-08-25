@@ -111,7 +111,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: push/pull/fetch, remote auth, merge, hunk-level staging, conflict resolution, tags, rebase, blame. Stashes are **listed only** — creating/applying/dropping them is not implemented.
+Out of scope for now, but the architecture must not block them: push/pull/fetch, remote auth, merge, hunk-level staging, conflict resolution, tags, rebase, blame. Stashes can be **applied / popped / dropped** (right-click or the ⋮ button in the STASHES section) but **not created** — `git stash save` has no UI yet. Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
 The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no remotes/tags in the ref badges (the backend only reads local branches + HEAD). There is no "uncommitted changes" node at the top of the history.
 

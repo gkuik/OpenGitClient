@@ -96,6 +96,21 @@ pub fn list_stashes(state: State<'_, Mutex<AppState>>) -> Result<Vec<StashEntry>
     lock(&state)?.backend()?.stashes()
 }
 
+#[tauri::command]
+pub fn stash_apply(index: usize, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.backend()?.stash_apply(index)
+}
+
+#[tauri::command]
+pub fn stash_pop(index: usize, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.backend()?.stash_pop(index)
+}
+
+#[tauri::command]
+pub fn stash_drop(index: usize, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.backend()?.stash_drop(index)
+}
+
 /// Page d'historique pour le graph. `skip`/`limit` pagine le parcours ; le
 /// frontend recharge depuis `skip = 0` après toute mutation du dépôt.
 #[tauri::command]

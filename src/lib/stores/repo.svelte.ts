@@ -312,6 +312,23 @@ class RepoStore {
   }
 
   /**
+   * Applique un stash (menu contextuel de la section STASHES). `pop` le retire
+   * ensuite de la pile. Le working directory change → on rafraîchit le statut ;
+   * les index de stash bougent → on recharge la liste. Un conflit remonte dans
+   * le bandeau et laisse le stash en place.
+   */
+  async applyStash(index: number, pop: boolean) {
+    await this.run(() => (pop ? api.stashPop(index) : api.stashApply(index)));
+    await this.loadStashes();
+  }
+
+  /** Retire un stash sans l'appliquer (action irréversible du menu contextuel). */
+  async dropStash(index: number) {
+    await this.run(() => api.stashDrop(index));
+    await this.loadStashes();
+  }
+
+  /**
    * Bascule sur une branche locale (double-clic dans la sidebar de gauche).
    * Le backend refuse le checkout si des modifications locales seraient
    * écrasées : l'erreur remonte alors telle quelle dans le bandeau.

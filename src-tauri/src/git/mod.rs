@@ -63,6 +63,17 @@ pub trait GitBackend: Send {
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;
 
+    /// Applique un stash sur le working directory **sans** le retirer de la pile.
+    /// Échoue proprement si l'application entre en conflit.
+    fn stash_apply(&self, index: usize) -> Result<(), AppError>;
+
+    /// Applique un stash puis le retire de la pile (équivalent `git stash pop`).
+    /// En cas de conflit, le stash est conservé.
+    fn stash_pop(&self, index: usize) -> Result<(), AppError>;
+
+    /// Retire un stash de la pile sans l'appliquer (irréversible).
+    fn stash_drop(&self, index: usize) -> Result<(), AppError>;
+
     /// Page d'historique pour le graph : parcours de toutes les têtes locales et
     /// de HEAD, trié topologiquement puis par date décroissante.
     ///

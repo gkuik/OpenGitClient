@@ -373,6 +373,23 @@ impl GitBackend for Libgit2Backend {
         Ok(out)
     }
 
+    fn stash_apply(&self, index: usize) -> Result<(), AppError> {
+        // Les opérations de stash exigent un Repository mutable ; on le possède.
+        let mut repo = self.repo()?;
+        repo.stash_apply(index, None).map_err(map_stash_error)
+    }
+
+    fn stash_pop(&self, index: usize) -> Result<(), AppError> {
+        let mut repo = self.repo()?;
+        repo.stash_pop(index, None).map_err(map_stash_error)
+    }
+
+    fn stash_drop(&self, index: usize) -> Result<(), AppError> {
+        let mut repo = self.repo()?;
+        repo.stash_drop(index)?;
+        Ok(())
+    }
+
     fn commit_graph(&self, skip: usize, limit: usize) -> Result<CommitGraphPage, AppError> {
         let repo = self.repo()?;
         let refs = collect_refs(&repo)?;
@@ -563,6 +580,20 @@ fn diff_deltas_to_entries(diff: &git2::Diff) -> Vec<FileEntry> {
             }
         })
         .collect()
+}
+
+/// Traduit une erreur d'application de stash. Un conflit (le stash toucherait des
+/// fichiers déjà modifiés localement) devient une erreur explicite plutôt qu'un
+/// message libgit2 brut ; le reste passe tel quel.
+fn map_stash_error(e: git2::Error) -> AppError {
+    use git2::{ErrorClass, ErrorCode};
+    let conflict = matches!(e.code(), ErrorCode::Conflict)
+        || matches!(e.class(), ErrorClass::Merge | ErrorClass::Checkout);
+    if conflict {
+        AppError::StashConflict
+    } else {
+        AppError::from(e)
+    }
 }
 
 /// Extrait la branche d'origine d'un message de stash.
@@ -873,6 +904,82 @@ mod tests {
         assert_eq!(stashes[0].index, 0);
         assert_eq!(stashes[0].branch.as_deref(), Some(current.as_str()));
         assert!(!stashes[0].oid.is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Prépare un dépôt avec un commit initial et `count` stashes empilés. Chaque
+    /// stash range une modification distincte de `a.txt` ; l'index 0 est le plus
+    /// récent (dernier empilé).
+    fn repo_with_stashes(count: usize) -> (PathBuf, Libgit2Backend) {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "base\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        let mut repo = Repository::open(&dir).unwrap();
+        let sig = repo.signature().unwrap();
+        for i in 0..count {
+            fs::write(dir.join("a.txt"), format!("modif {i}\n")).unwrap();
+            repo.stash_save(&sig, &format!("travail {i}"), None).unwrap();
+        }
+        (dir, git)
+    }
+
+    #[test]
+    fn stash_apply_keeps_the_stash() {
+        let (dir, git) = repo_with_stashes(1);
+
+        // Working directory propre après stash_save.
+        assert!(git.status().unwrap().unstaged.is_empty());
+
+        git.stash_apply(0).unwrap();
+        // Le changement est de retour dans le working directory…
+        assert_eq!(git.status().unwrap().unstaged.len(), 1);
+        // …et le stash est toujours là (apply ≠ pop).
+        assert_eq!(git.stashes().unwrap().len(), 1);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_pop_applies_and_removes() {
+        let (dir, git) = repo_with_stashes(1);
+
+        git.stash_pop(0).unwrap();
+        assert_eq!(git.status().unwrap().unstaged.len(), 1);
+        // pop retire le stash de la pile.
+        assert!(git.stashes().unwrap().is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_drop_removes_without_applying() {
+        let (dir, git) = repo_with_stashes(2);
+        assert_eq!(git.stashes().unwrap().len(), 2);
+
+        // On retire le plus récent (index 0) : l'autre subsiste et le working
+        // directory reste propre (drop n'applique rien).
+        git.stash_drop(0).unwrap();
+        let remaining = git.stashes().unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].message, "On master: travail 0");
+        assert!(git.status().unwrap().unstaged.is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_apply_conflict_is_reported() {
+        let (dir, git) = repo_with_stashes(1);
+
+        // Rend le working directory conflictuel avec le stash sur le même fichier.
+        fs::write(dir.join("a.txt"), "contenu incompatible\n").unwrap();
+
+        assert!(matches!(git.stash_apply(0), Err(AppError::StashConflict)));
+        // Le stash n'est pas perdu.
+        assert_eq!(git.stashes().unwrap().len(), 1);
 
         fs::remove_dir_all(&dir).ok();
     }
