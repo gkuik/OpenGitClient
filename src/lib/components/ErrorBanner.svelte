@@ -1,12 +1,22 @@
 <script lang="ts">
-  import { repo } from "../stores/repo.svelte";
+  import { repo, tabs } from "../stores/repo.svelte";
+
+  // Deux sources : l'échec d'ouverture d'un dépôt (qui n'appartient à aucun
+  // onglet, et reste le seul affichable quand il n'y en a aucun) et l'erreur de
+  // l'onglet actif. La première est prioritaire car elle vient d'être provoquée.
+  const error = $derived(tabs.openError ?? repo.error);
+
+  function dismiss() {
+    if (tabs.openError) tabs.openError = null;
+    else repo.clearError();
+  }
 </script>
 
-{#if repo.error}
+{#if error}
   <div class="error" role="alert">
-    <span class="kind">{repo.error.kind}</span>
-    <span class="msg">{repo.error.message}</span>
-    <button class="close" onclick={() => repo.clearError()} aria-label="Fermer">×</button>
+    <span class="kind">{error.kind}</span>
+    <span class="msg">{error.message}</span>
+    <button class="close" onclick={dismiss} aria-label="Fermer">×</button>
   </div>
 {/if}
 

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { tick } from "svelte";
   import { repo } from "../stores/repo.svelte";
   import { LANE_COLORS, layoutGraph } from "../graph/layout";
 
@@ -20,6 +21,10 @@
   let canvas = $state<HTMLCanvasElement | null>(null);
   let scrollTop = $state(0);
   let viewportH = $state(0);
+  /** Onglet dont l'historique est actuellement affiché (détection de bascule). */
+  let shownRepoId: string | null = null;
+  /** Vrai le temps de rétablir le défilement après un changement d'onglet. */
+  let restoring = false;
 
   const layout = $derived(layoutGraph(repo.graph));
   const gutterW = $derived(
@@ -152,7 +157,12 @@
 
   function onScroll() {
     if (!scroller) return;
+    // Pendant une bascule d'onglet, le navigateur émet un scroll parasite en
+    // ramenant la position dans les bornes du nouvel historique (souvent plus
+    // court). L'enregistrer écraserait la position mémorisée de cet onglet.
+    if (restoring) return;
     scrollTop = scroller.scrollTop;
+    repo.graphScrollTop = scrollTop;
     maybeLoadMore();
   }
 
@@ -162,6 +172,30 @@
       repo.selectCommit(oid);
     }
   }
+
+  // Tous les onglets partagent ce composant : en changer remplace l'historique
+  // affiché, il faut donc rétablir le défilement mémorisé pour ce dépôt.
+  $effect(() => {
+    const id = repo.repoId;
+    if (id === shownRepoId) return;
+    shownRepoId = id;
+
+    const target = repo.graphScrollTop;
+    restoring = true;
+    // Après le rendu des nouvelles lignes : la hauteur du conteneur doit être à
+    // jour, sinon la position demandée serait tronquée.
+    //
+    // La reprise se fait dès l'écriture, sans passer par `requestAnimationFrame` :
+    // celui-ci est suspendu quand la fenêtre ne peint pas (app en arrière-plan),
+    // ce qui laisserait `restoring` bloqué et ferait perdre tout défilement
+    // ultérieur. Les scrolls parasites du clamp sont distribués après cette
+    // microtâche : ils relisent alors la position déjà rétablie, donc sans dégât.
+    tick().then(() => {
+      if (scroller) scroller.scrollTop = target;
+      scrollTop = target;
+      restoring = false;
+    });
+  });
 
   // Le canvas suit la taille du conteneur (colonne redimensionnée, fenêtre…).
   $effect(() => {
