@@ -24,6 +24,10 @@ export interface RepoStatus {
 }
 
 export interface RepoInfo {
+  /**
+   * Chemin canonique du dépôt, qui sert aussi d'**identifiant d'onglet** :
+   * c'est la valeur à repasser en `repoId` dans tous les autres appels.
+   */
   path: string;
   name: string;
   branch: string | null;
@@ -59,6 +63,13 @@ export interface CommitResult {
 export interface RecentRepo {
   path: string;
   name: string;
+}
+
+/** Session à restaurer au lancement : onglets ouverts et onglet actif. */
+export interface SessionInfo {
+  /** Chemins canoniques des dépôts à rouvrir, dans l'ordre des onglets. */
+  tabs: string[];
+  active: string | null;
 }
 
 /** Branche locale. `name` est le nom complet ("fix/EDIAG6-811"). */

@@ -1,7 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
-  import { repo } from "./lib/stores/repo.svelte";
-  import RepoSelector from "./lib/components/RepoSelector.svelte";
+  import { repo, tabs } from "./lib/stores/repo.svelte";
+  import TabBar from "./lib/components/TabBar.svelte";
+  import WelcomeScreen from "./lib/components/WelcomeScreen.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
@@ -10,35 +11,38 @@
   import ErrorBanner from "./lib/components/ErrorBanner.svelte";
 
   onMount(() => {
-    repo.init();
+    // Restaure les onglets de la session précédente.
+    tabs.init();
   });
 </script>
 
 <div class="app">
-  <header class="topbar">
-    <div class="brand">GitLite</div>
-    <RepoSelector />
-  </header>
+  <!-- La barre d'onglets tient lieu de topbar : pas de logo ni de bouton d'ouverture. -->
+  <TabBar />
 
-  <div class="body">
-    <BranchSidebar />
-    <main class="main">
-      <CenterPanel />
-    </main>
-    <!--
-      La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
-      le détail du commit quand un commit est sélectionné, sinon les changements
-      en cours et la boîte de commit.
-    -->
-    <aside class="sidebar">
-      {#if repo.selectedCommitOid}
-        <CommitDetailsPanel />
-      {:else}
-        <StatusPanel />
-        <CommitBox />
-      {/if}
-    </aside>
-  </div>
+  {#if !tabs.hasTabs}
+    <WelcomeScreen />
+  {:else}
+    <div class="body">
+      <BranchSidebar />
+      <main class="main">
+        <CenterPanel />
+      </main>
+      <!--
+        La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
+        le détail du commit quand un commit est sélectionné, sinon les changements
+        en cours et la boîte de commit.
+      -->
+      <aside class="sidebar">
+        {#if repo.selectedCommitOid}
+          <CommitDetailsPanel />
+        {:else}
+          <StatusPanel />
+          <CommitBox />
+        {/if}
+      </aside>
+    </div>
+  {/if}
 
   <!-- Bandeau d'erreur en overlay (ne rend rien s'il n'y a pas d'erreur). -->
   <div class="error-overlay">
@@ -52,20 +56,6 @@
     grid-template-rows: auto 1fr;
     height: 100vh;
     overflow: hidden;
-  }
-  .topbar {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    padding: 0.5rem 0.9rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-  }
-  .brand {
-    font-weight: 700;
-    letter-spacing: 0.02em;
-    color: var(--accent-soft);
-    white-space: nowrap;
   }
   .body {
     display: grid;

@@ -5,8 +5,10 @@ Objectif : faible empreinte mémoire et binaire réduit.
 
 Couvert à ce jour :
 **ouvrir un dépôt → voir le statut → voir les diffs → stage/unstage → commit**,
-plus les branches locales, les stashes (en lecture) et le **graph de commits**
-avec inspection d'un commit.
+plus les branches locales, les stashes (appliquer / pop / supprimer) et le
+**graph de commits** avec inspection d'un commit. Plusieurs dépôts peuvent être
+ouverts en parallèle, un **onglet** chacun ; la session est restaurée au
+lancement.
 
 ## Architecture
 
@@ -14,15 +16,15 @@ avec inspection d'un commit.
 src/                     Frontend Svelte 5 (Vite, SPA, runes)
   lib/api.ts             Point d'accès unique au backend (invoke typé)
   lib/types.ts           Types miroir des DTO Rust
-  lib/stores/            État runes partagé (repo.svelte.ts)
+  lib/stores/            RepoStore (un par onglet) + TabsStore (repo.svelte.ts)
   lib/graph/layout.ts    Assignation des lanes du graph (fonction pure, testée)
-  lib/components/        RepoSelector, StatusPanel, FileItem, CenterPanel,
-                         GraphView, CommitDetailsPanel, DiffViewer, CommitBox…
+  lib/components/        TabBar, WelcomeScreen, StatusPanel, FileItem,
+                         CenterPanel, GraphView, CommitDetailsPanel, DiffViewer…
 src-tauri/               Backend Rust
   src/git/mod.rs         Trait GitBackend (couche d'accès Git abstraite)
   src/git/libgit2.rs     Implémentation git2-rs (libgit2)
   src/commands.rs        Commandes Tauri (délèguent au backend)
-  src/state.rs           État partagé + persistance des récents
+  src/state.rs           Dépôts ouverts (un par onglet) + récents + session
   src/dto.rs             Structs sérialisées vers le front
   src/error.rs           AppError sérialisable (zéro panic remonté)
 ```
@@ -65,8 +67,16 @@ npm run tauri build
 
 ## Recette manuelle
 
-1. **Ouvrir** un dépôt Git → nom + branche affichés. Un dossier non-Git → bandeau
-   d'erreur « Ce dossier n'est pas un dépôt Git valide ». Le dépôt réapparaît dans « Récents ».
+1. **Ouvrir** un dépôt via le « + » de la barre d'onglets → un onglet apparaît
+   à son nom (la branche courante est dans le panneau de statut, pas dans
+   l'onglet). Un dossier non-Git → bandeau d'erreur « Ce dossier n'est pas un
+   dépôt Git valide », sans créer d'onglet. Ouvrir plusieurs dépôts et basculer
+   entre eux : chacun garde son graph, sa sélection et son défilement. **Glisser**
+   un onglet le réordonne — il suit le curseur sans sortir de la barre, les
+   autres s'écartent. Fermer tous les onglets ramène l'écran d'accueil et ses
+   « Récents » ; au prochain lancement, les onglets sont rouverts dans leur ordre.
+   Sur macOS, la barre d'onglets fait office de barre de titre : son fond déplace
+   la fenêtre, un double-clic l'agrandit.
 2. Modifier / créer / supprimer des fichiers → le statut les classe en indexés /
    modifiés / non suivis avec les bons badges (M / A / D / R / ?).
 3. **Cliquer** un fichier → diff unifié coloré (+ vert / − rouge).

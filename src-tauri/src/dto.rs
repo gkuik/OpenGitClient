@@ -38,6 +38,8 @@ pub struct RepoStatus {
 #[derive(Debug, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct RepoInfo {
+    /// Chemin canonique du dépôt. Sert aussi d'**identifiant d'onglet** : c'est
+    /// la valeur à repasser en `repoId` dans toutes les autres commandes.
     pub path: String,
     pub name: String,
     pub branch: Option<String>,
@@ -86,6 +88,17 @@ pub struct CommitResult {
 pub struct RecentRepo {
     pub path: String,
     pub name: String,
+}
+
+/// Session à restaurer au lancement : onglets ouverts et onglet actif.
+///
+/// Les entrées sont des chemins canoniques, qui servent aussi d'identifiants
+/// d'onglet. Le frontend les rouvre un par un et ignore ceux qui échouent.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SessionInfo {
+    pub tabs: Vec<String>,
+    pub active: Option<String>,
 }
 
 /// Branche locale. `name` est le nom complet ("fix/EDIAG6-811"), qui sert aussi

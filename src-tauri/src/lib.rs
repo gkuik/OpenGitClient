@@ -25,6 +25,11 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             commands::open_repository,
+            commands::close_repository,
+            commands::set_active_repo,
+            commands::set_tab_order,
+            commands::get_session,
+            commands::get_repo_info,
             commands::get_status,
             commands::get_file_diff,
             commands::stage_file,

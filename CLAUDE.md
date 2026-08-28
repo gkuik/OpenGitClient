@@ -7,9 +7,30 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
 Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit (+ recent repos, commit amend, local branch list with double-click checkout, commit graph with commit inspection).
 
-Three-column layout: local branches (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
+The window is a tab bar (open repositories) over a three-column layout: local branches (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
-**There are no tabs.** The centre shows the graph until a file is opened; the diff then replaces it, and the diff's × brings the graph back. The right column is always the file selector for whatever is being looked at: the commit's file list when a commit is selected, otherwise the working-directory changes + commit box. Selecting a commit therefore hides the commit box — deliberate, to give the graph and diff the full width.
+**The tab bar *is* the topbar** — no logo, no "open repository" button, just the tabs and a `+` that sits in the same flow, right after the last tab. Tabs show the repository name only (no branch — the current branch is already in the status panel header). With no tab open, `WelcomeScreen` takes the whole body and is the only place the recent-repository list is reachable.
+
+On macOS the window uses `titleBarStyle: "Overlay"` + `hiddenTitle` (`tauri.conf.json`), so the tab bar sits **beside the traffic-light buttons**. `TabBar` reserves 92px on the left for them (they span x=20→80), but only when actually running in the native macOS app (`__TAURI_INTERNALS__` + a Macintosh UA) — in a browser those buttons don't exist and the offset would just be a gap.
+
+**Two coupled values, keep them in sync**: `.tabbar.mac { min-height: 49px }` and `trafficLightPosition: { x: 20, y: 26 }`. Neither side is the naive formula, and both were measured on macOS 26 rather than guessed:
+
+- a traffic light is **14×14**, not 12, and `y` is *not* the button's top. tao sets the title-bar container to `14 + y` tall and leaves the button 9px above its **bottom**, so the button's centre lands at **`y − 2`** below the top of the window — y=26 → centre at 24px. (With the old y=18 the container kept its default 32px height, i.e. the buttons never moved at all and sat at 16px.)
+- `box-sizing: border-box` puts the 1px bottom border inside the height, so the bar's visual centre is `(H − 1) / 2` — 49px → 24px. The symmetric vertical padding cancels out and doesn't enter the calculation.
+
+Changing one alone visibly off-centres the buttons — that was the bug in the first two versions.
+
+**Tabs are reordered by dragging them**, with pointer events rather than HTML5 drag & drop — no browser-imposed ghost image, no `DataTransfer` to feed for a purely internal move, and pointer capture guarantees the release event even outside the window. The grabbed tab follows the cursor (clamped to the strip's box, so it never leaves the bar) and the tabs it steps over slide aside to open its landing slot.
+
+**Everything is `transform`; the DOM order is untouched until release.** That is what makes the geometry measured on `pointerdown` (each tab's rect, the real gap between two of them, the strip's bounds) valid for the whole drag. Reordering live would move the captured node on every hover and force a re-measure after each swap, with the dragged tab jumping a full tab-width for one frame. The neighbours' shift is exactly `width + gap` of the grabbed tab, so they are already at their post-drop position — on release, `tabs.move()` and clearing the transforms land in the same update and nothing of theirs moves; only the grabbed tab snaps from the cursor into the gap. The transition on `transform` is scoped to `.tabs.reordering` for that reason: left on permanently, every neighbour would replay in reverse the move the new layout just applied.
+
+**The drop index compares the dragged tab's *leading* edge to the neighbours' midpoints** — its left edge when moving left, its right edge when moving right — never its centre. With variable-width tabs a centre comparison leaves slots unreachable: pushed fully against the left clamp, a wide tab's centre still sits right of a narrow first tab's midpoint, so it can never be dropped in front of it (that was a real bug). The midpoints compared are always those of the *original* layout, never the shifted positions — that is what keeps the decision monotonic, so it can't oscillate.
+
+Two details that go together: the drop index is an *insertion* index in the current list (the dragged tab still counted), which is why `move()` shifts it by one when moving rightwards; and a tab activates on `pointerdown`, not on click — the click lands after the reorder, on whichever tab is then under the cursor. `pointerdown` also calls `preventDefault()` (killing WebKit's text-selection and native drag), which costs the automatic focus, hence the explicit `focus()`. The bar as a whole is `user-select: none`, prefixed included.
+
+The bar carries `data-tauri-drag-region="deep"` so any of its background drags the window. **The `deep` value is load-bearing**: with the bare attribute Tauri only drags when the click target *is* the element carrying it, and the empty space right of the `+` belongs to `.tabs` (`flex: 1`), not to `.tabbar` — so grabbing it did nothing. Tabs and `+` keep their clicks for free: walking up from the target, Tauri stops at the first "clickable" element (`<button>`, or anything with `tabindex` / an interactive `role` — each tab has both) and cancels the drag. Double-clicking the background zooms the window, as on a real title bar. **This needs `core:window:allow-start-dragging` in `capabilities/default.json`** — it is *not* part of `core:default`, and without it the attribute is silently inert and the window simply can't be moved (`allow-internal-toggle-maximize`, for the double-click, *is* in `core:default`).
+
+**There are no *view* tabs** (that's separate from the repository tabs above). The centre shows the graph until a file is opened; the diff then replaces it, and the diff's × brings the graph back. The right column is always the file selector for whatever is being looked at: the commit's file list when a commit is selected, otherwise the working-directory changes + commit box. Selecting a commit therefore hides the commit box — deliberate, to give the graph and diff the full width.
 
 **Code comments, UI strings, and commit messages are in French.** Match that when editing.
 
@@ -59,8 +80,23 @@ All Git logic sits behind the `GitBackend` trait in `src-tauri/src/git/mod.rs`. 
 ### Frontend structure
 
 - `src/lib/api.ts` is the **only** place allowed to call `invoke`. Components never do Git work or call the backend directly.
-- `src/lib/stores/repo.svelte.ts` is a single shared runes-based store instance (`export const repo`). It owns repo/status/diff/selection/view state. Every mutating action funnels through the private `run()` helper, which refreshes status and captures errors.
+- `src/lib/stores/repo.svelte.ts` holds **one `RepoStore` instance per open repository** (status/diff/selection/view state), plus `TabsStore` (`export const tabs`) which owns the collection, the active tab, recents and session restore. Every mutating action funnels through the private `run()` helper, which refreshes status and captures errors.
 - Frontend is plain Vite + Svelte 5 (runes), **not** SvelteKit — no SSR, no routing.
+
+### Multiple repositories: one tab each
+
+`AppState` holds a `HashMap` of backends, **keyed by the repository's canonical path** — that key *is* the tab id, and it is what `RepoInfo.path` carries. Using the path rather than a generated id means opening an already-open repository can't create a duplicate tab, and the session survives restarts with no id mapping to maintain.
+
+**Every repository-scoped command takes a `repo_id`.** There is deliberately no "current repository" on the backend: two tabs can't fight over it, and a slow response can't be applied to the wrong tab. Adding a command means threading `repo_id` through the usual chain.
+
+Frontend counterpart, and the reason the twelve components that use `repo` were left untouched: `export const repo` is a **`Proxy` onto the active tab**, not a store of its own. Each property access reads `tabs.activeId` first, so switching tabs invalidates everything that reads `repo` for free. Two consequences:
+
+- methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
+- with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
+
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json`. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+
+Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
 ### Status model: 3 backend categories → 2 UI sections
 
