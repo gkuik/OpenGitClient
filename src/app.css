@@ -64,11 +64,17 @@
 
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   /*
-    Les deux colonnes latérales partagent la même largeur ; un seul point de
-    réglage. En rem, donc solidaire de la taille du texte : figée en pixels,
-    elle tronquerait les noms de branches dès qu'on grossit la police.
+    Largeur des deux colonnes latérales, réglable à la souris (voir
+    `SidebarResizer.svelte`). Une variable par côté : les deux se règlent
+    séparément, comme dans GitKraken.
+
+    En rem, donc solidaire de la taille du texte : figée en pixels, une colonne
+    tronquerait les noms de branches dès qu'on grossit la police. Ce qui est ici
+    est le défaut — `src/lib/layout.svelte.ts` réécrit ces deux propriétés en
+    style inline dès que la préférence est lue, et à chaque glissement.
   */
-  --sidebar-w: 18.9rem;
+  --sidebar-l-w: 18.9rem;
+  --sidebar-r-w: 18.9rem;
 
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -158,6 +164,20 @@ body {
 #app {
   height: 100%;
   overflow: hidden;
+}
+
+/*
+  Pendant le redimensionnement d'une colonne : le pointeur est capturé par la
+  poignée, mais il survole les panneaux — sans cette règle, le curseur
+  redeviendrait une flèche ou un I-beam dès qu'il quitte la bande de 9px, et un
+  glissement rapide sélectionnerait le texte au passage. C'est
+  `SidebarResizer.svelte` qui pose et retire la classe.
+*/
+body.resizing,
+body.resizing * {
+  cursor: col-resize !important;
+  user-select: none !important;
+  -webkit-user-select: none !important;
 }
 
 ::-webkit-scrollbar {

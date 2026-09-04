@@ -12,6 +12,7 @@
   import ErrorBanner from "./lib/components/ErrorBanner.svelte";
   import CredentialsDialog from "./lib/components/CredentialsDialog.svelte";
   import MergeBanner from "./lib/components/MergeBanner.svelte";
+  import SidebarResizer from "./lib/components/SidebarResizer.svelte";
 
   onMount(() => {
     // Restaure les onglets de la session précédente.
@@ -32,6 +33,10 @@
   {:else}
     <div class="body">
       <BranchSidebar />
+      <!-- Poignées posées sur les deux frontières : hors de la grille, elles ne
+           déplacent aucune colonne (voir SidebarResizer). -->
+      <SidebarResizer side="left" />
+      <SidebarResizer side="right" />
       <main class="main">
         <CenterPanel />
       </main>
@@ -72,9 +77,14 @@
   }
   .body {
     display: grid;
-    /* Branches à gauche · graph/diff au centre · statut + commit à droite. */
-    grid-template-columns: var(--sidebar-w) 1fr var(--sidebar-w);
+    /* Branches à gauche · graph/diff au centre · statut + commit à droite. Les
+       deux largeurs sont réglables séparément à la souris ; leur variable est
+       réécrite par `layout.svelte.ts`. */
+    grid-template-columns: var(--sidebar-l-w) 1fr var(--sidebar-r-w);
     min-height: 0;
+    /* Repère des poignées de redimensionnement, qui se placent en absolu sur
+       les frontières. */
+    position: relative;
     /* Sans ça, une colonne au contenu large pousse la grille et fait défiler
        toute l'application horizontalement. */
     overflow: hidden;

@@ -20,6 +20,7 @@ import type {
   RepoInfo,
   RepoStatus,
   SessionInfo,
+  SidebarWidths,
   StashEntry,
   ThemeMode,
 } from "./types";
@@ -152,6 +153,15 @@ export const api = {
    */
   getFontSize: () => call<number>("get_font_size"),
   setFontSize: (size: number) => call<void>("set_font_size", { size }),
+
+  /**
+   * Largeurs des colonnes latérales, en rem (préférence globale, persistée).
+   * Les deux voyagent ensemble : un aller-retour au démarrage, une écriture par
+   * glissement. Le backend ramène dans ses bornes ce qui en sort.
+   */
+  getSidebarWidths: () => call<SidebarWidths>("get_sidebar_widths"),
+  setSidebarWidths: (widths: SidebarWidths) =>
+    call<void>("set_sidebar_widths", { widths }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */
   getRemoteInfo: (repoId: string, remote?: string) =>
     call<RemoteInfo>("get_remote_info", { repoId, remote: remote ?? null }),

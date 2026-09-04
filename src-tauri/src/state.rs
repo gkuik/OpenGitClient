@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    Profile, PullMode, RecentRepo, SessionInfo, ThemeMode, FONT_SIZE_DEFAULT, FONT_SIZE_MAX,
-    FONT_SIZE_MIN,
+    Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths, ThemeMode, FONT_SIZE_DEFAULT,
+    FONT_SIZE_MAX, FONT_SIZE_MIN,
 };
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
@@ -219,6 +219,21 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Largeurs des colonnes latérales, en rem.
+    ///
+    /// Ramenées dans les bornes à la lecture comme à l'écriture, pour la même
+    /// raison que la taille du texte : le fichier peut avoir été édité à la
+    /// main, et une colonne démesurée rendrait le réglage lui-même inatteignable.
+    pub fn sidebar_widths(&self) -> SidebarWidths {
+        self.prefs.sidebars.clamped()
+    }
+
+    /// Change les largeurs et les persiste.
+    pub fn set_sidebar_widths(&mut self, widths: SidebarWidths) -> Result<(), AppError> {
+        self.prefs.sidebars = widths.clamped();
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -306,6 +321,8 @@ struct Prefs {
     theme: ThemeMode,
     /// Corps de texte, en points.
     font_size: u8,
+    /// Largeurs des deux colonnes latérales, en rem.
+    sidebars: SidebarWidths,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -317,6 +334,7 @@ impl Default for Prefs {
             pull_mode: PullMode::default(),
             theme: ThemeMode::default(),
             font_size: FONT_SIZE_DEFAULT,
+            sidebars: SidebarWidths::default(),
         }
     }
 }

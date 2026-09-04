@@ -346,6 +346,60 @@ pub const FONT_SIZE_DEFAULT: u8 = 13;
 pub const FONT_SIZE_MIN: u8 = 11;
 pub const FONT_SIZE_MAX: u8 = 18;
 
+/// Largeurs des deux colonnes latérales, en **rem**.
+///
+/// Le rem plutôt que le pixel, pour la même raison que `--sidebar-w` l'était
+/// déjà : toutes les longueurs de l'interface étant relatives à la racine, une
+/// largeur figée en pixels tronquerait les noms de branches dès qu'on grossit
+/// le texte. Le glissement, lui, se mesure en pixels — c'est le frontend qui
+/// divise par la taille de la racine avant d'envoyer.
+///
+/// Comme la taille du texte, la valeur voyage en nombre et se ramène dans ses
+/// bornes des deux côtés : `prefs.json` est éditable à la main, et une colonne
+/// de 400 rem masquerait l'application entière, réglage compris.
+pub const SIDEBAR_W_DEFAULT: f32 = 18.9;
+pub const SIDEBAR_W_MIN: f32 = 12.0;
+pub const SIDEBAR_W_MAX: f32 = 40.0;
+
+/// Les deux largeurs voyagent ensemble : elles se lisent et s'écrivent d'un
+/// bloc, et c'est ce qui garantit qu'un `prefs.json` ne peut pas en contenir
+/// une sans l'autre.
+#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct SidebarWidths {
+    pub left: f32,
+    pub right: f32,
+}
+
+impl Default for SidebarWidths {
+    fn default() -> Self {
+        Self {
+            left: SIDEBAR_W_DEFAULT,
+            right: SIDEBAR_W_DEFAULT,
+        }
+    }
+}
+
+impl SidebarWidths {
+    /// Ramène les deux largeurs dans les bornes. `is_finite` n'est pas une
+    /// précaution de style : `f32::clamp` laisse passer un NaN, qui donnerait
+    /// une `grid-template-columns` invalide — donc une colonne disparue.
+    pub fn clamped(self) -> Self {
+        Self {
+            left: clamp_sidebar(self.left),
+            right: clamp_sidebar(self.right),
+        }
+    }
+}
+
+fn clamp_sidebar(w: f32) -> f32 {
+    if w.is_finite() {
+        w.clamp(SIDEBAR_W_MIN, SIDEBAR_W_MAX)
+    } else {
+        SIDEBAR_W_DEFAULT
+    }
+}
+
 /// Résultat d'un pull : ce qui a été récupéré, puis ce qui en a été fait.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
