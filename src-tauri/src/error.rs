@@ -31,6 +31,9 @@ pub enum AppError {
     #[error("Application du stash impossible : conflit avec les modifications locales")]
     StashConflict,
 
+    #[error("Rien à remiser (aucune modification locale)")]
+    NothingToStash,
+
     #[error("Aucun dépôt distant configuré")]
     NoRemote,
 
@@ -77,6 +80,7 @@ impl AppError {
             AppError::CheckoutConflict => "CheckoutConflict",
             AppError::CommitNotFound => "CommitNotFound",
             AppError::StashConflict => "StashConflict",
+            AppError::NothingToStash => "NothingToStash",
             AppError::NoRemote => "NoRemote",
             AppError::RemoteAuth => "RemoteAuth",
             AppError::NoCredentials => "NoCredentials",

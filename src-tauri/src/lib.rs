@@ -71,6 +71,7 @@ pub fn run() {
             commands::set_identity,
             commands::clear_identity,
             commands::list_stashes,
+            commands::stash_save,
             commands::stash_apply,
             commands::stash_pop,
             commands::stash_drop,

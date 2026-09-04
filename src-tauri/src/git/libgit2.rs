@@ -9,7 +9,7 @@ use git2::{
     build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
     DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions,
     IndexAddOption, ObjectType, Oid, PushOptions, Reference, RemoteCallbacks, Repository,
-    RepositoryState, Sort, Status, StatusEntry, StatusOptions, Tree,
+    RepositoryState, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
 };
 
 use super::{GitBackend, WatchRoots};
@@ -470,7 +470,49 @@ impl GitBackend for Libgit2Backend {
             true
         })?;
 
+        // Le message ci-dessus vient du reflog, où libgit2 remplace les retours
+        // à la ligne par des espaces : une remise nommée puis décrite y arrive
+        // recollée en une seule ligne. Le commit de stash, lui, porte le message
+        // intact — on le relit donc ici, hors de la closure, qui emprunte le
+        // dépôt en mutable. Le reflog reste la source de la branche : le format
+        // « On <branche> : » y est garanti, y compris pour un stash créé
+        // ailleurs.
+        for entry in &mut out {
+            if let Some(message) = Oid::from_str(&entry.oid)
+                .and_then(|oid| repo.find_commit(oid))
+                .ok()
+                .and_then(|commit| commit.message().map(|m| m.trim_end().to_string()))
+            {
+                entry.message = message;
+            }
+        }
+
         Ok(out)
+    }
+
+    fn stash_save(&self, summary: &str, body: Option<&str>) -> Result<(), AppError> {
+        let mut repo = self.repo()?;
+        // Un stash est un commit : il est signé comme tel, donc par l'identité
+        // du dépôt — la même que celle choisie dans la boîte de commit.
+        let signature = repo.signature().map_err(|_| AppError::MissingSignature)?;
+
+        // Même construction que `commit` : résumé, ligne vide, description.
+        let message = match body {
+            Some(b) if !b.trim().is_empty() => format!("{}\n\n{}", summary.trim(), b.trim()),
+            _ => summary.trim().to_string(),
+        };
+
+        // INCLUDE_UNTRACKED remise aussi les fichiers non suivis : sans ça le
+        // working directory ne ressortirait pas propre, ce qui est précisément
+        // ce qu'on attend d'une remise. L'index n'est pas conservé (pas de
+        // KEEP_INDEX) : ce qui était indexé le redeviendra au dépilage.
+        match repo.stash_save(&signature, &message, Some(StashFlags::INCLUDE_UNTRACKED)) {
+            Ok(_) => Ok(()),
+            // libgit2 signale « rien à remiser » par un NotFound générique, que
+            // le bandeau d'erreur rendrait incompréhensible.
+            Err(e) if e.code() == ErrorCode::NotFound => Err(AppError::NothingToStash),
+            Err(e) => Err(e.into()),
+        }
     }
 
     fn stash_apply(&self, index: usize) -> Result<(), AppError> {
@@ -1813,6 +1855,78 @@ mod tests {
         assert_eq!(stashes[0].index, 0);
         assert_eq!(stashes[0].branch.as_deref(), Some(current.as_str()));
         assert!(!stashes[0].oid.is_empty());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_save_stashes_untracked_files_and_keeps_the_description() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("initial", None, false).unwrap();
+        let current = git.info().unwrap().branch.unwrap();
+
+        // Un fichier suivi modifié, un indexé, un jamais suivi : les trois
+        // doivent partir, sans quoi le working directory ne ressortirait pas
+        // propre.
+        fs::write(dir.join("a.txt"), "modifié\n").unwrap();
+        fs::write(dir.join("b.txt"), "indexé\n").unwrap();
+        git.stage("b.txt").unwrap();
+        fs::write(dir.join("neuf.txt"), "nouveau\n").unwrap();
+
+        git.stash_save("mon travail", Some("une description\nsur deux lignes"))
+            .unwrap();
+
+        let status = git.status().unwrap();
+        assert!(status.staged.is_empty());
+        assert!(status.unstaged.is_empty());
+        assert!(status.untracked.is_empty());
+        assert!(!dir.join("neuf.txt").exists());
+
+        let stashes = git.stashes().unwrap();
+        assert_eq!(stashes.len(), 1);
+        assert_eq!(stashes[0].branch.as_deref(), Some(current.as_str()));
+        // Message relu sur le commit : les retours à la ligne ont survécu, ce
+        // qui n'est pas le cas de la version reflog.
+        assert!(stashes[0].message.ends_with("mon travail\n\nune description\nsur deux lignes"));
+
+        // Et la remise se dépile bien, non suivis compris.
+        git.stash_pop(0).unwrap();
+        assert!(dir.join("neuf.txt").exists());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_save_without_description_keeps_only_the_summary() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        fs::write(dir.join("a.txt"), "modifié\n").unwrap();
+        git.stash_save("sans description", Some("   ")).unwrap();
+
+        let stashes = git.stashes().unwrap();
+        assert!(stashes[0].message.ends_with("sans description"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_save_on_a_clean_worktree_is_a_named_error() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // Rien à remiser : le NotFound générique de libgit2 devient un
+        // discriminant que le frontend peut lire.
+        assert!(matches!(
+            git.stash_save("rien", None),
+            Err(AppError::NothingToStash)
+        ));
 
         fs::remove_dir_all(&dir).ok();
     }

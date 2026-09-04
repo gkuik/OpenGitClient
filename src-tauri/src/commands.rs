@@ -580,6 +580,20 @@ pub fn list_stashes(
     lock(&state)?.backend(&repo_id)?.stashes()
 }
 
+/// Remise les modifications locales (fichiers non suivis compris) sous le
+/// message donné, construit comme celui d'un commit.
+#[tauri::command]
+pub fn stash_save(
+    repo_id: String,
+    summary: String,
+    body: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?
+        .backend(&repo_id)?
+        .stash_save(&summary, body.as_deref())
+}
+
 #[tauri::command]
 pub fn stash_apply(
     repo_id: String,
