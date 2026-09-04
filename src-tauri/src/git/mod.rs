@@ -58,6 +58,20 @@ pub trait GitBackend: Send {
     /// Retire tous les changements de l'index.
     fn unstage_all(&self) -> Result<(), AppError>;
 
+    /// Abandonne **tous** les changements en cours : les fichiers suivis
+    /// reviennent à HEAD (index et working directory compris) et les fichiers
+    /// non suivis sont supprimés du disque.
+    ///
+    /// Irréversible, et volontairement total : le compteur de l'en-tête compte
+    /// les non suivis, donc les laisser derrière ferait mentir le bouton qui
+    /// promet de tout annuler. Les fichiers **ignorés** ne sont pas touchés :
+    /// ce sont des produits de build, pas des changements.
+    ///
+    /// Une fusion en cours est refermée au passage, comme le fait
+    /// `git reset --hard` : sans cela, l'état de fusion survivrait à la
+    /// disparition des conflits et le commit suivant naîtrait avec deux parents.
+    fn discard_all(&self) -> Result<(), AppError>;
+
     /// Crée un commit à partir de l'index courant.
     /// Si `amend` est vrai, remplace le dernier commit (message + arbre) au lieu
     /// d'en créer un nouveau.

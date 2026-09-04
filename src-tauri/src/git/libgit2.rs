@@ -9,7 +9,7 @@ use git2::{
     build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
     DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions,
     IndexAddOption, ObjectType, Oid, PushOptions, Reference, RemoteCallbacks, Repository,
-    RepositoryState, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
+    RepositoryState, ResetType, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
 };
 
 use super::{GitBackend, WatchRoots};
@@ -240,6 +240,58 @@ impl GitBackend for Libgit2Backend {
                 index.write()?;
             }
         }
+        Ok(())
+    }
+
+    fn discard_all(&self) -> Result<(), AppError> {
+        let repo = self.repo()?;
+
+        // ── 1. Fichiers suivis : retour à HEAD, index et disque compris ──
+        match repo.head() {
+            Ok(head) => {
+                let obj = head.peel(ObjectType::Commit)?;
+                repo.reset(&obj, ResetType::Hard, None)?;
+            }
+            Err(_) => {
+                // HEAD non né : aucun arbre où revenir. Vider l'index suffit,
+                // tout ce qui reste sur le disque est alors non suivi et part
+                // à l'étape suivante.
+                let mut index = repo.index()?;
+                index.clear()?;
+                index.write()?;
+            }
+        }
+
+        // ── 2. Fichiers non suivis : suppression sur le disque ──
+        // Un dépôt nu n'a rien à nettoyer.
+        if let Some(workdir) = repo.workdir().map(Path::to_path_buf) {
+            // `recurse_untracked_dirs` donne les fichiers un à un plutôt qu'un
+            // dossier en bloc : un dossier non suivi peut contenir des fichiers
+            // ignorés, qui doivent survivre. Les chemins sont collectés avant
+            // toute suppression, le temps de rendre l'emprunt sur le dépôt.
+            let mut opts = StatusOptions::new();
+            opts.include_untracked(true)
+                .recurse_untracked_dirs(true)
+                .include_ignored(false);
+
+            let untracked: Vec<String> = repo
+                .statuses(Some(&mut opts))?
+                .iter()
+                .filter(|e| e.status().contains(Status::WT_NEW))
+                .filter_map(|e| e.path().map(str::to_string))
+                .collect();
+
+            for rel in untracked {
+                let abs = workdir.join(&rel);
+                remove_untracked(&abs)?;
+                prune_empty_dirs(&workdir, abs.parent());
+            }
+        }
+
+        // Comme `git reset --hard` : la fusion éventuelle est refermée, sans
+        // quoi le prochain commit se ferait deux parents sur des conflits qui
+        // n'existent plus.
+        repo.cleanup_state()?;
         Ok(())
     }
 
@@ -1333,6 +1385,44 @@ fn conflicted_paths(index: &git2::Index) -> Vec<String> {
     out.sort();
     out.dedup();
     out
+}
+
+/// Supprime un fichier non suivi. Un chemin déjà disparu n'est pas une erreur :
+/// le statut a été lu avant la boucle, et le disque a pu bouger entre-temps.
+///
+/// Les **dossiers sont laissés en place**. Avec la récursion activée, le seul
+/// que libgit2 rapporte encore en bloc est un dépôt imbriqué, dans lequel il
+/// refuse de descendre — et l'effacer d'un « annuler les changements » serait
+/// exactement ce que `git clean -fd` refuse de faire sans un second `-f`.
+fn remove_untracked(path: &Path) -> Result<(), AppError> {
+    // `symlink_metadata` ne suit pas les liens : un lien vers un dossier est un
+    // fichier à supprimer, pas un dossier à préserver.
+    let meta = match std::fs::symlink_metadata(path) {
+        Ok(m) => m,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e.into()),
+    };
+    if meta.is_dir() {
+        return Ok(());
+    }
+    std::fs::remove_file(path)?;
+    Ok(())
+}
+
+/// Remonte de `dir` vers `root` en retirant les dossiers vidés par la
+/// suppression, sans jamais toucher `root` lui-même.
+///
+/// Rien à filtrer : `remove_dir` échoue sur un dossier non vide, ce qui suffit
+/// à protéger celui où il ne restait que des fichiers ignorés, et arrête la
+/// remontée du même coup.
+fn prune_empty_dirs(root: &Path, dir: Option<&Path>) {
+    let mut current = dir;
+    while let Some(d) = current {
+        if d == root || !d.starts_with(root) || std::fs::remove_dir(d).is_err() {
+            return;
+        }
+        current = d.parent();
+    }
 }
 
 /// Traduit une erreur de checkout. libgit2 refuse d'écraser des modifications
@@ -2437,6 +2527,85 @@ mod tests {
         assert!(!info.merging);
         assert_eq!(info.head, before);
         // Le fichier revient à la version locale, marqueurs de conflit compris.
+        assert_eq!(
+            fs::read_to_string(local_dir.join("a.txt")).unwrap(),
+            "local\n"
+        );
+        assert!(local.status().unwrap().unstaged.is_empty());
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn discard_all_reverts_tracked_files_and_deletes_untracked_ones() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join(".gitignore"), "build/\n").unwrap();
+        fs::write(dir.join("a.txt"), "origine\n").unwrap();
+        git.stage_all().unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // Un suivi modifié, un neuf déjà indexé, un non suivi au fond d'un
+        // dossier, et un ignoré qui n'est pas un changement.
+        fs::write(dir.join("a.txt"), "modifié\n").unwrap();
+        fs::write(dir.join("b.txt"), "indexé\n").unwrap();
+        git.stage("b.txt").unwrap();
+        fs::create_dir_all(dir.join("neuf")).unwrap();
+        fs::write(dir.join("neuf/c.txt"), "neuf\n").unwrap();
+        fs::create_dir_all(dir.join("build")).unwrap();
+        fs::write(dir.join("build/out.bin"), "ignoré\n").unwrap();
+
+        git.discard_all().unwrap();
+
+        let st = git.status().unwrap();
+        assert!(st.staged.is_empty() && st.unstaged.is_empty() && st.untracked.is_empty());
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "origine\n");
+        assert!(!dir.join("b.txt").exists());
+        // Le dossier n'existait que pour son fichier : il part avec lui.
+        assert!(!dir.join("neuf").exists());
+        // L'ignoré survit, et son dossier avec — il n'est pas vide.
+        assert_eq!(
+            fs::read_to_string(dir.join("build/out.bin")).unwrap(),
+            "ignoré\n"
+        );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_all_on_an_unborn_head_empties_index_and_worktree() {
+        let (dir, git) = temp_repo();
+        // Aucun commit : il n'y a pas d'arbre où revenir, tout est à effacer.
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        fs::write(dir.join("b.txt"), "2\n").unwrap();
+
+        git.discard_all().unwrap();
+
+        let st = git.status().unwrap();
+        assert!(st.staged.is_empty() && st.unstaged.is_empty() && st.untracked.is_empty());
+        assert!(!dir.join("a.txt").exists());
+        assert!(!dir.join("b.txt").exists());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_all_closes_a_merge_in_progress() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "distant\n", "c2 distant");
+        commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
+        let before = local.info().unwrap().head;
+
+        local.pull(PullMode::FastForwardOrMerge).unwrap();
+        assert!(local.info().unwrap().merging);
+
+        // Abandonner les changements abandonne aussi la fusion : sans cela, le
+        // commit suivant naîtrait avec deux parents sur des conflits disparus.
+        local.discard_all().unwrap();
+        let info = local.info().unwrap();
+        assert!(!info.merging);
+        assert_eq!(info.head, before);
         assert_eq!(
             fs::read_to_string(local_dir.join("a.txt")).unwrap(),
             "local\n"

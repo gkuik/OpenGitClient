@@ -1036,6 +1036,27 @@ export class RepoStore {
   }
 
   /**
+   * Abandonne tous les changements en cours : les fichiers suivis reviennent à
+   * HEAD, les non suivis sont supprimés. **Irréversible** — la confirmation est
+   * demandée par l'en-tête de la colonne, seul endroit d'où l'action part.
+   *
+   * La garde est `changeCount`, exactement ce que le bouton affiche et grise :
+   * elle couvre les non suivis, que le backend efface aussi.
+   *
+   * L'historique ne bouge pas (aucun commit créé ni déplacé), donc ni le graph
+   * ni les branches ne sont rechargés — mais `repoInfo` l'est, parce qu'une
+   * fusion en cours vient d'être refermée et que `merging` décide du bandeau.
+   */
+  async discardAll() {
+    if (this.changeCount === 0) return;
+    await this.run(() =>
+      api.discardAll(this.repoId).then((info) => {
+        this.repoInfo = info;
+      }),
+    );
+  }
+
+  /**
    * Committe le brouillon (`commitSummary` / `commitBody`) et vide celui-ci en
    * cas de succès. Renvoie `false` sans rien tenter si le résumé est vide ou si
    * rien n'est indexé — les deux cas que le bouton grise déjà.

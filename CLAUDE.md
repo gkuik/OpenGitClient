@@ -104,6 +104,17 @@ The backend returns `staged` / `unstaged` / `untracked` separately. The sidebar 
 
 After any refresh, `resyncSelection()` re-locates the selected file, because staging moves it between sections.
 
+### Discarding everything is one reset plus a clean, and it is the only destructive action
+
+`discard_all` sits at the right column's header — `↺ Tout abandonner`, against the right edge of the `N changements sur <branche>` line. It brings tracked files back to HEAD (`ResetType::Hard`, index and worktree) **and deletes untracked files**. That second half is not an extra: the counter beside the button counts untracked files, so leaving them behind would make the button lie about what it just did — the same reasoning that puts `INCLUDE_UNTRACKED` on `stash_save`.
+
+- **Ignored files are never touched.** They are build output, not changes, and the status the button counts excludes them too. Which is why `recurse_untracked_dirs(true)` is on: it yields untracked files one by one, so an untracked directory holding an ignored file loses only the file. `prune_empty_dirs` then removes what the deletions emptied — `remove_dir` fails on a non-empty directory, so the one still holding an ignored file stops the walk by itself, with nothing to filter.
+- **Directories are skipped, deliberately.** With recursion on, the only thing libgit2 still reports whole is a nested repository, which it won't descend into. Erasing someone's nested repo is exactly what `git clean -fd` refuses without a second `-f`.
+- **A merge in progress is closed** (`cleanup_state`), as `git reset --hard` does. Without it the merge state would outlive the conflicts and the next commit would silently be born with two parents. That is also why the command returns `RepoInfo`, like `abort_merge`: `merging` drives `MergeBanner`, and the frontend must not have to guess.
+- **An unborn HEAD has no tree to return to**: the index is cleared instead, and everything on disk is then untracked, which the second half already handles.
+
+The confirmation is a panel anchored under the button, not a native dialog (no confirm capability is declared) and not the stash menu's two-click pattern — it names the two counts separately, because reverting a tracked file and deleting an untracked one do not cost the same. Nothing is reloaded beyond status and `repoInfo`: no commit was created or moved, so the graph and the branch lists are untouched.
+
 ### A stash is written like a commit, and read back from the commit
 
 The commit box's two tabs share their layout and nothing else. The author selector is **Commit-only**: a stash is signed by the repository's identity like any commit, but that is not something one picks when parking work in progress — showing the selector there would suggest a choice that the tab isn't making. The Remiser tab has its own draft (`RepoStore.stashSummary` / `stashBody`, beside the commit's): the commit summary is already edited by the graph's WIP row, where a stash name has no business, and one shared field would let each tab overwrite what the other was writing. Which tab is showing is local to `CommitBox`, unlike the drafts — it is a way of looking at the column, not repository state.
@@ -410,4 +421,4 @@ The graph is **read-only**: no checkout-from-commit, branch creation or reset fr
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-Destructive operations (discard changes) and AI features are intentionally absent — don't add UI for features that have no working backend.
+AI features are intentionally absent — don't add UI for features that have no working backend. The one destructive operation that exists is **Discard all changes**, described above; per-file discard does not, and neither does anything that rewrites history (reset, revert, branch deletion).

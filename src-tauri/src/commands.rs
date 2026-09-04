@@ -144,6 +144,22 @@ pub fn unstage_all(repo_id: String, state: State<'_, Mutex<AppState>>) -> Result
     lock(&state)?.backend(&repo_id)?.unstage_all()
 }
 
+/// Abandonne tous les changements en cours (irréversible). La confirmation est
+/// demandée côté interface : le backend, lui, exécute.
+///
+/// Renvoie les infos du dépôt comme `abort_merge`, et pour la même raison : une
+/// fusion en cours est refermée au passage, et `merging` décide du bandeau.
+#[tauri::command]
+pub fn discard_all(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<RepoInfo, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    backend.discard_all()?;
+    backend.info()
+}
+
 #[tauri::command]
 pub fn commit(
     repo_id: String,
