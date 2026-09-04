@@ -1,6 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api, pickRepositoryFolder } from "../api";
-import { allDirPaths } from "../tree";
+import { allDirPaths, countStatuses, type TreeCounts } from "../tree";
 import type {
   AppError,
   BranchEntry,
@@ -8,6 +8,7 @@ import type {
   FetchEvent,
   FileDiff,
   FileEntry,
+  FileStatus,
   GraphCommit,
   Identity,
   Profile,
@@ -160,6 +161,18 @@ export class RepoStore {
   selectedCommitOid = $state<string | null>(null);
   commitDetails = $state<CommitDetails | null>(null);
 
+  /**
+   * Brouillon du prochain commit — résumé et description.
+   *
+   * Il vit ici, et pas dans `CommitBox`, pour deux raisons. La boîte de commit
+   * n'est montée qu'une fois pour tous les onglets : un brouillon local
+   * suivrait l'utilisateur d'un dépôt à l'autre. Et la rangée « modifications
+   * en cours » du graph édite ce **même** résumé — deux champs sur une seule
+   * valeur, donc une valeur qui n'appartient à aucun des deux.
+   */
+  commitSummary = $state("");
+  commitBody = $state("");
+
   // Préférences d'affichage de la liste de fichiers.
   viewMode = $state<ViewMode>("tree");
   sortAsc = $state(true);
@@ -212,11 +225,22 @@ export class RepoStore {
 
   /** Nombre de fichiers distincts qui ont un changement (en-tête sidebar). */
   get changeCount(): number {
-    const set = new Set<string>();
-    for (const e of this.status?.staged ?? []) set.add(e.path);
-    for (const e of this.status?.unstaged ?? []) set.add(e.path);
-    for (const e of this.status?.untracked ?? []) set.add(e.path);
-    return set.size;
+    return this.changedPaths.size;
+  }
+
+  /**
+   * Répartition des changements en cours (✎ modifiés / + ajoutés / − supprimés),
+   * pour la pastille de la rangée WIP du graph. Même vocabulaire que les
+   * compteurs de dossiers de l'arbre de fichiers, d'où le passage par
+   * `countStatuses`.
+   *
+   * Le total est exactement `changeCount` : un fichier à la fois indexé et
+   * modifié dans le working directory n'est compté qu'une fois, avec le statut
+   * de l'index — c'est celui qui est calculé par rapport à HEAD, donc celui que
+   * la rangée WIP compare.
+   */
+  get changeCounts(): TreeCounts {
+    return countStatuses(this.changedPaths.values());
   }
 
   /** Tous les dossiers sont-ils dépliés ? (label du lien Tout déplier/replier) */
@@ -376,6 +400,17 @@ export class RepoStore {
   async loadMoreGraph() {
     if (!this.graphHasMore || this.graphLoading) return;
     await this.loadGraph(false);
+  }
+
+  /**
+   * Sélectionne la rangée « modifications en cours » du graph : la colonne de
+   * droite revient au working directory. C'est mot pour mot ce que fait la
+   * fermeture du détail de commit — de là que cette sélection n'a pas d'état
+   * propre : `GraphView` surligne la rangée quand aucun commit n'est
+   * sélectionné, ce qui est exactement la même chose.
+   */
+  selectWip() {
+    this.clearCommitSelection();
   }
 
   /**
@@ -810,14 +845,27 @@ export class RepoStore {
     await this.run(() => api.unstageAll(this.repoId));
   }
 
-  async commit(summary: string, body: string | null, amend = false): Promise<boolean> {
-    if (summary.trim().length === 0) return false;
+  /**
+   * Committe le brouillon (`commitSummary` / `commitBody`) et vide celui-ci en
+   * cas de succès. Renvoie `false` sans rien tenter si le résumé est vide ou si
+   * rien n'est indexé — les deux cas que le bouton grise déjà.
+   *
+   * `amend` n'a pas d'interface : il reste câblé jusqu'au backend, testé, mais
+   * jamais appelé autrement qu'avec la valeur par défaut.
+   */
+  async commit(amend = false): Promise<boolean> {
+    const summary = this.commitSummary.trim();
+    if (summary.length === 0) return false;
     if (!amend && !this.hasStaged) return false;
     this.committing = true;
     this.error = null;
     try {
-      const cleanBody = body && body.trim().length > 0 ? body.trim() : null;
-      await api.commit(this.repoId, summary.trim(), cleanBody, amend);
+      const body = this.commitBody.trim();
+      await api.commit(this.repoId, summary, body.length > 0 ? body : null, amend);
+      // Le brouillon est consommé : il est vidé ici, et pas dans la boîte de
+      // commit, parce que deux champs l'éditent (elle et la rangée du graph).
+      this.commitSummary = "";
+      this.commitBody = "";
       // Un amend remplace le commit HEAD : une sélection qui le visait est morte.
       if (amend) this.clearCommitSelection();
       // Ce commit a pu clore une fusion (le backend appelle `cleanup_state()`
@@ -859,6 +907,21 @@ export class RepoStore {
   private sortEntries(list: FileEntry[]): FileEntry[] {
     const sorted = [...list].sort((a, b) => a.path.localeCompare(b.path));
     return this.sortAsc ? sorted : sorted.reverse();
+  }
+
+  /**
+   * Chemins ayant un changement, avec leur statut — un fichier peut être à la
+   * fois indexé et modifié dans le working directory, il ne compte alors qu'une
+   * fois. L'index est écrit en dernier et l'emporte : son statut est celui
+   * calculé par rapport à HEAD (un fichier neuf indexé puis rouvert est
+   * « ajouté », pas « modifié »).
+   */
+  private get changedPaths(): Map<string, FileStatus> {
+    const byPath = new Map<string, FileStatus>();
+    for (const e of this.status?.unstaged ?? []) byPath.set(e.path, e.status);
+    for (const e of this.status?.untracked ?? []) byPath.set(e.path, e.status);
+    for (const e of this.status?.staged ?? []) byPath.set(e.path, e.status);
+    return byPath;
   }
 
   /** Tous les chemins de dossiers (sections indexée + non indexée confondues). */

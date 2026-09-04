@@ -211,6 +211,14 @@ export interface FetchEvent {
 export type PullMode = "fetchAll" | "fastForwardOnly" | "fastForwardOrMerge";
 
 /**
+ * Thème de l'interface, choisi dans les paramètres et persisté côté Rust.
+ *
+ * `"system"` n'est pas une palette : c'est l'absence de choix, résolue en clair
+ * ou sombre par `theme.svelte.ts` (et par la fenêtre native de son côté).
+ */
+export type ThemeMode = "system" | "light" | "dark";
+
+/**
  * Ce qu'un pull a fait localement. Une divergence et un conflit ne sont pas des
  * erreurs : le fetch qui précède a réussi et déplacé des références.
  */

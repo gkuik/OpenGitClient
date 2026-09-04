@@ -40,6 +40,20 @@ function bump(counts: TreeCounts, status: FileStatus) {
   else counts.modified++; // modified, renamed, typechange, conflicted
 }
 
+/**
+ * Compte une suite de statuts selon la même règle que les dossiers de l'arbre.
+ *
+ * Exporté pour la pastille de la rangée WIP du graph : elle résume le working
+ * directory entier, et doit le faire avec le même vocabulaire (✎ / + / −) que
+ * les compteurs de dossiers, sans quoi deux endroits de l'interface
+ * classeraient un fichier non suivi différemment.
+ */
+export function countStatuses(statuses: Iterable<FileStatus>): TreeCounts {
+  const counts = emptyCounts();
+  for (const status of statuses) bump(counts, status);
+  return counts;
+}
+
 /** Ordonne dossiers avant fichiers, puis alphabétiquement (asc/desc). */
 function sortNodes(nodes: TreeNode[], asc: boolean) {
   nodes.sort((a, b) => {

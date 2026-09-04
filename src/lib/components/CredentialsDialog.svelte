@@ -98,7 +98,7 @@
     z-index: 60;
     border: none;
     padding: 0;
-    background: rgba(0, 0, 0, 0.45);
+    background: var(--scrim);
     cursor: default;
   }
   .dialog {
@@ -112,7 +112,7 @@
     background: var(--bg-raised);
     border: 1px solid var(--border);
     border-radius: 8px;
-    box-shadow: 0 16px 48px rgba(0, 0, 0, 0.5);
+    box-shadow: 0 16px 48px var(--shadow-color);
   }
   h2 {
     margin: 0 0 0.5rem;
@@ -126,7 +126,7 @@
     color: var(--text-dim);
   }
   .note.warn {
-    color: #fca5a5;
+    color: var(--danger-soft);
   }
   .url {
     margin: 0 0 0.9rem;
@@ -183,7 +183,7 @@
   }
   .primary {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
   }
   .primary:disabled {
     opacity: 0.5;

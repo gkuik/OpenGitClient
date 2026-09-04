@@ -78,11 +78,11 @@
     font-size: 0.72rem;
     border-radius: 3px;
   }
-  .badge.mod { color: #fbbf24; }
-  .badge.add { color: #4ade80; }
-  .badge.del { color: #f87171; }
-  .badge.ren { color: #60a5fa; }
-  .badge.unt { color: #a3a3a3; }
+  .badge.mod { color: var(--warn); }
+  .badge.add { color: var(--ok); }
+  .badge.del { color: var(--danger); }
+  .badge.ren { color: var(--info); }
+  .badge.unt { color: var(--neutral); }
   .path {
     flex: 1;
     overflow: hidden;

@@ -78,7 +78,7 @@
     gap: 0.4rem;
     font-size: 0.72rem;
   }
-  .c.mod { color: #fbbf24; }
-  .c.add { color: #4ade80; }
-  .c.del { color: #f87171; }
+  .c.mod { color: var(--warn); }
+  .c.add { color: var(--ok); }
+  .c.del { color: var(--danger); }
 </style>

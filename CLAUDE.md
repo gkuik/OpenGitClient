@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories) over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -94,7 +94,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode and the theme) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -114,6 +114,17 @@ The backend returns raw commits (`oid`, `parents`, `refs`) — **lane assignment
 - The canvas is an overlay with `z-index: 3`, i.e. **above** the rows. Row hover/selection backgrounds span the full width including the gutter; a canvas underneath would be masked by them.
 
 Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). The walk pushes `refs/heads/*`, `refs/remotes/*` and HEAD, so a commit reachable only from a remote branch is in the history like any other. Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — and after a fetch that actually moved something — but **not** after stage/unstage, which don't change history.
+
+**The working directory is the graph's first row**, GitKraken-style: a dashed hollow circle, the summary of the commit being written, and the `✎ / + / −` counts, on top of the history. That summary is not a label but **the commit box's own field** — `RepoStore.commitSummary`, edited from either side, showing `// WIP` as a placeholder while it is empty. It is **entirely frontend** — no backend call, no DTO — because everything it needs is already loaded: `repoInfo.head` for the commit it hangs from (detached HEAD included) and `status` for the counts. Those counts go through `countStatuses` — the very function that fills the file tree's per-directory counters — so an untracked file is a `+` in both places instead of being classified twice; `RepoStore.changeCounts` only dedupes the paths first, since a file can be both staged and modified.
+
+It is threaded **through** the lane algorithm rather than drawn beside it: `layoutGraph(commits, wip)` emits the row as a pseudo-commit whose parent is HEAD, so the existing loop reserves HEAD's column from the top, makes the intermediate rows cross it and lands the line on HEAD's dot — with no special case anywhere else. The visible consequence is deliberate: when HEAD's commit is *not* the topmost one, the current branch takes column 0 and the others shift right, which is exactly what the node claims. Drawing the line separately would have meant re-deriving all of that, badly.
+
+Four things that look cosmetic and aren't:
+
+- `GraphRow` is a **discriminated union** (`commit` | `wip`), not a `GraphCommit` with an invented oid. A fake oid would be comparable to a real one — selection, ref badges, scroll-into-view all key on oids.
+- The row appears only once `repo.loaded` is true. The status lands before the history does, so without that guard the node would flash alone on startup with its line hanging in the void.
+- **The commit draft (`commitSummary` / `commitBody`) lives in the tab**, not in `CommitBox`. Two reasons, and the first one predates this row: the commit box is mounted once for every tab, so a local draft followed the user from one repository to the next. The second is that two fields now edit one value, which therefore belongs to neither. `commit()` reads that draft and clears it on success — the reset can't live in a component that isn't the only editor. In the graph row the field's `keydown` **stops propagating**: the row itself listens for Enter and Space to select itself, and its `preventDefault` would swallow every space typed. Enter and Escape only blur — committing needs staged files and stays on the button.
+- **WIP selection has no state of its own**: the row is highlighted when `selectedCommitOid === null`, since that is exactly when the right column shows the working directory. `selectWip()` is `clearCommitSelection()` under another name — one truth, nothing to keep in sync, and no toggle on re-click (deselecting would change nothing but the highlight).
 
 `DiffTarget` in the store is a discriminated union (`worktree` | `commit`): one field for both diff sources so they can't contradict each other. `selectedPath`/`selectedStaged` are derived getters over it, which is why the status-panel components needed no changes. **It also drives the centre column** — `null` → graph, set → diff — so there is no tab state to keep in sync.
 
@@ -209,6 +220,21 @@ It carries `appearance: none` and paints its own chevron so it can match the sum
 
 Deleting a profile leaves repositories untouched, for the same reason: their identity lives in their own config. `clear_identity` removes both keys but leaves an empty `[user]` section behind — libgit2 has no remove-section call, and Git ignores it.
 
+### The theme is one CSS variable set, swapped by an attribute on `<html>`
+
+Light, dark, or system, chosen in Settings and persisted in `prefs.json` beside the Pull mode. Dark is the base — it lives on `:root` in `app.css` — and light only redefines the same variables under `:root[data-theme="light"]`. **No component knows which theme is on**; they read variables, so a third theme would be one more block in that file and nothing else.
+
+That only holds if nothing hardcodes a colour, which is why the **state colours are tokens too** (`--ok`, `--danger`, `--warn`, `--info`, `--neutral`, each with its `-soft` / `-bg` / `-border` variants, plus `--scrim`, `--shadow-color`, `--scrollbar-thumb`, `--accent-text`). The light values are not the dark ones lightened but a full tone darker: a green that glows on near-black has no contrast left on white. A literal `#4ade80` in a component would be invisible in one of the two themes.
+
+`src/lib/theme.svelte.ts` holds the choice, and keeps two things apart: `mode` is what was *chosen* (including `"system"`), `dark` is what is *applied*. **`data-theme` always carries the resolved value**, never `"system"` — the stylesheet then has a single case to handle. System mode delegates to `prefers-color-scheme` through a `matchMedia` listener, so the app follows a Mac switching appearance while it runs.
+
+`theme.init()` runs in `main.ts` **before mounting**: the system preference is read synchronously, and the persisted choice lands one round trip later. Nothing is cached in the webview to close that gap — persistence stays in Rust, like the recents, the profiles and the Pull mode — so a theme forced against the system flashes for one frame, and only that case.
+
+Two things the CSS cannot reach:
+
+- **The window itself.** `commands::set_theme` also calls `WebviewWindow::set_theme`, and `lib.rs` applies the persisted value at startup, before the window shows. `System` maps to `None` — an absence of instruction, which is what lets the window follow the OS. That is also why switching *back* to system corrects itself through the media listener rather than instantly: while a theme is forced, the webview's `prefers-color-scheme` reports the forced value, so the true system preference is only knowable once Rust has released it.
+- **The graph lanes**, painted on a canvas: `LANE_COLORS` / `LANE_COLORS_LIGHT` in `layout.ts` are the one place in the frontend where both themes are spelled out in hex. **Same length, same order** — the colour index travels with each lane and edge and knows nothing about the theme. `GraphView` reads `theme.dark` inside `draw()`, which is what makes the redraw automatic; the commit dot's ring follows the background and its selection halo the opposite.
+
 ### Commit descriptions render Markdown — without `{@html}`
 
 `src/lib/markdown.ts` parses a **subset** of Markdown into a block tree that `CommitBody.svelte` renders through ordinary Svelte interpolation. **Never replace this with a Markdown library + `{@html}`**: a commit message is third-party content (anyone can write one in a repo you clone) and the webview has `invoke` access, so that would be a live XSS path. It also keeps the zero-runtime-dependency footprint.
@@ -239,7 +265,7 @@ Out of scope for now, but the architecture must not block them: rebase, hunk-lev
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 
-The **Settings screen** (gear, far right of the tab bar) holds *Profils* then *Jetons d'accès*: profiles are created there, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
+The **Settings screen** (gear, far right of the tab bar) holds *Apparence*, *Profils*, then *Jetons d'accès*: the theme is picked there (a segmented control — three exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
 
 **Only HTTP(S) remotes appear there**, and `RemoteInfo.uses_http` is what decides. An SSH remote has a host too, but a token would never be used for it — listing it invites a pointless entry. The same flag stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes can be **applied / popped / dropped** (right-click or the ⋮ button in the STASHES section) but **not created** — `git stash save` has no UI yet. Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
@@ -247,7 +273,7 @@ The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all
 
 **Pull is a split button**, GitKraken-style: the button runs the chosen mode, the chevron — placed *inside* the cell against its right edge, not beside it, so the two read as one control and the three toolbar buttons keep the same footprint — opens a radio menu that only *picks* the mode (choosing never fires a network call — a menu click that merged would be a nasty surprise). The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
 
-The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). There is no "uncommitted changes" node at the top of the history.
+The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 

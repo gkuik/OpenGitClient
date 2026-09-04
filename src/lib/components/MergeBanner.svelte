@@ -46,7 +46,7 @@
     gap: 0.4rem;
     padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--border);
-    background: rgba(250, 204, 21, 0.12);
+    background: var(--warn-bg);
   }
   .text {
     margin: 0;
@@ -76,7 +76,7 @@
     cursor: default;
   }
   .danger {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.5);
+    color: var(--danger);
+    border-color: var(--danger-border);
   }
 </style>
