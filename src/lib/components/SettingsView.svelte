@@ -101,7 +101,8 @@
   async function load() {
     loading = true;
     const found = new Map<string, HostRow>();
-    for (const tab of tabs.tabs) {
+    // Les pages « Nouvel onglet » n'ont pas de dépôt, donc pas de distant.
+    for (const tab of tabs.repoTabs) {
       try {
         const remote = await api.getRemoteInfo(tab.repoId);
         // Un distant SSH n'a que faire d'un jeton : le lister inviterait à en

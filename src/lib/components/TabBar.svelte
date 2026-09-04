@@ -4,6 +4,10 @@
   // Cette barre remplace l'ancienne topbar (logo + bouton « Ouvrir un dépôt ») :
   // elle ne contient que les onglets et le « + » qui en ouvre un nouveau.
   //
+  // Un onglet est soit un dépôt ouvert, soit une page « Nouvel onglet » qui
+  // n'en a pas encore (voir `NewTab`) : la barre les traite exactement pareil,
+  // seul le libellé les distingue.
+  //
   // Sur macOS la fenêtre est en `titleBarStyle: Overlay` : le contenu passe sous
   // la barre de titre, donc il faut réserver la place des boutons rouge/jaune/vert
   // à gauche. On ne le fait que dans l'app native — dans un navigateur (preview),
@@ -155,7 +159,7 @@
     const rects = [...strip.querySelectorAll<HTMLElement>(".tab")].map((el) =>
       el.getBoundingClientRect(),
     );
-    const index = tabs.tabs.findIndex((t) => t.repoId === id);
+    const index = tabs.tabs.findIndex((t) => t.id === id);
     const rect = rects[index];
     // Écart mesuré entre deux onglets, plutôt que la valeur du `gap` recopiée ici.
     const gap =
@@ -215,30 +219,31 @@
 -->
 <div class="tabbar" class:mac={macOverlay} data-tauri-drag-region="deep">
   <div class="tabs" class:reordering={drag !== null} bind:this={strip}>
-    {#each tabs.tabs as tab, i (tab.repoId)}
-      {@const active = tab.repoId === tabs.activeId}
+    {#each tabs.tabs as tab, i (tab.id)}
+      {@const active = tab.id === tabs.activeId}
+      {@const label = tab.kind === "new" ? "Nouvel onglet" : (tab.repoInfo?.name ?? "…")}
       <div
         class="tab"
         class:active
-        class:dragging={drag?.id === tab.repoId}
-        style:transform={offsetOf(i, tab.repoId)}
+        class:dragging={drag?.id === tab.id}
+        style:transform={offsetOf(i, tab.id)}
         role="tab"
         tabindex="0"
         aria-selected={active}
-        title={tab.repoId}
-        onpointerdown={(e) => onPointerDown(e, tab.repoId)}
+        title={tab.kind === "new" ? label : tab.repoId}
+        onpointerdown={(e) => onPointerDown(e, tab.id)}
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}
         onpointercancel={onPointerUp}
-        onauxclick={(e) => onMiddle(e, tab.repoId)}
-        onkeydown={(e) => (e.key === "Enter" ? tabs.activate(tab.repoId) : undefined)}
+        onauxclick={(e) => onMiddle(e, tab.id)}
+        onkeydown={(e) => (e.key === "Enter" ? tabs.activate(tab.id) : undefined)}
       >
-        <span class="name">{tab.repoInfo?.name ?? "…"}</span>
+        <span class="name" class:blank={tab.kind === "new"}>{label}</span>
         <button
           class="close"
           title="Fermer l'onglet"
           aria-label="Fermer l'onglet"
-          onclick={(e) => onClose(e, tab.repoId)}
+          onclick={(e) => onClose(e, tab.id)}
         >
           ×
         </button>
@@ -249,10 +254,9 @@
          au bord droit de la fenêtre. -->
     <button
       class="add"
-      title="Ouvrir un dépôt"
-      aria-label="Ouvrir un dépôt"
-      disabled={tabs.opening}
-      onclick={() => tabs.openFromDialog()}
+      title="Nouvel onglet"
+      aria-label="Nouvel onglet"
+      onclick={() => tabs.newTab()}
     >
       +
     </button>
@@ -410,6 +414,11 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
+  /* Un onglet sans dépôt ne nomme rien : son libellé se fait discret. */
+  .name.blank {
+    font-weight: 500;
+    font-style: italic;
+  }
   .close {
     flex: none;
     width: 1.15rem;
@@ -451,12 +460,8 @@
     line-height: 1;
     cursor: pointer;
   }
-  .add:hover:not(:disabled) {
+  .add:hover {
     background: var(--bg-raised);
     color: var(--text);
-  }
-  .add:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

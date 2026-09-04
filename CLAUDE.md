@@ -9,7 +9,7 @@ Goals: low memory footprint and small binary. Implemented so far: open repo → 
 
 The window is a tab bar (open repositories) over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
-**The tab bar *is* the topbar** — no logo, no "open repository" button: the tabs, a `+` that sits in the same flow right after the last tab, and a settings gear pinned to the right. The gear lives **outside** `.tabs` (which is `flex: 1` and scrolls), so it stays against the right edge however many tabs are open instead of scrolling away with them. Tabs show the repository name only (no branch — the current branch is already in the status panel header). With no tab open, `WelcomeScreen` takes the whole body and is the only place the recent-repository list is reachable.
+**The tab bar *is* the topbar** — no logo, no "open repository" button: the tabs, a `+` that sits in the same flow right after the last tab, and a settings gear pinned to the right. The gear lives **outside** `.tabs` (which is `flex: 1` and scrolls), so it stays against the right edge however many tabs are open instead of scrolling away with them. Tabs show the repository name only (no branch — the current branch is already in the status panel header). The `+` opens a **new-tab page** rather than the folder dialog (see below). With no tab open at all, `WelcomeScreen` takes the whole body.
 
 On macOS the window uses `titleBarStyle: "Overlay"` + `hiddenTitle` (`tauri.conf.json`), so the tab bar sits **beside the traffic-light buttons**. `TabBar` reserves 92px on the left for them (they span x=20→80), but only when actually running in the native macOS app (`__TAURI_INTERNALS__` + a Macintosh UA) — in a browser those buttons don't exist and the offset would just be a gap.
 
@@ -86,6 +86,12 @@ All Git logic sits behind the `GitBackend` trait in `src-tauri/src/git/mod.rs`. 
 ### Multiple repositories: one tab each
 
 `AppState` holds a `HashMap` of backends, **keyed by the repository's canonical path** — that key *is* the tab id, and it is what `RepoInfo.path` carries. Using the path rather than a generated id means opening an already-open repository can't create a duplicate tab, and the session survives restarts with no id mapping to maintain.
+
+**An open tab is not necessarily a repository.** `+` appends a `NewTab` — the "Nouvel onglet" page: open a local repository (the only live action; clone and create are rendered disabled, since they have no backend behind them), or pick a recent one. `NewTabView` replaces the three columns while it is the active tab, the tab bar staying above it, exactly as `SettingsView` does.
+
+That tab exists **only in the frontend**, and it has to: a tab's id *is* its repository's canonical path, so a tab without a repository has no id to give the backend. Hence a counter (`new:<n>`), never sent anywhere, and nothing to restore at startup — a landing page has no state worth persisting. `TabsStore.tabs` is therefore a discriminated union (`RepoStore | NewTab`, on `kind`), which is what forces every site that means *a repository* to say so: `repoTabs` filters them for the event routing, for `set_tab_order` (the backend only knows repositories) and for Settings' host list. `active` still returns a `RepoStore | null` — `null` on a new tab — so the `repo` proxy falls back to `EMPTY_TAB` and no component changed.
+
+**Opening a repository from that page consumes the tab in place**, rather than appending a second one beside it: the store slots into the page's index, and `set_tab_order` is re-sent because the backend has just appended the repository at the end of its own order, unable to guess it landed mid-bar. If the repository is *already* open in another tab, that tab is activated and the page closes — the path that keeps the "one tab per path" rule true.
 
 **Every repository-scoped command takes a `repo_id`.** There is deliberately no "current repository" on the backend: two tabs can't fight over it, and a slow response can't be applied to the wrong tab. Adding a command means threading `repo_id` through the usual chain.
 
