@@ -12,7 +12,7 @@ use git2::{
     RepositoryState, Sort, Status, StatusEntry, StatusOptions, Tree,
 };
 
-use super::GitBackend;
+use super::{GitBackend, WatchRoots};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
     FetchReport, FetchedRef, FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind,
@@ -852,6 +852,38 @@ impl GitBackend for Libgit2Backend {
         let _ = local.remove("user.name");
         let _ = local.remove("user.email");
         Ok(())
+    }
+
+    // ── Surveillance du disque ──────────────────────────────────────────────
+
+    fn watch_roots(&self) -> Result<WatchRoots, AppError> {
+        let repo = self.repo()?;
+        Ok(WatchRoots {
+            workdir: repo.workdir().map(Path::to_path_buf),
+            gitdir: repo.path().to_path_buf(),
+        })
+    }
+
+    fn filter_ignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf> {
+        // Sans dépôt lisible on ne filtre rien : mieux vaut un rafraîchissement
+        // de trop que d'avaler un vrai changement.
+        let Ok(repo) = self.repo() else { return paths };
+        let Some(workdir) = repo.workdir().map(Path::to_path_buf) else {
+            return paths;
+        };
+        paths
+            .into_iter()
+            .filter(|p| {
+                // libgit2 attend un chemin relatif au working directory ; un
+                // chemin qui n'en relève pas ne concerne pas ce dépôt.
+                let Ok(rel) = p.strip_prefix(&workdir) else {
+                    return false;
+                };
+                // Une erreur (chemin non-UTF-8, dépôt en cours d'écriture) ne
+                // doit pas faire disparaître le changement : on le garde.
+                !repo.status_should_ignore(rel).unwrap_or(false)
+            })
+            .collect()
     }
 }
 
@@ -2528,5 +2560,29 @@ mod tests {
         assert!(matches!(git.fetch(Some("amont")), Err(AppError::NoRemote)));
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
+    }
+
+    /// Le filtre qui décide si un événement du disque atteint l'interface : sans
+    /// lui, une compilation dans le dépôt la noierait de rafraîchissements.
+    #[test]
+    fn filter_ignored_drops_what_the_repository_ignores() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join(".gitignore"), "target/\n*.log\n").unwrap();
+        fs::create_dir_all(dir.join("target/debug")).unwrap();
+        fs::create_dir_all(dir.join("src")).unwrap();
+
+        // La racine vient du backend, comme dans le watcher : sur macOS le
+        // dossier temporaire n'est pas le chemin canonique.
+        let workdir = git.watch_roots().unwrap().workdir.unwrap();
+        let kept = git.filter_ignored(vec![
+            workdir.join("src/main.rs"),
+            workdir.join("target/debug/build.o"),
+            workdir.join("bruit.log"),
+            // Hors du dépôt : ne le concerne pas.
+            PathBuf::from("/ailleurs/fichier.txt"),
+        ]);
+
+        assert_eq!(kept, vec![workdir.join("src/main.rs")]);
+        fs::remove_dir_all(&dir).ok();
     }
 }

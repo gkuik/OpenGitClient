@@ -19,6 +19,7 @@ import type {
   RecentRepo,
   RemoteBranchEntry,
   RemoteInfo,
+  RepoChangedEvent,
   RepoInfo,
   RepoStatus,
   StashEntry,
@@ -47,6 +48,16 @@ const GRAPH_PAGE_SIZE = 500;
 
 /** Durée d'affichage du compte rendu d'un fetch ou d'un push, en millisecondes. */
 const REMOTE_STATUS_MS = 6000;
+
+/**
+ * Délai avant de réessayer d'appliquer un changement détecté sur le disque
+ * pendant qu'une opération de l'application tourne encore.
+ *
+ * Court : ce qui bloque (un stage, un commit, un pull) se termine, et le
+ * changement attend simplement son tour au lieu d'écraser un état en cours de
+ * construction.
+ */
+const CHANGE_RETRY_MS = 400;
 
 /** Compte rendu d'un pull, en une ligne. */
 function pullStatus(report: PullReport): string {
@@ -93,6 +104,17 @@ export class RepoStore {
   committing = $state(false);
   /** Vrai tant que le premier chargement du dépôt n'est pas terminé. */
   loaded = $state(false);
+
+  /**
+   * Dernier changement détecté sur le disque et pas encore appliqué (voir
+   * `noteExternalChange`). Pas de rune : rien ne l'affiche, c'est une file
+   * d'attente d'un seul élément — les drapeaux des lots successifs se cumulent
+   * jusqu'à ce qu'un rafraîchissement les consomme.
+   */
+  private pendingChange: { worktree: boolean; refs: boolean } | null = null;
+  /** Un rafraîchissement automatique est en cours (réentrance interdite). */
+  private applyingChange = false;
+  private changeRetry: ReturnType<typeof setTimeout> | null = null;
 
   constructor(repoId: string, info: RepoInfo | null = null) {
     this.repoId = repoId;
@@ -324,11 +346,21 @@ export class RepoStore {
       await this.load();
       return;
     }
+    // Un changement détecté pendant que l'onglet était caché n'a pas été
+    // appliqué : seul l'onglet visible se rafraîchit tout seul. Le statut et les
+    // branches sont relus de toute façon ci-dessous ; il ne reste à traiter que
+    // ce qu'un mouvement de références impose en plus.
+    const stale = this.takePendingChange();
+
     await this.refreshStatus();
     await this.loadBranches();
     await this.loadRemoteBranches();
     // La config du dépôt a pu changer sur le disque pendant qu'on était ailleurs.
     await this.loadIdentity();
+
+    if (stale?.refs) {
+      await this.reloadAfterRefs();
+    }
   }
 
   /** Recharge le statut et resynchronise le diff du fichier sélectionné. */
@@ -341,6 +373,119 @@ export class RepoStore {
     } catch (e) {
       this.error = e as AppError;
     }
+  }
+
+  // ── Changements venus du disque ─────────────────────────────────────────────
+
+  /**
+   * Enregistre un changement détecté sur le disque (`repo://changed`) sans
+   * l'appliquer : un éditeur qui enregistre, un `git` lancé au terminal, un
+   * autre client. Rien n'a été récupéré du réseau — il n'y a que de la relecture
+   * locale à faire.
+   *
+   * Les lots se **cumulent** au lieu de se remplacer : deux événements séparés
+   * peuvent porter l'un le working directory, l'autre les références, et perdre
+   * le premier laisserait la moitié de l'interface périmée.
+   */
+  noteExternalChange(event: RepoChangedEvent) {
+    // Avant le premier chargement il n'y a rien à rafraîchir, et `load()` va de
+    // toute façon tout lire.
+    if (!this.loaded) return;
+    this.pendingChange = {
+      worktree: (this.pendingChange?.worktree ?? false) || event.worktree,
+      refs: (this.pendingChange?.refs ?? false) || event.refs,
+    };
+  }
+
+  /**
+   * Applique le changement en attente. Appelé pour le seul onglet **affiché** —
+   * les autres le gardent pour leur activation, qui resynchronise déjà tout.
+   *
+   * Deux garde-fous, qui sont l'essentiel :
+   *
+   * - **Rien pendant qu'une opération de l'application tourne.** Un pull écrit
+   *   lui-même le working directory : ses propres événements se superposeraient
+   *   à son rechargement, et un rafraîchissement au milieu d'un commit lirait un
+   *   état à moitié écrit. On repasse un peu plus tard, le changement attendant
+   *   son tour.
+   * - **La boucle relit `pendingChange` à chaque tour** : un lot arrivé pendant
+   *   les `await` est traité au tour suivant plutôt que perdu.
+   */
+  async applyExternalChange() {
+    if (this.applyingChange || !this.pendingChange) return;
+    if (this.refreshBlocked) {
+      this.retryExternalChange();
+      return;
+    }
+
+    this.applyingChange = true;
+    try {
+      let change = this.takePendingChange();
+      while (change) {
+        // Les infos du dépôt d'abord : c'est `head` et `merging` qui décident de
+        // l'en-tête et du bandeau de fusion, et une bascule de branche faite
+        // ailleurs ne se voit que là.
+        if (change.refs) {
+          try {
+            this.repoInfo = await api.getRepoInfo(this.repoId);
+          } catch (e) {
+            this.error = e as AppError;
+          }
+        }
+        if (change.worktree) await this.refreshStatus();
+        if (change.refs) await this.reloadAfterRefs();
+        change = this.takePendingChange();
+      }
+    } finally {
+      this.applyingChange = false;
+    }
+  }
+
+  /**
+   * Ce qu'un mouvement de références impose de relire : les deux listes de
+   * branches — dont les pastilles d'écart se mesurent sur `refs/remotes/**` —,
+   * les stashes (`refs/stash` en est une) et le graph, dont la pagination n'est
+   * stable que tant que les références ne bougent pas, d'où le retour page 0.
+   */
+  private async reloadAfterRefs() {
+    await this.loadBranches();
+    await this.loadRemoteBranches();
+    await this.loadStashes();
+    await this.loadGraph();
+  }
+
+  /** Consomme le changement en attente, `null` s'il n'y en a pas. */
+  private takePendingChange(): { worktree: boolean; refs: boolean } | null {
+    const change = this.pendingChange;
+    this.pendingChange = null;
+    return change;
+  }
+
+  /**
+   * Une opération de l'application est-elle en cours ? Un rafraîchissement
+   * automatique attendrait plutôt que de lui passer dessus.
+   */
+  private get refreshBlocked(): boolean {
+    return (
+      this.busy ||
+      this.committing ||
+      this.checkingOut ||
+      this.fetching ||
+      this.pushing ||
+      this.pulling ||
+      // Une page d'historique en vol : un retour page 0 au milieu du scroll
+      // infini jetterait ce qu'il vient de charger.
+      this.graphLoading
+    );
+  }
+
+  /** Repasse plus tard, sans empiler les minuteries. */
+  private retryExternalChange() {
+    if (this.changeRetry !== null) return;
+    this.changeRetry = setTimeout(() => {
+      this.changeRetry = null;
+      void this.applyExternalChange();
+    }, CHANGE_RETRY_MS);
   }
 
   /** Ouvre le diff d'un fichier du working directory (colonne de droite). */
@@ -1057,6 +1202,21 @@ class TabsStore {
       })
       .catch(() => {
         /* idem pour le pull */
+      });
+    // Changements du disque : personne ne les a demandés, et ils peuvent viser
+    // un onglet caché. Seul l'onglet affiché se rafraîchit tout de suite ; les
+    // autres gardent la note pour leur activation, qui resynchronise déjà tout
+    // — dix dépôts ouverts n'ont pas à relire leur statut à chaque frappe dans
+    // un éditeur.
+    api
+      .onRepoChanged((event) => {
+        const tab = this.tabs.find((t) => t.repoId === event.repoId);
+        if (!tab) return;
+        tab.noteExternalChange(event);
+        if (this.activeId === event.repoId) void tab.applyExternalChange();
+      })
+      .catch(() => {
+        /* sans abonnement, l'interface se rafraîchit comme avant : à l'activation */
       });
 
     try {

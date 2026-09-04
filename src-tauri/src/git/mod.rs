@@ -6,7 +6,7 @@
 //! backend alternatif (fallback CLI `git`) = une seconde implémentation du trait,
 //! sans toucher aux commandes ni au frontend.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
@@ -16,6 +16,20 @@ use crate::dto::{
 use crate::error::AppError;
 
 mod libgit2;
+
+/// Ce qu'il faut surveiller sur le disque pour voir un dépôt changer sous nos
+/// pieds (voir `crate::watcher`).
+///
+/// Deux racines et non une : dans le cas courant le dossier Git est le `.git`
+/// du working directory, mais il est ailleurs pour un worktree lié ou un
+/// submodule — surveiller la seule racine du working directory raterait alors
+/// tout mouvement de références.
+pub struct WatchRoots {
+    /// Racine du working directory. Absente sur un dépôt nu.
+    pub workdir: Option<PathBuf>,
+    /// Dossier Git (`.git` ou son équivalent).
+    pub gitdir: PathBuf,
+}
 
 /// Interface d'accès à un dépôt Git ouvert.
 ///
@@ -155,6 +169,20 @@ pub trait GitBackend: Send {
 
     /// Retire l'identité locale : le dépôt retombe sur la configuration globale.
     fn clear_identity(&self) -> Result<(), AppError>;
+
+    // ── Surveillance du disque ──────────────────────────────────────────────
+
+    /// Racines à surveiller pour détecter un changement venu d'ailleurs
+    /// (éditeur, terminal, autre outil Git). Voir [`WatchRoots`].
+    fn watch_roots(&self) -> Result<WatchRoots, AppError>;
+
+    /// Retire d'une liste de chemins absolus ceux que le dépôt ignore
+    /// (`.gitignore` & co).
+    ///
+    /// Le lot entier passe en un seul appel, et ce n'est pas de la coquetterie :
+    /// une compilation dans le dépôt émet des milliers de chemins à la seconde,
+    /// et une question par chemin rouvrirait le dépôt à chaque fois.
+    fn filter_ignored(&self, paths: Vec<PathBuf>) -> Vec<PathBuf>;
 }
 
 /// Ouvre un dépôt et renvoie le backend correspondant.

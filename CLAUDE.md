@@ -198,6 +198,34 @@ Remote rows behave like local ones: click selects the tip commit — which lands
 
 Reload after a pull is wider than after a fetch: `repoInfo` first (it decides whether the banner shows), then the status (this is where conflicted files appear), then the usual remote-ref reload. It's the only remote operation that writes the worktree and index.
 
+### The disk is watched, and nothing is fetched for it
+
+An editor saving, a `git checkout` at the terminal, another client: the repository moves under the app's feet, and until now that was only noticed on the next tab activation. `src-tauri/src/watcher.rs` listens to the filesystem and emits `repo://changed`, which `TabsStore` routes to the named tab — the same contract as `repo://fetched`, except nobody asked for it.
+
+**Nothing is ever fetched here.** The watcher only re-reads what is already on disk; a fetch stays an explicit action, since it writes `refs/remotes/**` and would change what "behind" means without anyone deciding to.
+
+- **One watcher for every tab.** `notify` takes several paths on one instance, so it is one thread in total, not one per repository. `AppState::open` registers, `AppState::close` unregisters — putting it there rather than in the command guarantees no tab can exist without it, restored sessions included.
+- **The callback never touches `AppState`.** It runs on notify's thread while a command may hold the state's `Mutex`; it only reaches the watcher's own registry, which has its own lock and is never taken in the other direction. Each watched repository owns a backend the watcher opened **itself** from the path — same move as the fetch thread, for the same reason.
+- **A missing watcher is not an error.** `RepoWatcher::new` returns `None` if the platform refuses, and the app then behaves exactly as it did before: refresh on tab activation. Same for a single failed `watch()` — losing a tab's live refresh must not stop it from opening.
+
+**Two roots are watched, not one**: the working directory and the git dir. They coincide in the normal case (the recursive watch on the worktree covers its `.git`), but not for a linked worktree or a submodule, where watching the worktree alone would miss every ref movement.
+
+**The filtering is the whole feature.** A build inside the repository emits thousands of events per second; three stages stop them:
+
+1. **A whitelist inside the git dir** — `index`, `HEAD`, `ORIG_HEAD`, `packed-refs`, `refs/**` and the in-progress markers (`MERGE_HEAD` & co). A blacklist would have let through whatever a future Git adds; the whitelist keeps `objects/**` (which floods on every commit *and* every fetch), `index.lock`, `logs/**`, `FETCH_HEAD` and `COMMIT_EDITMSG` out by construction.
+2. **The repository's own ignore rules**, through `GitBackend::filter_ignored` — git's rules, not a heuristic on directory names. It takes the **whole batch** in one call: asking per path would re-open the repository thousands of times a second, which is exactly the case it exists for.
+3. **A 300 ms debounce**, because one editor save is often three events.
+
+**Two flags rather than one scope**, and they don't cost the same: `worktree` re-reads the status only, `refs` reloads repo info (an external checkout moves `head`, and `merging` drives the banner), both branch lists, the stashes (`refs/stash` is one) and the graph — back to page 0, since its pagination is only stable while refs hold still. A `git checkout` sets both. That split is why typing in an editor never resets a graph scrolled ten pages deep.
+
+Three things on the frontend side that are less obvious than they look:
+
+- **Only the visible tab refreshes itself.** The others keep the note and drain it in `activate()`, which already re-syncs status and branches — ten open repositories have no business re-reading their status on every keystroke in an editor.
+- **Nothing is applied while the app's own operation is running** (`busy`, `committing`, `checkingOut`, the three remote flags, `graphLoading`). A pull writes the worktree itself, so its own events would land on top of `reloadAfterPull`; a refresh mid-commit would read a half-written state; a reset to page 0 during infinite scroll would throw away the page in flight. The change waits its turn (`CHANGE_RETRY_MS`) instead of being dropped.
+- **Notes accumulate, they don't replace.** Two batches can carry one the worktree and the other the refs, and `applyExternalChange` re-reads `pendingChange` at every loop turn so a batch arriving during an `await` is handled on the next one rather than lost.
+
+The app's own writes come back as events (staging writes `.git/index`), so a redundant refresh follows every local action by ~300 ms. It is idempotent and the debounce collapses it; telling ours apart from someone else's would take a generation counter that would buy nothing visible.
+
 ### Ahead/behind is measured against the upstream, and only from the last fetch
 
 `BranchEntry.upstream` carries the branch's upstream name plus `ahead`/`behind`, from one `graph_ahead_behind(local, upstream)` per branch in `local_branches()`.
@@ -356,7 +384,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section, **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere.
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section, **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 
