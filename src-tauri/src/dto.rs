@@ -443,6 +443,24 @@ pub struct PullEvent {
     pub error: Option<AppError>,
 }
 
+/// Charge utile de l'événement `repo://changed` : le dépôt a bougé sur le
+/// disque sous l'effet d'un autre outil (éditeur, terminal, autre client Git).
+///
+/// Deux drapeaux plutôt qu'une portée unique, parce que les deux recharges
+/// n'ont pas le même prix et qu'un même lot peut concerner les deux : écrire un
+/// fichier ne touche pas aux références, mais un `git checkout` fait les deux.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ChangeEvent {
+    /// Onglet concerné : le changement peut viser un dépôt qui n'est pas affiché.
+    pub repo_id: String,
+    /// Le working directory ou l'index ont changé → statut à relire.
+    pub worktree: bool,
+    /// Les références ont bougé (`HEAD`, `refs/**`, état de fusion) → branches,
+    /// graph et infos du dépôt à recharger.
+    pub refs: bool,
+}
+
 /// Dépôt distant d'un onglet, tel que le frontend en a besoin pour demander des
 /// identifiants : `host` est la clé sous laquelle ils sont rangés.
 #[derive(Debug, Clone, Serialize)]

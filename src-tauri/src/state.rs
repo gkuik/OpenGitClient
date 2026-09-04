@@ -18,6 +18,7 @@ use crate::dto::{
 };
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
+use crate::watcher::RepoWatcher;
 
 const RECENT_FILE: &str = "recent.json";
 const SESSION_FILE: &str = "session.json";
@@ -56,6 +57,11 @@ pub struct AppState {
     /// propre config Git (voir `GitBackend::set_identity`), ce qui évite d'avoir
     /// à maintenir une association en double.
     profiles: Vec<Profile>,
+    /// Surveillance du disque : elle émet `repo://changed` pour les dépôts
+    /// ouverts, afin que l'interface reflète ce qu'un autre outil modifie.
+    /// `None` si le système ne la permet pas — l'application marche alors comme
+    /// avant, sans rafraîchissement automatique.
+    watcher: Option<RepoWatcher>,
     /// Handle Tauri pour résoudre le dossier de configuration.
     app: AppHandle,
 }
@@ -67,6 +73,7 @@ impl AppState {
         let profiles = load_json(&app, PROFILES_FILE).unwrap_or_default();
         let prefs = load_json(&app, PREFS_FILE).unwrap_or_default();
         let session: Session = load_json(&app, SESSION_FILE).unwrap_or_default();
+        let watcher = RepoWatcher::new(app.clone());
         Self {
             repos: HashMap::new(),
             order: Vec::new(),
@@ -75,6 +82,7 @@ impl AppState {
             recent,
             prefs,
             profiles,
+            watcher,
             app,
         }
         .with_pending_tabs(session.tabs)
@@ -103,6 +111,12 @@ impl AppState {
             if !self.order.contains(&id) {
                 self.order.push(id.clone());
             }
+            // Le dépôt vient d'être ouvert : le mettre sous surveillance ici
+            // plutôt qu'au niveau de la commande garantit qu'aucun onglet ne
+            // puisse exister sans elle — restauration de session comprise.
+            if let Some(watcher) = self.watcher.as_mut() {
+                watcher.watch(&id, &canonical);
+            }
         }
 
         self.active = Some(id.clone());
@@ -126,6 +140,9 @@ impl AppState {
     /// Ferme un onglet. Sans effet si l'identifiant est inconnu.
     pub fn close(&mut self, id: &str) {
         self.repos.remove(id);
+        if let Some(watcher) = self.watcher.as_mut() {
+            watcher.unwatch(id);
+        }
         // Une opération réseau peut encore tourner sur ce dépôt : sa réservation
         // part avec l'onglet, sinon elle en bloquerait une après réouverture.
         self.networking.remove(id);

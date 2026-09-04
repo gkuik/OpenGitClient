@@ -274,6 +274,23 @@ export interface PushEvent {
 }
 
 /**
+ * Charge utile de `repo://changed` : le dépôt a bougé sur le disque sous
+ * l'effet d'un autre outil (éditeur, terminal, autre client Git). Rien n'a été
+ * récupéré du réseau — il n'y a que de la relecture locale à faire.
+ *
+ * Deux drapeaux et non une portée unique : les deux recharges n'ont pas le même
+ * prix, et un même lot peut concerner les deux (un `git checkout` change les
+ * références *et* les fichiers).
+ */
+export interface RepoChangedEvent {
+  repoId: string;
+  /** Working directory ou index modifiés → statut à relire. */
+  worktree: boolean;
+  /** Références déplacées (`HEAD`, `refs/**`, fusion) → branches et graph. */
+  refs: boolean;
+}
+
+/**
  * Dépôt distant d'un onglet. `host` est la clé sous laquelle les identifiants
  * sont rangés — null si l'URL n'expose pas d'hôte (chemin local).
  */

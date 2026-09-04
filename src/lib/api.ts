@@ -17,6 +17,7 @@ import type {
   RemoteBranchEntry,
   RemoteInfo,
   RecentRepo,
+  RepoChangedEvent,
   RepoInfo,
   RepoStatus,
   SessionInfo,
@@ -137,6 +138,17 @@ export const api = {
     listen<PullEvent>("repo://pulled", (e) => handler(e.payload)),
   /** Sortie de secours d'un pull qui a conflité ; renvoie les infos à jour. */
   abortMerge: (repoId: string) => call<RepoInfo>("abort_merge", { repoId }),
+  // ── Surveillance du disque ───────────────────────────────────────────────
+  /**
+   * S'abonne aux changements détectés sur le disque : un éditeur qui enregistre,
+   * un `git` lancé au terminal, un autre client. Le backend surveille les dépôts
+   * ouverts et émet sans qu'on ait rien demandé — l'événement porte donc son
+   * `repoId`, comme celui du fetch.
+   *
+   * Aucun réseau n'est en jeu : il n'y a que du disque à relire.
+   */
+  onRepoChanged: (handler: (event: RepoChangedEvent) => void): Promise<UnlistenFn> =>
+    listen<RepoChangedEvent>("repo://changed", (e) => handler(e.payload)),
   /** Mode du bouton Pull : préférence globale, persistée par le backend. */
   getPullMode: () => call<PullMode>("get_pull_mode"),
   setPullMode: (mode: PullMode) => call<void>("set_pull_mode", { mode }),

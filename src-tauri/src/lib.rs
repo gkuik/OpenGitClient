@@ -6,6 +6,7 @@ mod dto;
 mod error;
 mod git;
 mod state;
+mod watcher;
 
 use std::sync::Mutex;
 
