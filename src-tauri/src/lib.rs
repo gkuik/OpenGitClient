@@ -42,6 +42,7 @@ pub fn run() {
             commands::unstage_file,
             commands::stage_all,
             commands::unstage_all,
+            commands::discard_all,
             commands::commit,
             commands::list_recent,
             commands::list_branches,

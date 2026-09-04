@@ -82,6 +82,13 @@ export const api = {
     call<void>("unstage_file", { repoId, path }),
   stageAll: (repoId: string) => call<void>("stage_all", { repoId }),
   unstageAll: (repoId: string) => call<void>("unstage_all", { repoId }),
+  /**
+   * Abandonne tous les changements : retour à HEAD pour les fichiers suivis,
+   * suppression des non suivis. Irréversible — l'appelant confirme avant.
+   * Renvoie les infos du dépôt, dont `merging` qu'une fusion refermée remet à
+   * `false`.
+   */
+  discardAll: (repoId: string) => call<RepoInfo>("discard_all", { repoId }),
   commit: (repoId: string, summary: string, body: string | null, amend: boolean) =>
     call<CommitResult>("commit", { repoId, summary, body, amend }),
 

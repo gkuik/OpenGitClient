@@ -8,22 +8,86 @@
 
   const unstagedCount = $derived(repo.unstagedEntries.length);
   const stagedCount = $derived(repo.stagedEntries.length);
+
+  // ── Abandon de tous les changements ─────────────────────────────────────────
+  // Irréversible, et sans dialogue natif (aucune capacité de confirmation
+  // déclarée) : la demande est un panneau ancré sous le bouton, qui dit ce qui
+  // va disparaître avant de le faire.
+  let confirming = $state(false);
+
+  // Les non suivis seront *supprimés* du disque, les suivis seulement ramenés à
+  // HEAD : les deux nombres sont annoncés séparément parce qu'ils ne coûtent pas
+  // la même chose. Aucun chemin n'est dans les deux — un fichier indexé n'est
+  // plus non suivi — donc la soustraction est exacte.
+  const untrackedCount = $derived(repo.status?.untracked.length ?? 0);
+  const trackedCount = $derived(repo.changeCount - untrackedCount);
+
+  async function discard() {
+    confirming = false;
+    await repo.discardAll();
+  }
 </script>
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key === "Escape") confirming = false;
+  }}
+/>
 
 <div class="panel">
   {#if !repo.repoInfo}
     <p class="empty">Aucun dépôt ouvert.</p>
   {:else}
-    <!-- En-tête : nombre de changements + branche courante. -->
+    <!-- En-tête : « N changements sur <branche> », le tout aligné à gauche. -->
     <div class="sb-head">
       <span class="count">
         {repo.changeCount}
         {repo.changeCount > 1 ? "changements" : "changement"}
       </span>
       {#if repo.repoInfo.branch}
+        <span class="on">sur</span>
         <span class="branch" title={repo.repoInfo.branch}>⎇ {repo.repoInfo.branch}</span>
       {:else if repo.repoInfo.isDetached}
+        <span class="on">sur</span>
         <span class="branch detached">HEAD détaché</span>
+      {/if}
+
+      <button
+        class="discard"
+        onclick={() => (confirming = !confirming)}
+        disabled={repo.changeCount === 0 || repo.busy}
+        title="Abandonner tous les changements en cours"
+        aria-expanded={confirming}
+      >
+        ↺ Tout abandonner
+      </button>
+
+      {#if confirming}
+        <!-- Superposition qui referme au clic à côté, comme les menus de la
+             colonne de gauche. -->
+        <button class="scrim" aria-label="Annuler" onclick={() => (confirming = false)}
+        ></button>
+        <div class="confirm" role="dialog" aria-label="Abandonner tous les changements">
+          <p class="c-title">Abandonner tous les changements ?</p>
+          <p class="c-text">
+            {#if trackedCount > 0}
+              {trackedCount}
+              {trackedCount > 1 ? "fichiers suivis reviendront" : "fichier suivi reviendra"} à
+              l'état du dernier commit{untrackedCount > 0 ? "," : "."}
+            {/if}
+            {#if untrackedCount > 0}
+              {untrackedCount}
+              {untrackedCount > 1
+                ? "fichiers non suivis seront supprimés"
+                : "fichier non suivi sera supprimé"} du disque.
+            {/if}
+            Rien n'est récupérable ensuite.
+          </p>
+          <div class="c-actions">
+            <button class="c-cancel" onclick={() => (confirming = false)}>Annuler</button>
+            <button class="c-ok" onclick={discard}>Tout abandonner</button>
+          </div>
+        </div>
       {/if}
     </div>
 
@@ -110,30 +174,128 @@
     min-height: 0;
   }
   .sb-head {
+    position: relative;
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
+    gap: 0.35rem;
     padding: 0.5rem 0.7rem;
     border-bottom: 1px solid var(--border);
   }
   .count {
     font-size: 0.82rem;
     font-weight: 600;
+    flex: none;
+    white-space: nowrap;
   }
+  .on {
+    font-size: 0.75rem;
+    color: var(--text-dim);
+    flex: none;
+  }
+  /* La branche est la seule à céder : elle s'ellipse au lieu de déborder. */
   .branch {
     font-size: 0.75rem;
     color: var(--accent-soft);
     background: var(--bg-raised);
     padding: 0.1rem 0.45rem;
     border-radius: 4px;
-    max-width: 55%;
+    flex: 0 1 auto;
+    min-width: 0;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
   }
   .branch.detached {
     color: var(--warn);
+  }
+
+  /* Action destructrice : collée à droite, dans le rouge des « Tout retirer ». */
+  .discard {
+    flex: none;
+    margin-left: auto;
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text-dim);
+    font-size: 0.7rem;
+    padding: 0.15rem 0.45rem;
+    border-radius: 4px;
+    cursor: pointer;
+    white-space: nowrap;
+  }
+  .discard:not(:disabled) {
+    color: var(--danger);
+    border-color: var(--danger-border);
+  }
+  .discard:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+  .discard:disabled {
+    opacity: 0.4;
+    cursor: default;
+  }
+
+  /* ── Confirmation ── */
+  .scrim {
+    position: fixed;
+    inset: 0;
+    z-index: 50;
+    background: transparent;
+    border: none;
+    padding: 0;
+    cursor: default;
+  }
+  /* Ancrée sous l'en-tête et large comme la colonne : la sidebar est trop
+     étroite pour un panneau qui choisirait sa propre largeur. */
+  .confirm {
+    position: absolute;
+    z-index: 51;
+    top: 100%;
+    left: 0.5rem;
+    right: 0.5rem;
+    margin-top: 0.25rem;
+    padding: 0.6rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    box-shadow: 0 8px 24px var(--shadow-color);
+  }
+  .c-title {
+    margin: 0 0 0.35rem;
+    font-size: 0.8rem;
+    font-weight: 600;
+  }
+  .c-text {
+    margin: 0 0 0.6rem;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    line-height: 1.35;
+  }
+  .c-actions {
+    display: flex;
+    justify-content: flex-end;
+    gap: 0.4rem;
+  }
+  .c-actions button {
+    font-size: 0.75rem;
+    padding: 0.2rem 0.6rem;
+    border-radius: 4px;
+    cursor: pointer;
+  }
+  .c-cancel {
+    background: transparent;
+    border: 1px solid var(--border);
+    color: var(--text);
+  }
+  .c-cancel:hover {
+    border-color: var(--accent);
+  }
+  .c-ok {
+    background: var(--danger);
+    border: 1px solid var(--danger);
+    color: var(--accent-text);
+  }
+  .c-ok:hover {
+    filter: brightness(1.1);
   }
 
   .toolbar {
