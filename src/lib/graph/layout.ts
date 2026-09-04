@@ -7,9 +7,12 @@
 import type { GraphCommit } from "../types";
 
 /**
- * Palette des lanes, alignée sur les couleurs de badges déjà utilisées dans
- * l'app. La couleur d'une lane est son index modulo la taille de la palette :
- * stable tant que la lane vit, et sans état à maintenir.
+ * Palette des lanes en thème sombre, alignée sur les couleurs de badges déjà
+ * utilisées dans l'app. La couleur d'une lane est son index modulo la taille de
+ * la palette : stable tant que la lane vit, et sans état à maintenir.
+ *
+ * Les lanes sont peintes sur un canvas : elles échappent aux variables CSS et
+ * sont donc le seul endroit du frontend où les deux thèmes coexistent en dur.
  */
 export const LANE_COLORS = [
   "#60a5fa",
@@ -21,6 +24,31 @@ export const LANE_COLORS = [
   "#fb923c",
   "#f472b6",
 ];
+
+/**
+ * La même palette en thème clair : mêmes teintes, en plus soutenu. Les couleurs
+ * du thème sombre sont choisies pour briller sur un fond presque noir — sur
+ * blanc, un trait de 1,6px dans ces tons disparaît.
+ *
+ * **Même longueur et même ordre que `LANE_COLORS`**, obligatoirement : l'index
+ * de couleur calculé ici accompagne chaque lane et chaque arête, et il ne
+ * connaît pas le thème.
+ */
+export const LANE_COLORS_LIGHT = [
+  "#2563eb",
+  "#16a34a",
+  "#d97706",
+  "#dc2626",
+  "#7c3aed",
+  "#0891b2",
+  "#ea580c",
+  "#db2777",
+];
+
+/** Palette à utiliser pour le thème courant. */
+export function lanePalette(dark: boolean): string[] {
+  return dark ? LANE_COLORS : LANE_COLORS_LIGHT;
+}
 
 /**
  * Nature d'un segment dessiné dans une rangée :

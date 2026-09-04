@@ -133,7 +133,7 @@
     white-space: nowrap;
   }
   .branch.detached {
-    color: #fbbf24;
+    color: var(--warn);
   }
 
   .toolbar {
@@ -173,7 +173,7 @@
   }
   .seg button.active {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
   }
 
   /* ── Les deux sections partagent la hauteur ── */
@@ -245,18 +245,18 @@
   }
   /* Vert pour indexer, rouge pour retirer (comme la référence). */
   .sec-action.stage:not(:disabled) {
-    color: #4ade80;
-    border-color: rgba(74, 222, 128, 0.45);
+    color: var(--ok);
+    border-color: var(--ok-border);
   }
   .sec-action.unstage:not(:disabled) {
-    color: #f87171;
-    border-color: rgba(248, 113, 113, 0.45);
+    color: var(--danger);
+    border-color: var(--danger-border);
   }
   .sec-action.stage:hover:not(:disabled) {
-    background: rgba(74, 222, 128, 0.12);
+    background: var(--ok-bg);
   }
   .sec-action.unstage:hover:not(:disabled) {
-    background: rgba(248, 113, 113, 0.12);
+    background: var(--danger-bg);
   }
   .sec-action:disabled {
     opacity: 0.4;

@@ -21,6 +21,7 @@ import type {
   RepoStatus,
   SessionInfo,
   StashEntry,
+  ThemeMode,
 } from "./types";
 
 // ── Point d'accès UNIQUE au backend Rust ──────────────────────────────────
@@ -138,6 +139,12 @@ export const api = {
   /** Mode du bouton Pull : préférence globale, persistée par le backend. */
   getPullMode: () => call<PullMode>("get_pull_mode"),
   setPullMode: (mode: PullMode) => call<void>("set_pull_mode", { mode }),
+  /**
+   * Thème de l'interface : préférence globale, persistée. `setTheme` aligne au
+   * passage l'apparence de la fenêtre native, que le webview ne peut pas peindre.
+   */
+  getTheme: () => call<ThemeMode>("get_theme"),
+  setTheme: (mode: ThemeMode) => call<void>("set_theme", { theme: mode }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */
   getRemoteInfo: (repoId: string, remote?: string) =>
     call<RemoteInfo>("get_remote_info", { repoId, remote: remote ?? null }),

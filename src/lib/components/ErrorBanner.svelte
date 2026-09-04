@@ -25,13 +25,15 @@
     display: flex;
     align-items: center;
     gap: 0.6rem;
-    background: #7f1d1d;
-    color: #fee2e2;
+    background: var(--error-bg);
+    color: var(--error-text);
     padding: 0.5rem 0.8rem;
     border-radius: 6px;
     font-size: 0.85rem;
-    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.35);
+    box-shadow: 0 6px 20px var(--shadow-color);
   }
+  /* Le voile reste sombre dans les deux thèmes : il se pose sur l'aplat rouge
+     du bandeau, pas sur le fond de l'application. */
   .kind {
     font-weight: 600;
     background: rgba(0, 0, 0, 0.25);

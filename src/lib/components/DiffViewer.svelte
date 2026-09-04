@@ -150,11 +150,11 @@
     padding: 0.15rem 0.8rem;
   }
   .line.addition {
-    background: rgba(34, 197, 94, 0.12);
-    color: #86efac;
+    background: var(--diff-add-bg);
+    color: var(--ok-soft);
   }
   .line.deletion {
-    background: rgba(239, 68, 68, 0.12);
-    color: #fca5a5;
+    background: var(--diff-del-bg);
+    color: var(--danger-soft);
   }
 </style>

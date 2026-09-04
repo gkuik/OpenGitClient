@@ -190,8 +190,8 @@
   .merge {
     flex: none;
     font-size: 0.68rem;
-    color: #fbbf24;
-    border: 1px solid rgba(251, 191, 36, 0.45);
+    color: var(--warn);
+    border: 1px solid var(--warn-border);
     padding: 0.05rem 0.3rem;
     border-radius: 4px;
   }
@@ -233,11 +233,11 @@
     font-size: 0.72rem;
   }
   /* Même code couleur que la liste des fichiers modifiés (voir badges.ts). */
-  .badge.mod { color: #fbbf24; }
-  .badge.add { color: #4ade80; }
-  .badge.del { color: #f87171; }
-  .badge.ren { color: #60a5fa; }
-  .badge.unt { color: #a3a3a3; }
+  .badge.mod { color: var(--warn); }
+  .badge.add { color: var(--ok); }
+  .badge.del { color: var(--danger); }
+  .badge.ren { color: var(--info); }
+  .badge.unt { color: var(--neutral); }
   .path {
     flex: 1;
     min-width: 0;

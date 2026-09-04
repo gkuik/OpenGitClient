@@ -21,7 +21,11 @@ pub fn run() {
         .setup(|app| {
             // L'état a besoin d'un AppHandle pour persister les dépôts récents.
             let handle = app.handle().clone();
-            app.manage(Mutex::new(AppState::new(handle)));
+            let state = AppState::new(handle.clone());
+            // La fenêtre native prend le thème persisté avant d'être montrée :
+            // le frontend ne peut pas s'en charger, il ne repeint que le webview.
+            commands::apply_window_theme(&handle, state.theme());
+            app.manage(Mutex::new(state));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -49,6 +53,8 @@ pub fn run() {
             commands::abort_merge,
             commands::get_pull_mode,
             commands::set_pull_mode,
+            commands::get_theme,
+            commands::set_theme,
             commands::get_remote_info,
             commands::set_credentials,
             commands::forget_credentials,

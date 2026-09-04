@@ -402,7 +402,7 @@
     transition: none;
     z-index: 2;
     cursor: grabbing;
-    box-shadow: 0 6px 16px rgb(0 0 0 / 45%);
+    box-shadow: 0 6px 16px var(--shadow-color);
   }
   .name {
     font-weight: 600;

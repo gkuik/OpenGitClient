@@ -319,6 +319,21 @@ impl Default for PullMode {
     }
 }
 
+/// Thème de l'interface, choisi dans les paramètres et persisté.
+///
+/// `System` n'est **pas** une troisième palette : c'est l'absence de choix, que
+/// le frontend résout en clair ou sombre selon `prefers-color-scheme`. C'est
+/// aussi ce que reçoit la fenêtre native — `set_theme(None)` la laisse suivre le
+/// système, là où `Some(...)` la fige.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ThemeMode {
+    #[default]
+    System,
+    Light,
+    Dark,
+}
+
 /// Résultat d'un pull : ce qui a été récupéré, puis ce qui en a été fait.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

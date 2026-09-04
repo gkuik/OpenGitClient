@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
     Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo, RepoInfo,
-    RepoStatus, SessionInfo, StashEntry,
+    RepoStatus, SessionInfo, StashEntry, ThemeMode,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -348,6 +348,46 @@ pub fn set_pull_mode(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
     lock(&state)?.set_pull_mode(mode)
+}
+
+/// Thème de l'interface (préférence globale, persistée).
+#[tauri::command]
+pub fn get_theme(state: State<'_, Mutex<AppState>>) -> Result<ThemeMode, AppError> {
+    Ok(lock(&state)?.theme())
+}
+
+/// Change le thème : persistance de la préférence, puis fenêtre native.
+///
+/// Les couleurs de l'interface, elles, sont l'affaire du webview (voir
+/// `src/lib/theme.svelte.ts`) : ce que la fenêtre reçoit ici, c'est son
+/// apparence *native* — le fond que macOS peint derrière le contenu, la teinte
+/// des boutons de fenêtre et celle du sélecteur de dossier.
+#[tauri::command]
+pub fn set_theme(
+    theme: ThemeMode,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.set_theme(theme)?;
+    apply_window_theme(&app, theme);
+    Ok(())
+}
+
+/// Aligne l'apparence de la fenêtre principale sur le thème choisi.
+///
+/// `System` se traduit par `None`, qui laisse la fenêtre suivre le système —
+/// c'est bien une absence de consigne, pas une troisième apparence. L'échec est
+/// ignoré : sur une plateforme qui ne sait pas changer de thème, l'interface,
+/// elle, reste dans la bonne palette.
+pub fn apply_window_theme(app: &AppHandle, theme: ThemeMode) {
+    let native = match theme {
+        ThemeMode::System => None,
+        ThemeMode::Light => Some(tauri::Theme::Light),
+        ThemeMode::Dark => Some(tauri::Theme::Dark),
+    };
+    if let Some(window) = app.get_webview_window("main") {
+        let _ = window.set_theme(native);
+    }
 }
 
 /// Nom de l'événement portant le résultat d'un push (voir `src/lib/api.ts`).

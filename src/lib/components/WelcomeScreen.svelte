@@ -57,7 +57,7 @@
   .open {
     align-self: flex-start;
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
     border: none;
     padding: 0.5rem 1rem;
     border-radius: 6px;

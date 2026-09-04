@@ -143,12 +143,12 @@
   }
   /* Branche courante : fond vert + coche, comme la référence. */
   .branch.current {
-    background: rgba(74, 222, 128, 0.16);
-    color: #86efac;
+    background: var(--ok-bg);
+    color: var(--ok-soft);
     font-weight: 600;
   }
   .branch.current:hover {
-    background: rgba(74, 222, 128, 0.22);
+    background: var(--ok-bg-hover);
   }
   /* Branche dont la tête est le commit affiché à droite. */
   .branch.selected {
@@ -158,7 +158,7 @@
     flex: none;
     width: 0.8rem;
     font-size: 0.7rem;
-    color: #4ade80;
+    color: var(--ok);
   }
   .ic {
     flex: none;
@@ -167,7 +167,7 @@
     color: var(--text-faint);
   }
   .branch.current .ic {
-    color: #4ade80;
+    color: var(--ok);
   }
   /* Écart avec l'amont : à pousser en accent, à récupérer en atténué. Les
      chiffres sont tabulaires pour que les pastilles ne dansent pas d'une ligne

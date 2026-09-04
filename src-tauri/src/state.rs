@@ -12,7 +12,7 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::dto::{Profile, PullMode, RecentRepo, SessionInfo};
+use crate::dto::{Profile, PullMode, RecentRepo, SessionInfo, ThemeMode};
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
 
@@ -190,6 +190,17 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Thème de l'interface.
+    pub fn theme(&self) -> ThemeMode {
+        self.prefs.theme
+    }
+
+    /// Change le thème et le persiste.
+    pub fn set_theme(&mut self, theme: ThemeMode) -> Result<(), AppError> {
+        self.prefs.theme = theme;
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -274,6 +285,7 @@ fn config_path(app: &AppHandle, file: &str) -> Result<PathBuf, AppError> {
 #[serde(default, rename_all = "camelCase")]
 struct Prefs {
     pull_mode: PullMode,
+    theme: ThemeMode,
 }
 
 fn load_json<T: for<'de> Deserialize<'de>>(app: &AppHandle, file: &str) -> Option<T> {

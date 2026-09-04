@@ -2,7 +2,15 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { tabs } from "../stores/repo.svelte";
-  import type { AppError, Profile } from "../types";
+  import { theme } from "../theme.svelte";
+  import type { AppError, Profile, ThemeMode } from "../types";
+
+  /** Les trois thèmes proposés, dans l'ordre d'affichage du segmenté. */
+  const THEMES: { mode: ThemeMode; label: string }[] = [
+    { mode: "light", label: "Clair" },
+    { mode: "dark", label: "Sombre" },
+    { mode: "system", label: "Système" },
+  ];
 
   /** Profil en cours d'édition. `id` à null = création. */
   type Draft = { id: string | null; label: string; name: string; email: string };
@@ -198,6 +206,27 @@
         ×
       </button>
     </header>
+
+    <section>
+      <h2>Apparence</h2>
+      <p class="intro">
+        Le thème s'applique à toute l'application. <strong>Système</strong> suit
+        l'apparence du système et bascule avec elle, même pendant que GitLite
+        tourne.
+      </p>
+
+      <div class="seg" role="group" aria-label="Thème de l'interface">
+        {#each THEMES as entry (entry.mode)}
+          <button
+            class:active={theme.mode === entry.mode}
+            aria-pressed={theme.mode === entry.mode}
+            onclick={() => theme.set(entry.mode)}
+          >
+            {entry.label}
+          </button>
+        {/each}
+      </div>
+    </section>
 
     <section>
       <h2>Profils</h2>
@@ -455,11 +484,39 @@
   .error {
     margin: 0 0 1rem;
     padding: 0.5rem 0.7rem;
-    border: 1px solid #7f1d1d;
+    border: 1px solid var(--danger-border);
     border-radius: 6px;
-    background: rgba(127, 29, 29, 0.25);
-    color: #fca5a5;
+    background: var(--danger-bg);
+    color: var(--danger-soft);
     font-size: 0.82rem;
+  }
+
+  /* Choix du thème : trois options exclusives dont une est forcément active,
+     donc un segmenté — pas trois cases à cocher. */
+  .seg {
+    display: flex;
+    width: fit-content;
+    margin-bottom: 1.2rem;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .seg button {
+    border: none;
+    border-radius: 0;
+    background: var(--bg-raised);
+    color: var(--text-dim);
+    padding: 0.35rem 0.9rem;
+  }
+  .seg button + button {
+    border-left: 1px solid var(--border);
+  }
+  .seg button:hover:not(.active) {
+    color: var(--text);
+  }
+  .seg button.active {
+    background: var(--accent);
+    color: var(--accent-text);
   }
 
   .profiles,
@@ -540,7 +597,7 @@
     color: var(--text-faint);
   }
   .state.stored {
-    color: #86efac;
+    color: var(--ok-soft);
   }
 
   form {
@@ -599,15 +656,15 @@
   }
   .primary {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
   }
   .danger {
     background: transparent;
-    border-color: #7f1d1d;
-    color: #fca5a5;
+    border-color: var(--danger-border);
+    color: var(--danger-soft);
   }
   .danger:hover {
-    background: rgba(127, 29, 29, 0.25);
+    background: var(--danger-bg);
   }
   button:disabled {
     opacity: 0.5;

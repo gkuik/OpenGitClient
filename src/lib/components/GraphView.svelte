@@ -1,7 +1,8 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { repo } from "../stores/repo.svelte";
-  import { LANE_COLORS, layoutGraph } from "../graph/layout";
+  import { theme } from "../theme.svelte";
+  import { lanePalette, layoutGraph } from "../graph/layout";
 
   // ── Géométrie ──────────────────────────────────────────────────────────────
   // ROW_H est la seule chose qui aligne le canvas et le DOM : elle est appliquée
@@ -27,6 +28,21 @@
   let restoring = false;
 
   const layout = $derived(layoutGraph(repo.graph));
+  /*
+    Le canvas ne voit pas les variables CSS : le thème lui parvient par le
+    store, et le redessin suit tout seul — `draw` lit ces dérivées, donc son
+    effet se réexécute quand la palette change.
+
+    `ring` détache le point de la ligne de même couleur qui le traverse : c'est
+    le fond du thème. `halo` marque le commit sélectionné : son contraire.
+  */
+  const lanes = $derived(lanePalette(theme.dark));
+  const ring = $derived(
+    theme.dark ? "rgba(0, 0, 0, 0.55)" : "rgba(255, 255, 255, 0.9)",
+  );
+  const halo = $derived(
+    theme.dark ? "rgba(255, 255, 255, 0.9)" : "rgba(0, 0, 0, 0.7)",
+  );
   const gutterW = $derived(
     PAD_X * 2 + Math.max(layout.laneCount, MIN_LANES) * LANE_W,
   );
@@ -107,7 +123,7 @@
       for (const edge of row.edges) {
         const x1 = laneX(edge.fromLane);
         const x2 = laneX(edge.toLane);
-        ctx.strokeStyle = LANE_COLORS[edge.color];
+        ctx.strokeStyle = lanes[edge.color];
         ctx.beginPath();
         if (edge.kind === "through") {
           ctx.moveTo(x1, top);
@@ -124,23 +140,22 @@
         ctx.stroke();
       }
 
-      // Point du commit. L'anneau sombre le détache de la ligne qui le traverse
-      // (même couleur) et reste lisible quelle que soit la surbrillance de la
-      // ligne, sur laquelle le canvas est superposé.
+      // Point du commit. L'anneau le détache de la ligne qui le traverse (même
+      // couleur) et reste lisible quelle que soit la surbrillance de la ligne,
+      // sur laquelle le canvas est superposé.
       const x = laneX(row.lane);
       ctx.beginPath();
       ctx.arc(x, mid, DOT_R, 0, Math.PI * 2);
-      ctx.fillStyle = LANE_COLORS[row.color];
+      ctx.fillStyle = lanes[row.color];
       ctx.fill();
-      ctx.strokeStyle = "rgba(0, 0, 0, 0.55)";
+      ctx.strokeStyle = ring;
       ctx.lineWidth = 2;
       ctx.stroke();
 
       if (row.commit.oid === selected) {
         ctx.beginPath();
         ctx.arc(x, mid, DOT_R + 3, 0, Math.PI * 2);
-        // L'app est en thème sombre fixe (color-scheme: dark dans app.css).
-        ctx.strokeStyle = "rgba(255, 255, 255, 0.9)";
+        ctx.strokeStyle = halo;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
@@ -276,7 +291,7 @@
                 class="ref"
                 class:head={r.kind === "head"}
                 class:remote={r.kind === "remoteBranch"}
-                style="--lane: {LANE_COLORS[row.color]}"
+                style="--lane: {lanes[row.color]}"
                 title={r.name}
               >
                 {r.name}

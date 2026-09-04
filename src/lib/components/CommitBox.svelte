@@ -149,7 +149,7 @@
     width: 100%;
     padding: 0.45rem 1.9rem 0.45rem 0.6rem;
     background-color: var(--bg-raised);
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+    background-image: var(--select-chevron);
     background-repeat: no-repeat;
     background-position: right 0.6rem center;
     background-size: 10px 6px;
@@ -186,7 +186,7 @@
     pointer-events: none;
   }
   .counter.over {
-    color: #fbbf24;
+    color: var(--warn);
   }
   .summary,
   .body {
@@ -219,7 +219,7 @@
   }
   .commit-btn {
     background: var(--accent);
-    color: #fff;
+    color: var(--accent-text);
     border: none;
     padding: 0.55rem;
     border-radius: 6px;

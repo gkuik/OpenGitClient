@@ -1,4 +1,16 @@
-/* Thème sombre sobre + variables partagées par les composants. */
+/*
+  Palette de l'application, en deux thèmes.
+
+  Le sombre est la base : il vit sur `:root`, le clair ne fait que redéfinir les
+  mêmes variables sous `[data-theme="light"]`. Aucun composant ne connaît le
+  thème courant — ils ne lisent que des variables — donc en ajouter un revient à
+  écrire un bloc de plus ici. C'est `src/lib/theme.svelte.ts` qui pose l'attribut
+  sur `<html>`, après avoir résolu « système » en clair ou sombre.
+
+  Les couleurs d'état (vert, rouge, ambre…) sont des variables au même titre que
+  les fonds : une valeur en dur dans un composant serait illisible dans l'autre
+  thème, un vert clair sur blanc n'ayant plus aucun contraste.
+*/
 :root {
   --bg: #1a1b1e;
   --bg-raised: #26272b;
@@ -9,6 +21,47 @@
   --accent: #4f46e5;
   --accent-bg: rgba(79, 70, 229, 0.22);
   --accent-soft: #a5b4fc;
+  /* Texte posé sur `--accent` (bouton plein). */
+  --accent-text: #fff;
+
+  /* États. `-soft` est la variante lisible sur un fond teinté ; `-bg` le fond
+     teinté lui-même ; `-border` son liseré. */
+  --ok: #4ade80;
+  --ok-soft: #86efac;
+  --ok-bg: rgba(74, 222, 128, 0.16);
+  --ok-bg-hover: rgba(74, 222, 128, 0.22);
+  --ok-border: rgba(74, 222, 128, 0.45);
+  --danger: #f87171;
+  --danger-soft: #fca5a5;
+  --danger-bg: rgba(248, 113, 113, 0.14);
+  --danger-border: rgba(248, 113, 113, 0.5);
+  --warn: #fbbf24;
+  --warn-bg: rgba(250, 204, 21, 0.12);
+  --warn-border: rgba(251, 191, 36, 0.45);
+  --info: #60a5fa;
+  /* Fichier non suivi : gris neutre, ni erreur ni succès. */
+  --neutral: #a3a3a3;
+
+  /* Diff : lavis pleine ligne, plus discret qu'un fond d'état. */
+  --diff-add-bg: rgba(34, 197, 94, 0.12);
+  --diff-del-bg: rgba(239, 68, 68, 0.12);
+
+  /* Bandeau d'erreur : le seul aplat rouge de l'interface. */
+  --error-bg: #7f1d1d;
+  --error-text: #fee2e2;
+
+  /* Voile derrière un dialogue, teinte des ombres, ascenseur. */
+  --scrim: rgba(0, 0, 0, 0.45);
+  --shadow-color: rgba(0, 0, 0, 0.45);
+  --scrollbar-thumb: #3a3b40;
+
+  /*
+    Chevron des `<select>` en `appearance: none` (voir CommitBox). La couleur
+    étant enfermée dans l'URL data:, elle ne peut pas venir d'un `var()` : c'est
+    l'image entière qui change de thème.
+  */
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%239ca3af' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
   --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, Consolas, monospace;
   /* Les deux colonnes latérales partagent la même largeur ; un seul point de réglage. */
   --sidebar-w: 300px;
@@ -16,6 +69,53 @@
   color-scheme: dark;
   font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
   font-size: 14px;
+}
+
+/*
+  Thème clair. Les états ne sont pas les mêmes teintes éclaircies mais des tons
+  plus soutenus : sur blanc, c'est le texte qui doit être sombre, l'inverse exact
+  du thème sombre.
+*/
+:root[data-theme="light"] {
+  --bg: #ffffff;
+  --bg-raised: #f1f2f5;
+  --border: #dcdee3;
+  --text: #1c1d21;
+  --text-dim: #5a5f6a;
+  --text-faint: #868b95;
+  --accent: #4f46e5;
+  --accent-bg: rgba(79, 70, 229, 0.12);
+  --accent-soft: #4338ca;
+  --accent-text: #fff;
+
+  --ok: #16a34a;
+  --ok-soft: #15803d;
+  --ok-bg: rgba(22, 163, 74, 0.12);
+  --ok-bg-hover: rgba(22, 163, 74, 0.18);
+  --ok-border: rgba(22, 163, 74, 0.45);
+  --danger: #dc2626;
+  --danger-soft: #b91c1c;
+  --danger-bg: rgba(220, 38, 38, 0.1);
+  --danger-border: rgba(220, 38, 38, 0.4);
+  --warn: #b45309;
+  --warn-bg: rgba(245, 158, 11, 0.16);
+  --warn-border: rgba(180, 83, 9, 0.4);
+  --info: #2563eb;
+  --neutral: #6b7280;
+
+  --diff-add-bg: rgba(22, 163, 74, 0.1);
+  --diff-del-bg: rgba(220, 38, 38, 0.09);
+
+  --error-bg: #b91c1c;
+  --error-text: #fef2f2;
+
+  --scrim: rgba(17, 24, 39, 0.32);
+  --shadow-color: rgba(15, 23, 42, 0.18);
+  --scrollbar-thumb: #c7cad1;
+
+  --select-chevron: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 10 6'%3E%3Cpath d='M1 1l4 4 4-4' fill='none' stroke='%235a5f6a' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E");
+
+  color-scheme: light;
 }
 
 * {
@@ -48,7 +148,7 @@ body {
   height: 10px;
 }
 ::-webkit-scrollbar-thumb {
-  background: #3a3b40;
+  background: var(--scrollbar-thumb);
   border-radius: 6px;
 }
 ::-webkit-scrollbar-track {

@@ -795,7 +795,7 @@
     background: var(--bg-raised);
     border: 1px solid var(--border);
     border-radius: 6px;
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px var(--shadow-color);
   }
   .ctx-item {
     display: flex;
@@ -849,10 +849,10 @@
     color: var(--accent-soft);
   }
   .ctx-item.danger {
-    color: #f87171;
+    color: var(--danger);
   }
   .ctx-item.danger:hover {
-    background: rgba(248, 113, 113, 0.14);
+    background: var(--danger-bg);
   }
   .ctx-sep {
     height: 1px;
