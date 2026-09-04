@@ -3,6 +3,7 @@
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
+  import { groupRefs } from "../graph/refs";
   import type { TreeCounts } from "../tree";
 
   // ── Géométrie ──────────────────────────────────────────────────────────────
@@ -16,6 +17,22 @@
   const WIP_R = DOT_R + 1.5;
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
+  /*
+    Colonne des noms de branches, à gauche des lanes — comme GitKraken. Fixe et
+    non dérivée du contenu : la calculer sur les rangées montées la ferait
+    varier au défilement, et la calculer sur tout l'historique la ferait sauter
+    à chaque page chargée. Les pastilles y sont alignées à droite, contre le
+    graph, et se resserrent entre elles plutôt que de déborder.
+  */
+  const REFS_W = 168;
+  /*
+    Pastilles affichées au maximum, le reste tenant dans un « +n ». Deux tiennent
+    dans la colonne ; au-delà elles se réduisent jusqu'à n'être plus qu'un
+    contour et des icônes, ce qui ne nomme plus rien. Mieux vaut dire combien il
+    en reste que les montrer illisibles. `groupRefs` les a triées par
+    importance : ce qui est masqué est ce qui compte le moins.
+  */
+  const MAX_REFS = 2;
   /** Lanes réservées au minimum : évite que le texte colle au bord. */
   const MIN_LANES = 2;
   /** Rangées restantes sous le viewport qui déclenchent le chargement suivant. */
@@ -69,6 +86,8 @@
   const gutterW = $derived(
     PAD_X * 2 + Math.max(layout.laneCount, MIN_LANES) * LANE_W,
   );
+  /** Début du texte de la rangée : colonne des refs, puis gouttière des lanes. */
+  const textX = $derived(REFS_W + gutterW);
 
   // Fenêtre de rangées réellement montées (virtualisation).
   const first = $derived(Math.max(0, Math.floor(scrollTop / ROW_H) - 1));
@@ -343,7 +362,7 @@
     <canvas
       class="lanes"
       bind:this={canvas}
-      style="width: {gutterW}px"
+      style="left: {REFS_W}px; width: {gutterW}px"
       aria-hidden="true"
     ></canvas>
 
@@ -354,7 +373,7 @@
             class="row"
             class:wip={row.kind === "wip"}
             class:selected={isSelected(row)}
-            style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; padding-left: {gutterW}px"
+            style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; padding-left: {textX}px"
             role="button"
             tabindex="0"
             onclick={() => activate(row)}
@@ -381,21 +400,74 @@
                 {#if counts.deleted}<span class="c del">− {counts.deleted}</span>{/if}
               </span>
             {:else}
-              <!-- La pastille reprend la couleur de la lane du commit. Les
-                   références distantes portent le nom du distant ("origin/main"),
-                   ce qui suffit à les nommer ; le pointillé les distingue au
-                   premier coup d'œil d'une branche présente en local. -->
-              {#each row.commit.refs as r (r.name)}
-                <span
-                  class="ref"
-                  class:head={r.kind === "head"}
-                  class:remote={r.kind === "remoteBranch"}
-                  style="--lane: {lanes[row.color]}"
-                  title={r.name}
-                >
-                  {r.name}
-                </span>
-              {/each}
+              <!-- Colonne des refs, hors du flux de la rangée (celle-ci ne
+                   commence qu'après la gouttière) : les pastilles se lisent en
+                   colonne, alignées contre le graph, et un commit qui en porte
+                   plusieurs ne décale plus son résumé.
+
+                   Une pastille par branche, pas par référence : `main` et
+                   `origin/main` au même commit n'ont qu'une chose à dire, et la
+                   disent une fois (voir `graph/refs.ts`). Ce qui reste tient
+                   dans le nom et deux icônes — l'écran pour « ici », le nuage
+                   pour « sur le serveur ». Une branche locale en avance ou en
+                   retard sur son distant est sur une autre rangée : ce sont
+                   alors deux pastilles, que ces icônes distinguent. La coche
+                   marque la branche courante, comme dans la sidebar. -->
+              {@const badges = groupRefs(row.commit.refs)}
+              <span class="refs" style="width: {REFS_W}px">
+                {#if badges.length > MAX_REFS}
+                  <span
+                    class="more"
+                    title={badges
+                      .slice(MAX_REFS)
+                      .map((b) => b.title)
+                      .join(" · ")}
+                  >
+                    +{badges.length - MAX_REFS}
+                  </span>
+                {/if}
+                {#each badges.slice(0, MAX_REFS) as b (b.key)}
+                  <span
+                    class="ref"
+                    class:head={b.isHead}
+                    class:remote={!b.local}
+                    style="--lane: {lanes[row.color]}"
+                    title={b.title}
+                  >
+                    {#if b.isHead}<span class="mark" aria-hidden="true">✓</span>{/if}
+                    <span class="bname">{b.name}</span>
+                    {#if b.local}
+                      <svg
+                        class="ic"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linejoin="round"
+                      >
+                        <title>en local</title>
+                        <rect x="2.25" y="3.25" width="11.5" height="8" rx="1.2" />
+                        <path d="M5.5 13.75h5" stroke-linecap="round" />
+                      </svg>
+                    {/if}
+                    {#if b.remotes.length > 0}
+                      <svg
+                        class="ic"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                        stroke="currentColor"
+                        stroke-width="1.5"
+                        stroke-linejoin="round"
+                      >
+                        <title>{b.remotes.join(", ")}</title>
+                        <path
+                          d="M4.6 11.6A2.2 2.2 0 0 1 4.9 7.3 3.3 3.3 0 0 1 11.2 7.6 2.1 2.1 0 0 1 11.4 11.6Z"
+                        />
+                      </svg>
+                    {/if}
+                  </span>
+                {/each}
+              </span>
               <span class="summary" title={row.commit.summary}>{row.commit.summary}</span>
               <span class="author" title={row.commit.authorName}>{row.commit.authorName}</span>
               <span class="date">{formatDate(row.commit.timestamp)}</span>
@@ -462,9 +534,29 @@
   .row.selected {
     background: var(--accent-bg);
   }
+  /* Hors du flux : la rangée réserve déjà la place par son `padding-left`, et
+     l'alignement à droite fait tenir les pastilles contre les lanes. */
+  .refs {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.25rem;
+    padding: 0 0.4rem 0 0.5rem;
+    overflow: hidden;
+  }
   .ref {
-    flex: none;
+    /* Plusieurs pastilles se resserrent au lieu de sortir de la colonne : chacune
+       garde de quoi montrer un début de nom, l'infobulle porte le nom complet. */
+    flex: 0 1 auto;
+    min-width: 3.2rem;
     max-width: 12rem;
+    display: flex;
+    align-items: center;
+    gap: 0.2rem;
     font-size: 0.7rem;
     /* `--lane` est posée en style inline par la ligne (couleur de la lane). */
     color: var(--lane);
@@ -475,6 +567,33 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Les pastilles en trop, comptées. Placée avant elles, la puce se lit comme un
+     « et n autres » à gauche de ce qui est montré, et c'est elle qui se fait
+     rogner en premier si la colonne déborde malgré tout. */
+  .more {
+    flex: none;
+    font-size: 0.68rem;
+    color: var(--text-dim);
+  }
+  /* Seul le nom se tronque : la coche et les icônes disent *quoi* est cette
+     branche, les rogner reviendrait à la décrire faussement. */
+  .bname {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .mark,
+  .ic {
+    flex: none;
+  }
+  .ic {
+    width: 0.72rem;
+    height: 0.72rem;
+    /* Le trait d'un pictogramme de 11px pèse plus lourd que celui d'une lettre :
+       l'atténuer le remet au niveau du nom qu'il accompagne. */
+    opacity: 0.75;
   }
   /* HEAD : même couleur, mais pastille pleine pour rester repérable d'un coup d'œil. */
   .ref.head {
