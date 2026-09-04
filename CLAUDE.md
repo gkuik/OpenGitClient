@@ -293,6 +293,43 @@ The write is debounced: a drag emits an event per frame, only its result reaches
 handle is an ARIA window splitter (`role="separator"` + `tabindex`), which is
 what the two `svelte-ignore` directives in the component are about.
 
+### The left sidebar never scrolls — its sections do
+
+`BranchSidebar` is a column that fits, always: the toolbar on top, then
+`.sections` filling exactly what's left. **The scroll lives in each section's
+`.sec-body`**, never in the sidebar as a whole, and the section headers are
+plain flow (they used to be `sticky` against the one scroller that no longer
+exists).
+
+Heights are distributed by the flex algorithm itself, not by any measuring code:
+open sections are `flex: 1 1 0` — an equal share each — capped by
+`max-height: max-content`, so flexbox freezes the ones smaller than their share
+and hands the leftover to the others. A three-branch LOCAL therefore never
+reserves a third of the column, and the long list absorbs what remains, scrolling
+inside itself.
+
+- **An open section is a `grid` (`auto minmax(0, 1fr)`), not a flex column, and
+  that is load-bearing.** Written as a flex column — `flex: none` header, then
+  `flex: 1 1 auto; min-height: 0` body — a section's max-content height is its
+  *header's* height in WKWebView: the scrolling body contributes nothing. Every
+  section then froze at ~22px with the free space falling through to the pinned
+  block. Chromium resolved the same stylesheet correctly, so this is only
+  visible in the app, never in a browser preview — measured in both engines,
+  which now agree to the pixel.
+- **`min-height: 0` on an open section is what makes any of it work.** A flex
+  item's automatic minimum is its min-content size, and a scroll container does
+  *not* zero out its parent's min-content: without that line the section refuses
+  to shrink below its whole list and the sidebar overflows again — which is the
+  exact bug this layout replaced. The real floor becomes the header; `minmax(0,
+  1fr)` is what lets the body go under its intrinsic height, i.e. scroll.
+- **Collapsed sections sink to the bottom** via `order: 1`, and the *first* of
+  them carries `margin-top: auto` — one auto margin per collapsed section would
+  split the free space and scatter them. That free space only exists when every
+  open section is frozen on its content, which is precisely when the gap should
+  be there.
+- Section heights are **not** draggable, unlike the sidebar widths; if that ever
+  changes, it belongs on `SidebarResizer`'s model, not on a new one.
+
 ### Commit descriptions render Markdown — without `{@html}`
 
 `src/lib/markdown.ts` parses a **subset** of Markdown into a block tree that `CommitBody.svelte` renders through ordinary Svelte interpolation. **Never replace this with a Markdown library + `{@html}`**: a commit message is third-party content (anyone can write one in a repo you clone) and the webview has `invoke` access, so that would be a live XSS path. It also keeps the zero-runtime-dependency footprint.

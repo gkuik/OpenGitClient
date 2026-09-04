@@ -60,6 +60,12 @@
   let remotesOpen = $state(true);
   let stashesOpen = $state(true);
 
+  // Les sections repliées descendent en bas de la colonne (`order` en CSS) ;
+  // la **première** d'entre elles porte la marge automatique qui les y colle —
+  // une marge par section repliée se partagerait l'espace libre et les
+  // éparpillerait. Cet index suit l'ordre du DOM, qui est aussi le leur.
+  const firstClosed = $derived([localOpen, remotesOpen, stashesOpen].indexOf(false));
+
   const nodes = $derived(buildBranchTree(repo.branches));
   // Un niveau de plus que LOCAL : le distant, puis son arborescence.
   const remotes = $derived(buildRemoteTree(repo.remoteBranches));
@@ -183,7 +189,7 @@
     </div>
 
     <div class="sections">
-      <section>
+      <section class:open={localOpen} class:pinned={firstClosed === 0}>
         <header>
           <button class="sec-title" onclick={() => (localOpen = !localOpen)} aria-expanded={localOpen}>
             <span class="chev" class:open={localOpen}>▶</span>
@@ -207,7 +213,7 @@
         {/if}
       </section>
 
-      <section>
+      <section class:open={remotesOpen} class:pinned={firstClosed === 1}>
         <header>
           <button
             class="sec-title"
@@ -253,7 +259,7 @@
         {/if}
       </section>
 
-      <section>
+      <section class:open={stashesOpen} class:pinned={firstClosed === 2}>
         <header>
           <button
             class="sec-title"
@@ -521,12 +527,16 @@
     border-right: 1px solid var(--border);
     background: var(--bg);
   }
-  /* Le défilement descend d'un cran : la barre d'actions reste fixe au-dessus,
-     et les en-têtes `sticky` collent en haut de cette zone-ci. */
+  /* La colonne ne défile pas : cette zone occupe exactement la hauteur laissée
+     par la barre d'actions, et c'est **chaque section** qui défile chez elle.
+     `overflow: hidden` n'est qu'un garde-fou pour une fenêtre trop courte même
+     pour les seuls en-têtes — voir la note sur `min-height` plus bas. */
   .sections {
     flex: 1;
     min-height: 0;
-    overflow-y: auto;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
   }
   .toolbar {
     flex: none;
@@ -648,10 +658,55 @@
     line-height: 1.4;
   }
   section {
-    display: flex;
-    flex-direction: column;
-    min-height: 0;
+    /* Le corps déborde de quelques pixels de padding quand la fenêtre est trop
+       courte pour les en-têtes eux-mêmes ; il est coupé ici plutôt que peint
+       par-dessus l'en-tête suivant. */
+    overflow: hidden;
   }
+  /*
+    Répartition « chacun sa taille, le reste au plus long », obtenue par
+    l'algorithme flexbox lui-même : base 0 + `flex-grow` donne à chaque section
+    ouverte une part égale, `max-height: max-content` gèle celles qui n'en ont
+    pas besoin, et flexbox redistribue leur reliquat aux autres. Une section de
+    trois branches ne réserve donc jamais un tiers de la colonne, et c'est la
+    plus longue qui absorbe ce qui reste — en défilant chez elle.
+
+    **La section est une grille, et ce n'est pas un choix de style.** En colonne
+    flex — en-tête `flex: none` puis corps `flex: 1 1 auto; min-height: 0` — la
+    hauteur max-content de la section vaut celle de son en-tête **dans
+    WKWebView** : le corps défilant n'y compte pour rien. Toutes les sections se
+    gelaient donc sur 22px, l'espace libre filant dans la marge du bloc replié.
+    Chromium, lui, calculait bien la même feuille : le bug ne se voyait que dans
+    l'app. En `grid-template-rows: auto minmax(0, 1fr)`, les deux moteurs
+    rendent le même résultat au pixel près.
+
+    `min-height: 0` reste indispensable : sans lui, le minimum automatique d'un
+    item flex vaut sa taille min-content, ici la liste entière ; la section
+    refuserait de rétrécir et la colonne déborderait. Le plancher réel devient
+    l'en-tête, et `minmax(0, 1fr)` autorise le corps à passer sous sa taille
+    intrinsèque — c'est-à-dire à défiler.
+  */
+  section.open {
+    display: grid;
+    grid-template-rows: auto minmax(0, 1fr);
+    flex: 1 1 0;
+    min-height: 0;
+    max-height: max-content;
+  }
+  /* Repliée : rien que son en-tête, et rejetée en fin de colonne. */
+  section:not(.open) {
+    flex: none;
+    order: 1;
+  }
+  /* Colle le bloc des sections repliées en bas : la marge automatique absorbe
+     l'espace libre, lequel n'existe justement que lorsque toutes les sections
+     ouvertes sont gelées sur leur contenu. */
+  section.pinned {
+    margin-top: auto;
+    border-top: 1px solid var(--border);
+  }
+  /* L'en-tête n'est plus `sticky` : il vit hors de la zone défilante, qui est
+     désormais le corps de sa propre section. */
   header {
     display: flex;
     align-items: center;
@@ -659,8 +714,6 @@
     gap: 0.5rem;
     padding: 0.5rem 0.6rem;
     border-bottom: 1px solid var(--border);
-    position: sticky;
-    top: 0;
     background: var(--bg);
   }
   .sec-title {
@@ -697,6 +750,8 @@
     color: var(--accent-soft);
   }
   .sec-body {
+    min-height: 0;
+    overflow-y: auto;
     padding: 0.3rem 0.3rem 0.6rem;
   }
   /* Nœud d'un distant. Calqué sur le `.dir` de BranchRow (scopé là-bas), au
