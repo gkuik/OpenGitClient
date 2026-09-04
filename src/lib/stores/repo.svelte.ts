@@ -93,8 +93,19 @@ function pullStatus(report: PullReport): string {
  * de façon cohérente après chaque action mutante.
  */
 export class RepoStore {
+  /**
+   * Sorte d'onglet — discriminant du type `Tab`. La barre en accueille deux :
+   * un dépôt ouvert, et la page « Nouvel onglet » (voir `NewTab`).
+   */
+  readonly kind = "repo" as const;
+
   /** Identifiant d'onglet = chemin canonique du dépôt (voir `RepoInfo.path`). */
   readonly repoId: string;
+
+  /** Identifiant d'onglet, commun aux deux sortes : ici le chemin du dépôt. */
+  get id(): string {
+    return this.repoId;
+  }
 
   repoInfo = $state<RepoInfo | null>(null);
   status = $state<RepoStatus | null>(null);
@@ -1203,6 +1214,29 @@ export class RepoStore {
 }
 
 /**
+ * Onglet « Nouvel onglet » : la page d'accueil d'un onglet qui n'a pas encore
+ * de dépôt derrière lui — ouvrir, cloner, créer, ou reprendre un récent.
+ *
+ * Il n'existe **que côté frontend**, et c'est délibéré : l'identifiant d'un
+ * onglet est le chemin canonique de son dépôt — c'est la clé de `AppState`,
+ * celle de `session.json`, et ce que porte `RepoInfo.path`. Sans dépôt il n'y a
+ * pas de chemin, donc pas d'identité à faire connaître au backend : son `id`
+ * est un simple compteur, jamais envoyé, et il ne survit pas au redémarrage —
+ * une page d'accueil n'a rien à restaurer.
+ */
+export class NewTab {
+  readonly kind = "new" as const;
+  readonly id: string;
+
+  constructor(id: string) {
+    this.id = id;
+  }
+}
+
+/** Ce que la barre affiche : un dépôt ouvert, ou une page d'accueil. */
+export type Tab = RepoStore | NewTab;
+
+/**
  * Collection des dépôts ouverts — un onglet chacun.
  *
  * Chaque onglet conserve son `RepoStore` en mémoire tant qu'il est ouvert : y
@@ -1210,9 +1244,11 @@ export class RepoStore {
  * working directory est resynchronisé (voir `RepoStore.activate`).
  */
 class TabsStore {
-  /** Onglets dans l'ordre d'affichage. */
-  tabs = $state<RepoStore[]>([]);
+  /** Onglets dans l'ordre d'affichage, dépôts et pages d'accueil mêlés. */
+  tabs = $state<Tab[]>([]);
   activeId = $state<string | null>(null);
+  /** Compteur des pages « Nouvel onglet » : leur identité s'arrête au webview. */
+  private nextNewTabId = 1;
   recent = $state<RecentRepo[]>([]);
   /** Vrai pendant l'ouverture d'un dépôt (dialog ou restauration de session). */
   opening = $state(false);
@@ -1235,8 +1271,29 @@ class TabsStore {
    */
   pullMode = $state<PullMode>("fastForwardOrMerge");
 
+  /** Onglets de dépôt seuls — les seuls que le backend connaisse. */
+  get repoTabs(): RepoStore[] {
+    return this.tabs.filter((t): t is RepoStore => t.kind === "repo");
+  }
+
+  /** Onglet affiché, quelle que soit sa sorte. */
+  get activeTab(): Tab | null {
+    return this.tabs.find((t) => t.id === this.activeId) ?? null;
+  }
+
+  /**
+   * Dépôt affiché, ou `null` — y compris quand l'onglet courant est une page
+   * « Nouvel onglet », qui n'en a pas : le proxy `repo` retombe alors sur
+   * `EMPTY_TAB`, et les composants continuent de lire `repo.*` sans garde.
+   */
   get active(): RepoStore | null {
-    return this.tabs.find((t) => t.repoId === this.activeId) ?? null;
+    const tab = this.activeTab;
+    return tab?.kind === "repo" ? tab : null;
+  }
+
+  /** Le corps de la fenêtre affiche-t-il la page « Nouvel onglet » ? */
+  get activeIsNew(): boolean {
+    return this.activeTab?.kind === "new";
   }
 
   get hasTabs(): boolean {
@@ -1250,21 +1307,21 @@ class TabsStore {
     // L'abonnement dure toute la vie de l'application, d'où l'absence d'unlisten.
     api
       .onFetched((event) => {
-        this.tabs.find((t) => t.repoId === event.repoId)?.onFetched(event);
+        this.repoTabs.find((t) => t.repoId === event.repoId)?.onFetched(event);
       })
       .catch(() => {
         /* sans abonnement, le fetch reste lançable mais muet */
       });
     api
       .onPushed((event) => {
-        this.tabs.find((t) => t.repoId === event.repoId)?.onPushed(event);
+        this.repoTabs.find((t) => t.repoId === event.repoId)?.onPushed(event);
       })
       .catch(() => {
         /* idem pour le push */
       });
     api
       .onPulled((event) => {
-        this.tabs.find((t) => t.repoId === event.repoId)?.onPulled(event);
+        this.repoTabs.find((t) => t.repoId === event.repoId)?.onPulled(event);
       })
       .catch(() => {
         /* idem pour le pull */
@@ -1276,7 +1333,7 @@ class TabsStore {
     // un éditeur.
     api
       .onRepoChanged((event) => {
-        const tab = this.tabs.find((t) => t.repoId === event.repoId);
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
         if (!tab) return;
         tab.noteExternalChange(event);
         if (this.activeId === event.repoId) void tab.applyExternalChange();
@@ -1310,8 +1367,9 @@ class TabsStore {
       }
     }
 
-    const restored = session.active && this.tabs.some((t) => t.repoId === session.active);
-    await this.activate(restored ? session.active! : (this.tabs[0]?.repoId ?? null));
+    const restored =
+      session.active && this.repoTabs.some((t) => t.repoId === session.active);
+    await this.activate(restored ? session.active! : (this.tabs[0]?.id ?? null));
   }
 
   toggleSettings() {
@@ -1352,6 +1410,19 @@ class TabsStore {
     }
   }
 
+  /**
+   * Ouvre une page « Nouvel onglet » et bascule dessus. Chaque appui sur « + »
+   * en crée une, comme dans un navigateur : elle se ferme, se déplace et
+   * s'active comme n'importe quel onglet.
+   */
+  newTab() {
+    // Ouvrir un onglet, c'est vouloir le voir : les paramètres cèdent la place.
+    this.settingsOpen = false;
+    const tab = new NewTab(`new:${this.nextNewTabId++}`);
+    this.tabs = [...this.tabs, tab];
+    void this.activate(tab.id);
+  }
+
   /** Ouvre le dialog natif puis ouvre le dépôt choisi dans un onglet. */
   async openFromDialog() {
     const path = await pickRepositoryFolder();
@@ -1363,10 +1434,14 @@ class TabsStore {
     if (this.opening) return;
     // Ouvrir un dépôt, c'est vouloir le voir : les paramètres cèdent la place.
     this.settingsOpen = false;
+    // Ouvert depuis une page « Nouvel onglet » : le dépôt prend sa place au lieu
+    // de s'ajouter au bout, et la page disparaît — elle a fait son office.
+    const active = this.activeTab;
+    const replace = active?.kind === "new" ? active.id : null;
     this.opening = true;
     this.openError = null;
     try {
-      const id = await this.openTab(path, { activate: true });
+      const id = await this.openTab(path, { activate: true, replace });
       if (id) this.recent = await api.listRecent();
     } catch (e) {
       this.openError = e as AppError;
@@ -1381,11 +1456,14 @@ class TabsStore {
       this.activeId = null;
       return;
     }
-    const tab = this.tabs.find((t) => t.repoId === id);
+    const tab = this.tabs.find((t) => t.id === id);
     if (!tab) return;
 
     // L'onglet est affiché immédiatement ; le rafraîchissement suit.
     this.activeId = id;
+    // Une page d'accueil n'a ni statut à resynchroniser ni dépôt à annoncer : la
+    // session garde le dernier dépôt actif, qui est bien celui à rouvrir.
+    if (tab.kind === "new") return;
     api.setActiveRepo(id).catch(() => {
       /* la persistance de la session ne doit jamais bloquer la navigation */
     });
@@ -1400,7 +1478,7 @@ class TabsStore {
    * d'onglets, et le retrait décale ensuite d'un cran tout ce qui suit.
    */
   move(id: string, toIndex: number) {
-    const from = this.tabs.findIndex((t) => t.repoId === id);
+    const from = this.tabs.findIndex((t) => t.id === id);
     if (from === -1) return;
     const to = toIndex > from ? toIndex - 1 : toIndex;
     if (to === from) return;
@@ -1411,28 +1489,35 @@ class TabsStore {
     this.tabs = next;
 
     // Le backend ne garde l'ordre que pour restaurer la session : un échec de
-    // persistance ne doit pas annuler le déplacement déjà fait à l'écran.
-    api.setTabOrder(next.map((t) => t.repoId)).catch(() => {
+    // persistance ne doit pas annuler le déplacement déjà fait à l'écran. Il ne
+    // connaît que les dépôts, donc les pages d'accueil sont filtrées — l'ordre
+    // relatif des autres suffit à le renseigner.
+    api.setTabOrder(this.repoTabs.map((t) => t.repoId)).catch(() => {
       /* l'ordre reste correct pour cette session */
     });
   }
 
   /** Ferme un onglet et bascule sur son voisin. */
   async close(id: string) {
-    const index = this.tabs.findIndex((t) => t.repoId === id);
+    const index = this.tabs.findIndex((t) => t.id === id);
     if (index === -1) return;
+    const tab = this.tabs[index];
 
-    this.tabs = this.tabs.filter((t) => t.repoId !== id);
-    try {
-      await api.closeRepository(id);
-    } catch {
-      /* l'onglet est retiré de l'UI quoi qu'il arrive */
+    this.tabs = this.tabs.filter((t) => t.id !== id);
+    // Une page « Nouvel onglet » n'existe que dans le webview : rien à fermer
+    // en face.
+    if (tab.kind === "repo") {
+      try {
+        await api.closeRepository(id);
+      } catch {
+        /* l'onglet est retiré de l'UI quoi qu'il arrive */
+      }
     }
 
     if (this.activeId === id) {
       // Voisin de droite, sinon celui de gauche — comme un navigateur.
       const next = this.tabs[index] ?? this.tabs[index - 1] ?? null;
-      await this.activate(next?.repoId ?? null);
+      await this.activate(next?.id ?? null);
     }
   }
 
@@ -1442,17 +1527,42 @@ class TabsStore {
    */
   private async openTab(
     path: string,
-    { activate }: { activate: boolean },
+    { activate, replace = null }: { activate: boolean; replace?: string | null },
   ): Promise<string> {
     const info = await api.openRepository(path);
     const id = info.path;
 
-    let tab = this.tabs.find((t) => t.repoId === id);
-    if (!tab) {
-      tab = new RepoStore(id, info);
-      this.tabs = [...this.tabs, tab];
+    // Emplacement de la page d'accueil qui a demandé l'ouverture, s'il y en a
+    // une : le dépôt s'y installe, elle n'a plus lieu d'être.
+    const slot =
+      replace === null
+        ? -1
+        : this.tabs.findIndex((t) => t.kind === "new" && t.id === replace);
+
+    const existing = this.repoTabs.find((t) => t.repoId === id);
+    if (existing) {
+      existing.repoInfo = info;
+      // Déjà ouvert ailleurs : on bascule sur cet onglet-là et la page se
+      // retire, plutôt que de laisser un doublon derrière soi.
+      if (slot !== -1) {
+        const next = [...this.tabs];
+        next.splice(slot, 1);
+        this.tabs = next;
+      }
     } else {
-      tab.repoInfo = info;
+      const tab = new RepoStore(id, info);
+      if (slot === -1) {
+        this.tabs = [...this.tabs, tab];
+      } else {
+        const next = [...this.tabs];
+        next.splice(slot, 1, tab);
+        this.tabs = next;
+        // Le backend vient d'ajouter le dépôt en fin d'ordre : il ne pouvait pas
+        // deviner qu'il s'insérait au milieu de la barre.
+        api.setTabOrder(this.repoTabs.map((t) => t.repoId)).catch(() => {
+          /* l'ordre reste correct pour cette session */
+        });
+      }
     }
 
     if (activate) await this.activate(id);

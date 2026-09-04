@@ -3,6 +3,7 @@
   import { repo, tabs } from "./lib/stores/repo.svelte";
   import TabBar from "./lib/components/TabBar.svelte";
   import WelcomeScreen from "./lib/components/WelcomeScreen.svelte";
+  import NewTabView from "./lib/components/NewTabView.svelte";
   import SettingsView from "./lib/components/SettingsView.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
@@ -30,6 +31,10 @@
     <SettingsView />
   {:else if !tabs.hasTabs}
     <WelcomeScreen />
+    <!-- Un onglet sans dépôt : sa page d'accueil prend la place des trois
+         colonnes, la barre d'onglets restant au-dessus. -->
+  {:else if tabs.activeIsNew}
+    <NewTabView />
   {:else}
     <div class="body">
       <BranchSidebar />
