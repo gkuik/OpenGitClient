@@ -1,6 +1,7 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { font, FONT_SIZES } from "../font.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import type { AppError, Profile, ThemeMode } from "../types";
@@ -223,6 +224,28 @@
             onclick={() => theme.set(entry.mode)}
           >
             {entry.label}
+          </button>
+        {/each}
+      </div>
+    </section>
+
+    <section>
+      <h2>Taille du texte</h2>
+      <p class="intro">
+        La taille du corps de texte, en points — l'unité des recommandations
+        d'Apple. <strong>13 pt</strong> est celle du texte système de macOS, et le
+        défaut de GitLite. Le reste de l'interface est exprimé en proportion :
+        titres, mentions secondaires et espacements suivent le texte.
+      </p>
+
+      <div class="seg" role="group" aria-label="Taille du texte">
+        {#each FONT_SIZES as size (size)}
+          <button
+            class:active={font.size === size}
+            aria-pressed={font.size === size}
+            onclick={() => font.set(size)}
+          >
+            {size} pt
           </button>
         {/each}
       </div>
@@ -491,8 +514,8 @@
     font-size: 0.82rem;
   }
 
-  /* Choix du thème : trois options exclusives dont une est forcément active,
-     donc un segmenté — pas trois cases à cocher. */
+  /* Thème et taille du texte : des options exclusives dont une est forcément
+     active, donc un segmenté — pas des cases à cocher. */
   .seg {
     display: flex;
     width: fit-content;
