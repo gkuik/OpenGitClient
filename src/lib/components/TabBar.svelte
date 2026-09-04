@@ -257,6 +257,25 @@
       +
     </button>
   </div>
+
+  <!--
+    Hors de `.tabs` (qui prend `flex: 1` et défile) : le bouton reste collé au
+    bord droit quel que soit le nombre d'onglets, au lieu de partir hors champ
+    avec eux. Un `<button>` garde son clic malgré la zone de drag de la barre.
+  -->
+  <button
+    class="settings"
+    class:on={tabs.settingsOpen}
+    title="Paramètres"
+    aria-label="Paramètres"
+    aria-pressed={tabs.settingsOpen}
+    onclick={() => tabs.toggleSettings()}
+  >
+    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+      <circle cx="8" cy="8" r="2.1" />
+      <path d="M12.9 9.8a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.67 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.67h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.67 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.67h-.06a1.1 1.1 0 0 0-1 .67z" />
+    </svg>
+  </button>
 </div>
 
 <style>
@@ -301,6 +320,35 @@
   .tabbar.mac {
     padding-left: 92px;
     min-height: 49px;
+  }
+  .settings {
+    flex: none;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 30px;
+    height: 30px;
+    margin-left: 0.4rem;
+    padding: 0;
+    border: 1px solid transparent;
+    border-radius: 6px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+  .settings svg {
+    width: 16px;
+    height: 16px;
+  }
+  .settings:hover {
+    background: var(--bg-raised);
+    color: var(--text);
+  }
+  /* Écran ouvert : le bouton reste allumé, c'est une bascule. */
+  .settings.on {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+    color: var(--accent-soft);
   }
   /* Les onglets défilent horizontalement plutôt que d'écraser le bouton « + ». */
   .tabs {

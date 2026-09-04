@@ -33,6 +33,12 @@ export interface RepoInfo {
   branch: string | null;
   isDetached: boolean;
   head: string | null;
+  /**
+   * Fusion en cours (conflits à résoudre, ou commit de fusion à créer). Pilote
+   * le bandeau qui offre l'abandon : sans lui, un conflit n'aurait aucune issue
+   * depuis l'application.
+   */
+  merging: boolean;
 }
 
 export type DiffLineKind = "context" | "addition" | "deletion";
@@ -78,13 +84,46 @@ export interface BranchEntry {
   isHead: boolean;
   /** Commit de tête ; chaîne vide si la branche n'a pas encore de commit. */
   oid: string;
+  /**
+   * Branche amont et écart avec elle. `null` quand la branche n'en suit
+   * aucune — « rien à comparer » n'est pas « à jour », d'où l'absence de
+   * compteur dans ce cas plutôt qu'un zéro.
+   */
+  upstream: Upstream | null;
 }
 
 /**
- * Nature d'une référence pointant sur un commit du graph. Seuls HEAD et les
- * branches locales sont produits par le backend pour l'instant.
+ * Écart d'une branche locale avec son amont. Les deux compteurs comparent des
+ * références **locales** : ils datent du dernier fetch, pas de l'état courant
+ * du serveur.
  */
-export type GraphRefKind = "head" | "localBranch";
+export interface Upstream {
+  /** Nom de la branche amont ("origin/main"). */
+  name: string;
+  /** Commits à pousser. */
+  ahead: number;
+  /** Commits à récupérer. */
+  behind: number;
+}
+
+/**
+ * Branche distante. `name` est le nom complet, distant inclus
+ * ("origin/feature/x") : il commence toujours par `remote` suivi d'un "/".
+ * Pas de `isHead` — HEAD ne pointe jamais sur une branche distante.
+ */
+export interface RemoteBranchEntry {
+  name: string;
+  /** Distant auquel elle appartient ("origin"). */
+  remote: string;
+  /** Commit de tête. */
+  oid: string;
+}
+
+/**
+ * Nature d'une référence pointant sur un commit du graph. Les tags ne sont pas
+ * encore lus par le backend ; branches locales et distantes le sont.
+ */
+export type GraphRefKind = "head" | "localBranch" | "remoteBranch";
 
 export interface GraphRef {
   name: string;
@@ -134,6 +173,123 @@ export interface StashEntry {
   /** Branche d'origine, extraite du message côté backend. */
   branch: string | null;
   oid: string;
+}
+
+/** Référence distante déplacée par un fetch. */
+export interface FetchedRef {
+  /** Nom complet ("refs/remotes/origin/main"). */
+  name: string;
+  /** OID avant le fetch ; null si la référence vient d'apparaître. */
+  oldOid: string | null;
+  newOid: string;
+}
+
+/** Résultat d'un fetch. `updated` vide = le distant n'a pas bougé. */
+export interface FetchReport {
+  /** Distant réellement interrogé (résolu par le backend si non précisé). */
+  remote: string;
+  updated: FetchedRef[];
+}
+
+/**
+ * Charge utile de l'événement `repo://fetched`. Le fetch tournant sur un thread
+ * dédié, son résultat n'est pas la valeur de retour de la commande : il arrive
+ * par cet événement. Exactement l'un de `report` / `error` est renseigné.
+ */
+export interface FetchEvent {
+  repoId: string;
+  report: FetchReport | null;
+  error: AppError | null;
+}
+
+/**
+ * Ce que le bouton Pull exécute, choisi dans son menu et persisté côté Rust.
+ *
+ * Pas de `"rebase"` : l'entrée existe dans le menu mais désactivée, faute
+ * d'implémentation. Le type ne décrit que ce qui marche.
+ */
+export type PullMode = "fetchAll" | "fastForwardOnly" | "fastForwardOrMerge";
+
+/**
+ * Ce qu'un pull a fait localement. Une divergence et un conflit ne sont pas des
+ * erreurs : le fetch qui précède a réussi et déplacé des références.
+ */
+export type PullOutcome =
+  | { kind: "fetchedOnly" }
+  | { kind: "upToDate" }
+  | { kind: "fastForwarded"; commits: number }
+  | { kind: "merged"; commits: number }
+  | { kind: "conflicted"; files: string[] }
+  | { kind: "diverged"; ahead: number; behind: number };
+
+export interface PullReport {
+  /** Distants interrogés — un seul, sauf en « Fetch All ». */
+  remotes: string[];
+  updated: FetchedRef[];
+  outcome: PullOutcome;
+}
+
+/** Charge utile de `repo://pulled`, jumelle de `FetchEvent`. */
+export interface PullEvent {
+  repoId: string;
+  report: PullReport | null;
+  error: AppError | null;
+}
+
+/**
+ * Résultat d'un push. Pas de compteur de commits envoyés : c'est la pastille
+ * `↑` de la branche qui le disait, et elle retombe à zéro au rechargement.
+ */
+export interface PushReport {
+  remote: string;
+  /** Branche poussée — toujours la branche courante. */
+  branch: string;
+  /** Le suivi vient d'être posé (premier push de la branche). */
+  upstreamSet: boolean;
+}
+
+/** Charge utile de `repo://pushed`, jumelle de `FetchEvent`. */
+export interface PushEvent {
+  repoId: string;
+  report: PushReport | null;
+  error: AppError | null;
+}
+
+/**
+ * Dépôt distant d'un onglet. `host` est la clé sous laquelle les identifiants
+ * sont rangés — null si l'URL n'expose pas d'hôte (chemin local).
+ */
+export interface RemoteInfo {
+  name: string;
+  url: string;
+  host: string | null;
+  hasCredentials: boolean;
+  /**
+   * Distant joint en HTTP(S) ? Seuls ceux-là utilisent un jeton stocké : en SSH
+   * l'authentification passe par une clé, et saisir un mot de passe n'aurait
+   * aucun effet.
+   */
+  usesHttp: boolean;
+}
+
+/** Profil d'auteur, réutilisable d'un dépôt à l'autre. */
+export interface Profile {
+  /** Identifiant stable ; le libellé, lui, peut être renommé. */
+  id: string;
+  label: string;
+  name: string;
+  email: string;
+}
+
+/** Identité sous laquelle un dépôt commite. */
+export interface Identity {
+  name: string | null;
+  email: string | null;
+  /**
+   * Définie dans le dépôt lui-même plutôt qu'héritée de la config globale —
+   * c'est ce qui distingue un profil choisi d'une valeur par défaut.
+   */
+  isLocal: boolean;
 }
 
 /** Forme sérialisée d'une erreur backend (`AppError`). */

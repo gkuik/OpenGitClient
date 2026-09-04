@@ -1,24 +1,36 @@
 //! Implémentation de [`GitBackend`] basée sur libgit2 (git2-rs).
 
 use std::collections::HashMap;
+use std::cell::{Cell, RefCell};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 
 use git2::{
-    build::CheckoutBuilder, BranchType, Commit, Delta, DiffDelta, DiffFlags, DiffFormat,
-    DiffOptions, ErrorClass, IndexAddOption, ObjectType, Oid, Repository, Sort, Status, StatusEntry,
-    StatusOptions, Tree,
+    build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
+    DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions,
+    IndexAddOption, ObjectType, Oid, PushOptions, Reference, RemoteCallbacks, Repository,
+    RepositoryState, Sort, Status, StatusEntry, StatusOptions, Tree,
 };
 
 use super::GitBackend;
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
-    FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind, RepoInfo, RepoStatus,
-    StashEntry,
+    FetchReport, FetchedRef, FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind,
+    Identity, PullMode, PullOutcome, PullReport, PushReport, RemoteBranchEntry, RemoteInfo,
+    RepoInfo, RepoStatus, StashEntry, Upstream,
 };
 use crate::error::AppError;
 
 /// Longueur des OID abrégés affichés dans le graph (convention Git).
 const SHORT_OID_LEN: usize = 7;
+
+/// Nombre maximum d'identifiants proposés au serveur avant d'abandonner.
+///
+/// libgit2 rappelle le callback d'authentification tant qu'on lui rend des
+/// identifiants refusés : sans plafond, un accès refusé boucle à l'infini. La
+/// valeur laisse la place à l'enchaînement normal côté SSH (nom d'utilisateur,
+/// puis clé) plus quelques essais de l'agent.
+const MAX_CRED_ATTEMPTS: u32 = 5;
 
 /// Backend libgit2.
 ///
@@ -76,6 +88,7 @@ impl GitBackend for Libgit2Backend {
             branch,
             is_detached,
             head: head_oid,
+            merging: repo.state() == RepositoryState::Merge,
         })
     }
 
@@ -236,7 +249,14 @@ impl GitBackend for Libgit2Backend {
         body: Option<&str>,
         amend: bool,
     ) -> Result<CommitResult, AppError> {
-        let repo = self.repo()?;
+        let mut repo = self.repo()?;
+
+        // Une fusion en cours ajoute ses têtes aux parents du commit. Lu ici,
+        // avant tout emprunt du dépôt, parce que `mergehead_foreach` le prend
+        // en `&mut`. **Sans ça, le commit qui résout une fusion n'aurait qu'un
+        // parent** : le lien vers la branche fusionnée serait perdu, et
+        // `MERGE_HEAD` resterait derrière — dépôt en état incohérent.
+        let merge_heads = merge_heads(&mut repo)?;
 
         let mut index = repo.index()?;
         let tree_oid = index.write_tree()?;
@@ -282,18 +302,26 @@ impl GitBackend for Libgit2Backend {
             Err(_) => None,
         };
 
-        // Refuse un commit qui n'apporte aucun changement.
-        match &parent_commit {
-            Some(parent) if parent.tree_id() == tree_oid => {
-                return Err(AppError::NothingToCommit);
+        // Refuse un commit qui n'apporte aucun changement — sauf en fusion : un
+        // merge qui retient entièrement « notre » côté a légitimement l'arbre de
+        // HEAD, et refuser laisserait la fusion ouverte sans issue.
+        if merge_heads.is_empty() {
+            match &parent_commit {
+                Some(parent) if parent.tree_id() == tree_oid => {
+                    return Err(AppError::NothingToCommit);
+                }
+                None if tree.len() == 0 => {
+                    return Err(AppError::NothingToCommit);
+                }
+                _ => {}
             }
-            None if tree.len() == 0 => {
-                return Err(AppError::NothingToCommit);
-            }
-            _ => {}
         }
 
-        let parents: Vec<&git2::Commit> = parent_commit.iter().collect();
+        let merged: Vec<Commit> = merge_heads
+            .iter()
+            .map(|oid| repo.find_commit(*oid))
+            .collect::<Result<_, _>>()?;
+        let parents: Vec<&Commit> = parent_commit.iter().chain(merged.iter()).collect();
         let oid = repo.commit(
             Some("HEAD"),
             &signature,
@@ -302,6 +330,12 @@ impl GitBackend for Libgit2Backend {
             &tree,
             &parents,
         )?;
+
+        // La fusion est close : `MERGE_HEAD` et compagnie disparaissent, sinon
+        // le prochain commit se croirait encore en fusion.
+        if !merge_heads.is_empty() {
+            repo.cleanup_state()?;
+        }
 
         Ok(CommitResult {
             oid: oid.to_string(),
@@ -317,16 +351,47 @@ impl GitBackend for Libgit2Backend {
             let (branch, _kind) = item?;
             // `name()` peut être None si le nom n'est pas de l'UTF-8 valide.
             if let Some(name) = branch.name()? {
+                let target = branch.get().target();
                 out.push(BranchEntry {
                     name: name.to_string(),
                     is_head: branch.is_head(),
-                    oid: branch
-                        .get()
-                        .target()
-                        .map(|o| o.to_string())
-                        .unwrap_or_default(),
+                    oid: target.map(|o| o.to_string()).unwrap_or_default(),
+                    upstream: upstream_of(&repo, &branch, target),
                 });
             }
+        }
+
+        out.sort_by(|a, b| a.name.cmp(&b.name));
+        Ok(out)
+    }
+
+    fn remote_branches(&self) -> Result<Vec<RemoteBranchEntry>, AppError> {
+        let repo = self.repo()?;
+        let mut out = Vec::new();
+
+        for item in repo.branches(Some(BranchType::Remote))? {
+            let (branch, _kind) = item?;
+            let reference = branch.get();
+
+            // `<distant>/HEAD` est un pointeur *symbolique* vers la branche par
+            // défaut du distant : l'afficher doublerait cette branche. Une
+            // référence symbolique n'a pas de `target()`, ce qui l'écarte ici au
+            // même titre qu'une référence cassée.
+            let Some(oid) = reference.target() else {
+                continue;
+            };
+            // `name()` peut être None si le nom n'est pas de l'UTF-8 valide.
+            let Some(name) = branch.name()? else {
+                continue;
+            };
+
+            let remote = remote_name_of(&repo, reference, name);
+
+            out.push(RemoteBranchEntry {
+                name: name.to_string(),
+                remote,
+                oid: oid.to_string(),
+            });
         }
 
         out.sort_by(|a, b| a.name.cmp(&b.name));
@@ -345,12 +410,47 @@ impl GitBackend for Libgit2Backend {
         // travail.
         let mut opts = CheckoutBuilder::new();
         repo.checkout_tree(&target, Some(&mut opts))
-            .map_err(|e| match e.class() {
-                ErrorClass::Checkout => AppError::CheckoutConflict,
-                _ => AppError::from(e),
-            })?;
+            .map_err(map_checkout_error)?;
 
         repo.set_head(&refname)?;
+        Ok(())
+    }
+
+    fn checkout_remote_branch(&self, name: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        // Échoue tôt si la branche distante n'existe pas.
+        let branch = repo.find_branch(name, BranchType::Remote)?;
+        let reference = branch.get();
+        let remote = remote_name_of(&repo, reference, name);
+        let local_name = name
+            .strip_prefix(&format!("{remote}/"))
+            .unwrap_or(name)
+            .to_string();
+
+        // Une branche locale porte déjà ce nom : on bascule dessus telle quelle,
+        // comme `git checkout <nom>`. Elle peut être en retard sur la distante —
+        // la rattraper serait un pull, pas un checkout.
+        if repo.find_branch(&local_name, BranchType::Local).is_ok() {
+            return self.checkout_branch(&local_name);
+        }
+
+        let commit = reference.peel_to_commit()?;
+
+        // L'ordre compte : le working directory est mis à jour **avant** que la
+        // branche existe. Un conflit interrompt donc tout sans laisser derrière
+        // lui une branche à moitié créée.
+        let mut opts = CheckoutBuilder::new();
+        repo.checkout_tree(commit.as_object(), Some(&mut opts))
+            .map_err(map_checkout_error)?;
+
+        let mut local = repo.branch(&local_name, &commit, false)?;
+        // Le suivi est ce qui distingue cette bascule d'une branche créée de
+        // rien, et ce dont un futur pull/push aura besoin. Son échec (distant
+        // supprimé, refspec absente) ne doit pas faire échouer une bascule déjà
+        // effectuée : le checkout, lui, a bien eu lieu.
+        let _ = local.set_upstream(Some(name));
+
+        repo.set_head(&format!("refs/heads/{local_name}"))?;
         Ok(())
     }
 
@@ -400,10 +500,13 @@ impl GitBackend for Libgit2Backend {
         // indépendantes par date décroissante.
         walk.set_sorting(Sort::TOPOLOGICAL | Sort::TIME)?;
 
-        // Toutes les têtes locales + HEAD (qui couvre le cas détaché). Sur un dépôt
-        // sans aucun commit les deux échouent : le parcours est alors simplement
+        // Toutes les têtes locales + HEAD (qui couvre le cas détaché), plus les
+        // têtes distantes : sans elles, un `origin/main` en avance n'aurait aucun
+        // commit à montrer alors que la sidebar l'affiche. Sur un dépôt sans
+        // aucun commit les trois échouent : le parcours est alors simplement
         // vide, ce qui donne une page vide plutôt qu'une erreur.
         let _ = walk.push_glob("refs/heads/*");
+        let _ = walk.push_glob("refs/remotes/*");
         let _ = walk.push_head();
 
         // On demande un élément de plus que `limit` : sa présence suffit à savoir
@@ -456,6 +559,514 @@ impl GitBackend for Libgit2Backend {
         let diff = commit_diff(&repo, &commit, Some(path))?;
         build_file_diff(path, &diff)
     }
+
+    fn fetch(&self, remote: Option<&str>) -> Result<FetchReport, AppError> {
+        let repo = self.repo()?;
+        let name = resolve_remote(&repo, remote)?;
+        let updated = fetch_one(&repo, &name)?;
+        Ok(FetchReport {
+            remote: name,
+            updated,
+        })
+    }
+
+
+    fn push(&self, remote: Option<&str>) -> Result<PushReport, AppError> {
+        let repo = self.repo()?;
+
+        // Il faut une branche : un HEAD détaché n'a rien à publier.
+        let head = repo.head().map_err(|_| AppError::DetachedHead)?;
+        let branch_name = head
+            .shorthand()
+            .filter(|_| head.is_branch())
+            .ok_or(AppError::DetachedHead)?
+            .to_string();
+
+        let name = resolve_remote(&repo, remote)?;
+        let mut remote = repo.find_remote(&name).map_err(|_| AppError::NoRemote)?;
+
+        // Lu **avant** le push : c'est ce qui distingue un premier push (à qui on
+        // pose le suivi) d'un push ordinaire.
+        let had_upstream = repo
+            .find_branch(&branch_name, BranchType::Local)
+            .ok()
+            .and_then(|b| b.upstream().ok())
+            .is_some();
+
+        // Même écueil que dans `fetch` : les callbacks vivent dans les
+        // `PushOptions` jusqu'à la fin de la fonction, donc leur état passe par
+        // des `Rc` pour rester lisible après coup.
+        let rejection = Rc::new(RefCell::new(None::<String>));
+        let cred_state = Rc::new(Cell::new(CredState::Untouched));
+
+        let mut callbacks = RemoteCallbacks::new();
+        {
+            let rejection = Rc::clone(&rejection);
+            callbacks.push_update_reference(move |refname, status| {
+                // **Ce callback n'est pas optionnel.** Un serveur peut refuser
+                // une référence (non-fast-forward, branche protégée, hook) sans
+                // que `push()` échoue pour autant : sans le lire, ce rejet
+                // passerait pour un succès.
+                if let Some(msg) = status {
+                    *rejection.borrow_mut() = Some(format!("{refname} : {msg}"));
+                }
+                Ok(())
+            });
+        }
+        {
+            let state = Rc::clone(&cred_state);
+            let mut attempts = 0u32;
+            callbacks.credentials(move |url, username, allowed| {
+                attempts += 1;
+                credentials(url, username, allowed, attempts, &state)
+            });
+        }
+
+        let mut options = PushOptions::new();
+        options.remote_callbacks(callbacks);
+
+        // Refspec explicite, et non celles configurées pour le distant : on ne
+        // pousse **que** la branche courante, jamais toutes les têtes. Pas de "+"
+        // en tête non plus — le force n'est pas proposé, à aucun endroit.
+        let refspec = format!("refs/heads/{branch_name}:refs/heads/{branch_name}");
+        let result = remote.push(&[refspec.as_str()], Some(&mut options));
+        // Ne pas laisser de connexion ouverte derrière soi, succès ou non.
+        let _ = remote.disconnect();
+
+        match result {
+            Ok(()) => {}
+            // Rejet côté client : libgit2 compare les références annoncées par le
+            // serveur avant d'envoyer quoi que ce soit, et s'arrête là.
+            Err(e) if e.code() == ErrorCode::NotFastForward => {
+                return Err(AppError::PushRejected(e.message().to_string()))
+            }
+            Err(_) if cred_state.get() == CredState::NothingToOffer => {
+                return Err(AppError::NoCredentials)
+            }
+            Err(_) if cred_state.get() == CredState::Refused => return Err(AppError::RemoteAuth),
+            Err(e) => return Err(fetch_error(e)),
+        }
+
+        // Rejet côté serveur, lui, remonté par le callback.
+        if let Some(reason) = rejection.borrow().clone() {
+            return Err(AppError::PushRejected(reason));
+        }
+
+        // `push -u`, et seulement après coup : une branche amont posée alors que
+        // le push a échoué désignerait une référence qui n'existe pas.
+        let mut upstream_set = false;
+        if !had_upstream {
+            if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
+                upstream_set = branch
+                    .set_upstream(Some(&format!("{name}/{branch_name}")))
+                    .is_ok();
+            }
+        }
+
+        Ok(PushReport {
+            remote: name,
+            branch: branch_name,
+            upstream_set,
+        })
+    }
+
+    fn pull(&self, mode: PullMode) -> Result<PullReport, AppError> {
+        let repo = self.repo()?;
+
+        // « Fetch All » n'intègre rien : il s'arrête après avoir interrogé tous
+        // les distants. Un distant injoignable interrompt le lot — annoncer un
+        // succès partiel serait pire que l'erreur.
+        if mode == PullMode::FetchAll {
+            let remotes: Vec<String> = repo
+                .remotes()?
+                .iter()
+                .flatten()
+                .map(str::to_string)
+                .collect();
+            if remotes.is_empty() {
+                return Err(AppError::NoRemote);
+            }
+            let mut updated = Vec::new();
+            for name in &remotes {
+                updated.extend(fetch_one(&repo, name)?);
+            }
+            return Ok(PullReport {
+                remotes,
+                updated,
+                outcome: PullOutcome::FetchedOnly,
+            });
+        }
+
+        // Les deux autres modes intègrent : il faut une branche courante.
+        let head = repo.head().map_err(|_| AppError::DetachedHead)?;
+        let branch_name = head
+            .shorthand()
+            .filter(|_| head.is_branch())
+            .ok_or(AppError::DetachedHead)?
+            .to_string();
+
+        let remote_name = resolve_remote(&repo, None)?;
+        let updated = fetch_one(&repo, &remote_name)?;
+
+        // L'amont est relu **après** le fetch : c'est tout l'intérêt de l'ordre.
+        let branch = repo.find_branch(&branch_name, BranchType::Local)?;
+        let local = branch.get().target().ok_or(AppError::NoUpstream)?;
+        let upstream = branch.upstream().map_err(|_| AppError::NoUpstream)?;
+        let upstream_name = upstream
+            .name()?
+            .ok_or(AppError::NoUpstream)?
+            .to_string();
+        let target = upstream.get().target().ok_or(AppError::NoUpstream)?;
+
+        let (ahead, behind) = repo.graph_ahead_behind(local, target)?;
+        let annotated = repo.find_annotated_commit(target)?;
+        let (analysis, _preference) = repo.merge_analysis(&[&annotated])?;
+
+        let report = |outcome| PullReport {
+            remotes: vec![remote_name.clone()],
+            updated: updated.clone(),
+            outcome,
+        };
+
+        if analysis.is_up_to_date() {
+            return Ok(report(PullOutcome::UpToDate));
+        }
+
+        if analysis.is_fast_forward() {
+            // Avance rapide : le working directory suit la cible, puis la
+            // référence de branche est déplacée. HEAD pointe déjà dessus, donc
+            // rien d'autre à faire. La stratégie SAFE refuse d'écraser des
+            // modifications locales, et l'erreur remonte telle quelle.
+            let object = repo.find_object(target, None)?;
+            let mut opts = CheckoutBuilder::new();
+            repo.checkout_tree(&object, Some(&mut opts))
+                .map_err(map_checkout_error)?;
+            repo.reference(
+                &format!("refs/heads/{branch_name}"),
+                target,
+                true,
+                &format!("pull: avance rapide vers {upstream_name}"),
+            )?;
+            return Ok(report(PullOutcome::FastForwarded { commits: behind }));
+        }
+
+        // Divergence. En mode « avance rapide seulement », on s'arrête ici sans
+        // rien toucher : le fetch, lui, a bien eu lieu et est dans le rapport.
+        if mode == PullMode::FastForwardOnly {
+            return Ok(report(PullOutcome::Diverged { ahead, behind }));
+        }
+
+        // Fusion. `merge` écrit l'index et le working directory, et pose
+        // `MERGE_HEAD` : à partir d'ici le dépôt est en état de fusion, que le
+        // commit ci-dessous ou `abort_merge` referme.
+        let mut opts = CheckoutBuilder::new();
+        repo.merge(&[&annotated], None, Some(&mut opts))
+            .map_err(map_checkout_error)?;
+
+        let mut index = repo.index()?;
+        if index.has_conflicts() {
+            // On laisse le dépôt en fusion : les conflits sont dans le working
+            // directory, l'utilisateur les résout puis committe (le commit
+            // reprendra `MERGE_HEAD` comme second parent) ou abandonne.
+            return Ok(report(PullOutcome::Conflicted {
+                files: conflicted_paths(&index),
+            }));
+        }
+
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+        let signature = repo.signature().map_err(|_| AppError::MissingSignature)?;
+        let ours = repo.head()?.peel_to_commit()?;
+        let theirs = repo.find_commit(target)?;
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            &format!("Merge branch '{upstream_name}' into {branch_name}"),
+            &tree,
+            &[&ours, &theirs],
+        )?;
+        repo.cleanup_state()?;
+
+        Ok(report(PullOutcome::Merged { commits: behind }))
+    }
+
+    fn abort_merge(&self) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        // `force` est le sens même de l'abandon : les fichiers en conflit
+        // reviennent à HEAD, ce que la stratégie SAFE refuserait justement.
+        let mut opts = CheckoutBuilder::new();
+        opts.force();
+        repo.checkout_head(Some(&mut opts))?;
+        repo.cleanup_state()?;
+        Ok(())
+    }
+
+    fn remote_info(&self, remote: Option<&str>) -> Result<RemoteInfo, AppError> {
+        let repo = self.repo()?;
+        let name = resolve_remote(&repo, remote)?;
+        let remote = repo.find_remote(&name).map_err(|_| AppError::NoRemote)?;
+        let url = remote.url().unwrap_or_default().to_string();
+        let host = crate::credentials::host_of(&url);
+        Ok(RemoteInfo {
+            has_credentials: host.as_deref().map(crate::credentials::has).unwrap_or(false),
+            uses_http: url.starts_with("http://") || url.starts_with("https://"),
+            name,
+            url,
+            host,
+        })
+    }
+
+    fn identity(&self) -> Result<Identity, AppError> {
+        let repo = self.repo()?;
+        // La config du dépôt empile système, globale et locale : c'est elle qui
+        // donne l'identité *effective*, celle que `repo.signature()` utilisera.
+        let config = repo.config()?;
+        // Le niveau local seul, pour distinguer un profil choisi ici d'une valeur
+        // héritée de la configuration globale.
+        let local = config.open_level(ConfigLevel::Local).ok();
+        let is_local = local
+            .as_ref()
+            .map(|c| c.get_string("user.name").is_ok() || c.get_string("user.email").is_ok())
+            .unwrap_or(false);
+
+        Ok(Identity {
+            name: config.get_string("user.name").ok(),
+            email: config.get_string("user.email").ok(),
+            is_local,
+        })
+    }
+
+    fn set_identity(&self, name: &str, email: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let mut local = repo.config()?.open_level(ConfigLevel::Local)?;
+        local.set_str("user.name", name)?;
+        local.set_str("user.email", email)?;
+        Ok(())
+    }
+
+    fn clear_identity(&self) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let mut local = repo.config()?.open_level(ConfigLevel::Local)?;
+        // Absente = déjà le résultat demandé, ce n'est pas une erreur.
+        let _ = local.remove("user.name");
+        let _ = local.remove("user.email");
+        Ok(())
+    }
+}
+
+// ── Helpers du fetch ────────────────────────────────────────────────────────
+
+/// Fetch d'**un** distant sur un dépôt déjà ouvert : le corps partagé par
+/// `fetch`, par le mode « Fetch All » et par le pull, qui commence toujours par
+/// là. Renvoie les références déplacées.
+fn fetch_one(repo: &Repository, name: &str) -> Result<Vec<FetchedRef>, AppError> {
+    let mut remote = repo.find_remote(name).map_err(|_| AppError::NoRemote)?;
+
+    // Les deux closures gardent chacune leur état, et cet état doit rester
+    // lisible **après** le fetch. D'où `Rc` plutôt que des emprunts : les
+    // callbacks vivent dans les `FetchOptions` jusqu'à la fin de la fonction,
+    // ce qui rendrait tout emprunt mutable direct impossible — même écueil
+    // que `Diff::foreach` ailleurs dans ce fichier.
+    let updated = Rc::new(RefCell::new(Vec::new()));
+    let cred_state = Rc::new(Cell::new(CredState::Untouched));
+
+    let mut callbacks = RemoteCallbacks::new();
+    {
+        let updated = Rc::clone(&updated);
+        callbacks.update_tips(move |name, old, new| {
+            // `old` est nul quand la référence vient d'apparaître.
+            updated.borrow_mut().push(FetchedRef {
+                name: name.to_string(),
+                old_oid: (!old.is_zero()).then(|| old.to_string()),
+                new_oid: new.to_string(),
+            });
+            true
+        });
+    }
+    {
+        let state = Rc::clone(&cred_state);
+        let mut attempts = 0u32;
+        callbacks.credentials(move |url, username, allowed| {
+            attempts += 1;
+            credentials(url, username, allowed, attempts, &state)
+        });
+    }
+
+    let mut options = FetchOptions::new();
+    options.remote_callbacks(callbacks);
+    // Pas de prune automatique : Git ne le fait pas non plus par défaut, et
+    // supprimer des références sans que l'utilisateur l'ait demandé serait une
+    // surprise désagréable.
+
+    // Refspecs vides = celles configurées pour ce distant, comme `git fetch`.
+    let refspecs: [&str; 0] = [];
+    let result = remote.fetch(&refspecs, Some(&mut options), None);
+    // Ne pas laisser de connexion ouverte derrière soi, succès ou non.
+    let _ = remote.disconnect();
+
+    match result {
+        Ok(()) => Ok(updated.borrow().clone()),
+        // L'erreur que libgit2 remonte est générique dans les deux cas, alors
+        // que la cause exacte est connue ici — et n'appelle pas le même geste.
+        Err(_) if cred_state.get() == CredState::NothingToOffer => {
+            Err(AppError::NoCredentials)
+        }
+        Err(_) if cred_state.get() == CredState::Refused => Err(AppError::RemoteAuth),
+        Err(e) => Err(fetch_error(e)),
+    }
+}
+
+/// Détermine quel dépôt distant interroger quand l'appel n'en nomme aucun :
+/// celui suivi par la branche courante, sinon `origin`, sinon le premier déclaré.
+fn resolve_remote(repo: &Repository, wanted: Option<&str>) -> Result<String, AppError> {
+    if let Some(name) = wanted {
+        return Ok(name.to_string());
+    }
+
+    if let Ok(head) = repo.head() {
+        if let Some(branch) = head.shorthand().filter(|_| head.is_branch()) {
+            if let Ok(buf) = repo.branch_upstream_remote(&format!("refs/heads/{branch}")) {
+                if let Some(name) = buf.as_str() {
+                    return Ok(name.to_string());
+                }
+            }
+        }
+    }
+
+    // Un seul parcours : `origin` s'il existe, sinon le premier distant déclaré.
+    let remotes = repo.remotes()?;
+    let mut fallback = None;
+    for name in remotes.iter().flatten() {
+        if name == "origin" {
+            return Ok(name.to_string());
+        }
+        fallback.get_or_insert(name);
+    }
+    fallback.map(str::to_string).ok_or(AppError::NoRemote)
+}
+
+/// Fournit des identifiants au serveur, dans l'ordre des méthodes qu'il accepte.
+///
+/// **Rien n'est délégué à un programme externe.** `Cred::credential_helper` a été
+/// écarté volontairement : il lance `git credential-<helper>`, ce qui ferait
+/// dépendre l'application d'une installation de Git. Tout passe donc par
+/// libssh2/libgit2, déjà liés dans le binaire.
+///
+/// Le callback est rappelé après chaque refus : `attempts` sert à faire défiler
+/// les identifiants candidats plutôt qu'à représenter éternellement le même.
+fn credentials(
+    url: &str,
+    username: Option<&str>,
+    allowed: CredentialType,
+    attempts: u32,
+    state: &Cell<CredState>,
+) -> Result<Cred, git2::Error> {
+    if attempts > MAX_CRED_ATTEMPTS {
+        state.set(CredState::Refused);
+        return Err(git2::Error::from_str("identifiants refusés"));
+    }
+
+    // En SSH, libgit2 réclame d'abord le nom d'utilisateur seul, puis la clé.
+    // Ce n'est pas encore un identifiant : l'état ne bouge pas.
+    if allowed.contains(CredentialType::USERNAME) {
+        return Cred::username(username.unwrap_or("git"));
+    }
+
+    if allowed.contains(CredentialType::SSH_KEY) {
+        let user = username.unwrap_or("git");
+        // Premier essai : l'agent, s'il détient une identité.
+        if attempts == 1 {
+            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+                state.set(CredState::Offered);
+                return Ok(cred);
+            }
+        }
+        // Puis les clés du disque, une par rappel. Indispensable : libgit2 ne lit
+        // pas `~/.ssh/config` et ne cherche pas ces fichiers de lui-même, donc
+        // sans ça seuls les utilisateurs dont l'agent est déjà chargé peuvent se
+        // connecter.
+        if let Some(path) = nth_ssh_key((attempts - 1) as usize) {
+            state.set(CredState::Offered);
+            return Cred::ssh_key(user, None, &path, None);
+        }
+        state.set(CredState::NothingToOffer);
+        return Err(git2::Error::from_str("aucune clé SSH utilisable"));
+    }
+
+    // HTTPS : les identifiants que l'application a elle-même enregistrés pour
+    // cet hôte. Rien n'est lu ailleurs, et aucun programme externe n'est appelé.
+    if allowed.contains(CredentialType::USER_PASS_PLAINTEXT) {
+        if let Some(creds) = crate::credentials::host_of(url)
+            .and_then(|host| crate::credentials::get(&host))
+        {
+            state.set(CredState::Offered);
+            return Cred::userpass_plaintext(&creds.username, &creds.secret);
+        }
+    }
+
+    // NTLM / Negotiate : libgit2 se débrouille sans identifiant explicite.
+    if allowed.contains(CredentialType::DEFAULT) {
+        state.set(CredState::Offered);
+        return Cred::default();
+    }
+
+    state.set(CredState::NothingToOffer);
+    Err(git2::Error::from_str(
+        "aucune méthode d'authentification disponible",
+    ))
+}
+
+/// Ce que le callback d'authentification a pu faire.
+///
+/// « On n'avait rien à proposer » et « tout ce qu'on a proposé a été refusé »
+/// remontent la même erreur générique côté libgit2, alors qu'ils appellent des
+/// gestes très différents de l'utilisateur — d'où cet état explicite.
+#[derive(Clone, Copy, PartialEq)]
+enum CredState {
+    /// Le serveur n'a jamais réclamé d'identifiants (échec avant ce stade).
+    Untouched,
+    /// Aucun identifiant n'a pu être construit.
+    NothingToOffer,
+    /// Au moins un identifiant a été proposé.
+    Offered,
+    /// Tout ce qui a été proposé a été refusé.
+    Refused,
+}
+
+/// Noms conventionnels des clés SSH, dans l'ordre de préférence moderne.
+const SSH_KEY_NAMES: [&str; 3] = ["id_ed25519", "id_ecdsa", "id_rsa"];
+
+/// Chemin de la `index`-ième clé SSH existante dans `~/.ssh`.
+fn nth_ssh_key(index: usize) -> Option<PathBuf> {
+    let home = std::env::var_os("HOME")?;
+    nth_ssh_key_in(&Path::new(&home).join(".ssh"), index)
+}
+
+/// Ne renvoie que des fichiers **présents**, afin que l'index parcoure des
+/// candidats réels : sans ce filtre, un rappel serait gâché sur un emplacement
+/// vide et la clé suivante ne serait jamais essayée.
+fn nth_ssh_key_in(dir: &Path, index: usize) -> Option<PathBuf> {
+    SSH_KEY_NAMES
+        .iter()
+        .map(|name| dir.join(name))
+        .filter(|path| path.is_file())
+        .nth(index)
+}
+
+/// Classe une erreur de fetch pour que le frontend puisse la distinguer : un
+/// réseau absent n'appelle pas la même réaction qu'un refus d'authentification.
+fn fetch_error(e: git2::Error) -> AppError {
+    match (e.class(), e.code()) {
+        (_, ErrorCode::Auth) => AppError::RemoteAuth,
+        // `Os` compte : libgit2 range les échecs de socket (hôte injoignable,
+        // connexion refusée) sous cette classe, pas sous `Net`. Dans le chemin du
+        // fetch, une erreur système est un échec de transport.
+        (ErrorClass::Net, _) | (ErrorClass::Http, _) | (ErrorClass::Os, _) => {
+            AppError::Network(e.message().to_string())
+        }
+        _ => AppError::Git(e.message().to_string()),
+    }
 }
 
 // ── Helpers du graph ────────────────────────────────────────────────────────
@@ -477,7 +1088,9 @@ fn find_commit<'r>(repo: &'r Repository, oid: &str) -> Result<Commit<'r>, AppErr
 /// recherche par commit pendant le parcours.
 ///
 /// La branche courante est marquée `Head` plutôt que `LocalBranch` : c'est la
-/// même référence, pas deux pastilles distinctes.
+/// même référence, pas deux pastilles distinctes. Les branches distantes sont
+/// parcourues **après** les locales, ce qui range les pastilles dans cet ordre
+/// sur un commit qui porte les deux (`main` avant `origin/main`).
 fn collect_refs(repo: &Repository) -> Result<HashMap<Oid, Vec<GraphRef>>, AppError> {
     let mut map: HashMap<Oid, Vec<GraphRef>> = HashMap::new();
 
@@ -496,6 +1109,21 @@ fn collect_refs(repo: &Repository) -> Result<HashMap<Oid, Vec<GraphRef>>, AppErr
         map.entry(oid).or_default().push(GraphRef {
             name: name.to_string(),
             kind,
+        });
+    }
+
+    for item in repo.branches(Some(BranchType::Remote))? {
+        let (branch, _kind) = item?;
+        let Some(name) = branch.name()? else { continue };
+        // Même filtre que `remote_branches` : `<distant>/HEAD` est symbolique,
+        // donc sans `target()`, et doublerait la pastille de la branche par
+        // défaut du distant.
+        let Some(oid) = branch.get().target() else {
+            continue;
+        };
+        map.entry(oid).or_default().push(GraphRef {
+            name: name.to_string(),
+            kind: GraphRefKind::RemoteBranch,
         });
     }
 
@@ -594,6 +1222,95 @@ fn map_stash_error(e: git2::Error) -> AppError {
     } else {
         AppError::from(e)
     }
+}
+
+/// Têtes d'une fusion en cours, vides hors fusion.
+fn merge_heads(repo: &mut Repository) -> Result<Vec<Oid>, AppError> {
+    if repo.state() != RepositoryState::Merge {
+        return Ok(Vec::new());
+    }
+    let mut out = Vec::new();
+    repo.mergehead_foreach(|oid| {
+        out.push(*oid);
+        true
+    })?;
+    Ok(out)
+}
+
+/// Chemins en conflit dans l'index, dédoublonnés et triés.
+///
+/// Une entrée en conflit peut n'avoir que deux de ses trois côtés (ajout des
+/// deux côtés, suppression d'un côté) : on prend le premier disponible plutôt
+/// que d'en privilégier un, faute de quoi certains conflits n'auraient pas de
+/// nom à afficher.
+fn conflicted_paths(index: &git2::Index) -> Vec<String> {
+    let Ok(conflicts) = index.conflicts() else {
+        return Vec::new();
+    };
+    let mut out: Vec<String> = conflicts
+        .flatten()
+        .filter_map(|c| {
+            c.our
+                .or(c.their)
+                .or(c.ancestor)
+                .map(|entry| String::from_utf8_lossy(&entry.path).to_string())
+        })
+        .collect();
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// Traduit une erreur de checkout. libgit2 refuse d'écraser des modifications
+/// locales (stratégie SAFE) : ce refus devient une erreur explicite, le reste
+/// passe tel quel.
+fn map_checkout_error(e: git2::Error) -> AppError {
+    match e.class() {
+        ErrorClass::Checkout => AppError::CheckoutConflict,
+        _ => AppError::from(e),
+    }
+}
+
+/// Branche amont d'une branche locale et écart avec elle, quand elle en a une.
+///
+/// Tout ce qui manque donne `None` — amont non configuré, référence amont
+/// disparue avec son distant, branche sans commit. C'est volontairement le même
+/// résultat : dans tous ces cas il n'y a rien à comparer, ce qui n'est pas la
+/// même chose qu'un écart nul, et le frontend ne montre alors aucun compteur.
+///
+/// L'écart se lit entre deux références **locales** : il ne dit que ce que le
+/// dernier fetch a ramené, jamais l'état courant du serveur.
+fn upstream_of(repo: &Repository, branch: &Branch, local: Option<Oid>) -> Option<Upstream> {
+    let local = local?;
+    let upstream = branch.upstream().ok()?;
+    let name = upstream.name().ok()??.to_string();
+    let target = upstream.get().target()?;
+    let (ahead, behind) = repo.graph_ahead_behind(local, target).ok()?;
+    Some(Upstream {
+        name,
+        ahead,
+        behind,
+    })
+}
+
+/// Distant auquel appartient une référence de `refs/remotes/**`.
+///
+/// Demandé à libgit2 plutôt que déduit du nom : un nom de distant peut contenir
+/// un "/". Le repli sur le premier segment couvre les références orphelines,
+/// laissées derrière par un distant supprimé — sans lui, elles disparaîtraient
+/// de la liste des branches.
+fn remote_name_of(repo: &Repository, reference: &Reference, shorthand: &str) -> String {
+    reference
+        .name()
+        .and_then(|refname| repo.branch_remote_name(refname).ok())
+        .and_then(|buf| buf.as_str().map(str::to_string))
+        .unwrap_or_else(|| {
+            shorthand
+                .split('/')
+                .next()
+                .unwrap_or(shorthand)
+                .to_string()
+        })
 }
 
 /// Extrait la branche d'origine d'un message de stash.
@@ -871,6 +1588,166 @@ mod tests {
     }
 
     #[test]
+    fn local_branches_report_the_gap_with_their_upstream() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        let current = git.info().unwrap().branch.unwrap();
+
+        // Le distant a un commit de plus que nous, et la branche courante le suit.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = repo.signature().unwrap();
+        let remote_tip = repo
+            .commit(None, &sig, &sig, "c2", &head.tree().unwrap(), &[&head])
+            .unwrap();
+        repo.remote("origin", "https://example.invalid/x.git").unwrap();
+        repo.reference("refs/remotes/origin/main", remote_tip, true, "test")
+            .unwrap();
+        repo.find_branch(&current, BranchType::Local)
+            .unwrap()
+            .set_upstream(Some("origin/main"))
+            .unwrap();
+
+        let gap = |name: &str| {
+            git.local_branches()
+                .unwrap()
+                .into_iter()
+                .find(|b| b.name == name)
+                .expect("branche absente de la liste")
+                .upstream
+        };
+
+        // Sans commit local depuis, on est seulement en retard.
+        let up = gap(&current).expect("la branche suit origin/main");
+        assert_eq!(up.name, "origin/main");
+        assert_eq!((up.ahead, up.behind), (0, 1));
+
+        // Un commit local met aussi en avance : les deux compteurs coexistent.
+        fs::write(dir.join("b.txt"), "x\n").unwrap();
+        git.stage("b.txt").unwrap();
+        git.commit("c3", None, false).unwrap();
+        let up = gap(&current).unwrap();
+        assert_eq!((up.ahead, up.behind), (1, 1));
+
+        // Une branche sans amont n'a rien à comparer : ce n'est pas un écart nul.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("solo", &head, false).unwrap();
+        assert!(gap("solo").is_none());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn lists_remote_branches_without_the_head_pointer() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // Simule ce qu'un clone laisse derrière lui : un distant déclaré, ses
+        // branches sous `refs/remotes/`, et le pointeur `origin/HEAD`.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.remote("origin", "https://example.invalid/x.git").unwrap();
+        repo.reference("refs/remotes/origin/main", head.id(), true, "test")
+            .unwrap();
+        repo.reference("refs/remotes/origin/feature/x", head.id(), true, "test")
+            .unwrap();
+        repo.reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "test")
+            .unwrap();
+
+        let branches = git.remote_branches().unwrap();
+        // `origin/HEAD` est écarté : il doublerait `origin/main`.
+        assert_eq!(
+            branches.iter().map(|b| b.name.as_str()).collect::<Vec<_>>(),
+            ["origin/feature/x", "origin/main"]
+        );
+        assert!(branches.iter().all(|b| b.remote == "origin"));
+        assert_eq!(branches[0].oid, head.id().to_string());
+
+        // Les deux listes restent disjointes : rien de distant côté local.
+        assert!(git
+            .local_branches()
+            .unwrap()
+            .iter()
+            .all(|b| !b.name.starts_with("origin/")));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn checkout_remote_branch_creates_a_tracking_branch() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+
+        // Une branche qui n'existe que côté distant, en avance d'un commit.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = repo.signature().unwrap();
+        let ahead = repo
+            .commit(None, &sig, &sig, "c2", &head.tree().unwrap(), &[&head])
+            .unwrap();
+        repo.remote("origin", "https://example.invalid/x.git").unwrap();
+        repo.reference("refs/remotes/origin/feature/x", ahead, true, "test")
+            .unwrap();
+
+        git.checkout_remote_branch("origin/feature/x").unwrap();
+
+        // La branche locale porte le nom sans le distant, et c'est elle HEAD.
+        let info = git.info().unwrap();
+        assert_eq!(info.branch.as_deref(), Some("feature/x"));
+        assert_eq!(info.head.as_deref(), Some(ahead.to_string().as_str()));
+        assert!(git
+            .local_branches()
+            .unwrap()
+            .iter()
+            .any(|b| b.name == "feature/x" && b.is_head));
+
+        // Elle suit la branche distante dont elle est issue.
+        let repo = Repository::open(&dir).unwrap();
+        let local = repo.find_branch("feature/x", BranchType::Local).unwrap();
+        let upstream = local.upstream().unwrap();
+        assert_eq!(upstream.name().unwrap(), Some("origin/feature/x"));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn checkout_remote_branch_reuses_an_existing_local_branch() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        let base = git.commit("c1", None, false).unwrap();
+
+        // `dev` existe en local sur c1, alors que `origin/dev` a un commit de
+        // plus. Basculer ne doit **pas** faire avancer la locale : ce serait un
+        // pull, pas un checkout.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("dev", &head, false).unwrap();
+        let sig = repo.signature().unwrap();
+        let ahead = repo
+            .commit(None, &sig, &sig, "c2", &head.tree().unwrap(), &[&head])
+            .unwrap();
+        repo.remote("origin", "https://example.invalid/x.git").unwrap();
+        repo.reference("refs/remotes/origin/dev", ahead, true, "test")
+            .unwrap();
+
+        git.checkout_remote_branch("origin/dev").unwrap();
+
+        let info = git.info().unwrap();
+        assert_eq!(info.branch.as_deref(), Some("dev"));
+        assert_eq!(info.head.as_deref(), Some(base.oid.as_str()));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn parses_stash_branch_from_message() {
         assert_eq!(
             parse_stash_branch("WIP on dev: 1a2b3c sujet").as_deref(),
@@ -1037,6 +1914,57 @@ mod tests {
     }
 
     #[test]
+    fn commit_graph_walks_remote_refs() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+
+        // Un commit qui n'existe **que** côté distant : créé sans mettre à jour
+        // aucune référence (`update_ref = None`), puis désigné par
+        // `refs/remotes/origin/main`. C'est l'état laissé par un fetch quand le
+        // distant a pris de l'avance.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        let sig = repo.signature().unwrap();
+        let remote_only = repo
+            .commit(
+                None,
+                &sig,
+                &sig,
+                "c2 distant",
+                &head.tree().unwrap(),
+                &[&head],
+            )
+            .unwrap();
+        repo.remote("origin", "https://example.invalid/x.git").unwrap();
+        repo.reference("refs/remotes/origin/main", remote_only, true, "test")
+            .unwrap();
+
+        // Sans le parcours de `refs/remotes/*`, ce commit serait invisible.
+        let page = git.commit_graph(0, 50).unwrap();
+        assert_eq!(page.commits.len(), 2);
+        assert_eq!(page.commits[0].oid, remote_only.to_string());
+
+        let badge = page.commits[0]
+            .refs
+            .iter()
+            .find(|r| matches!(r.kind, GraphRefKind::RemoteBranch))
+            .expect("la tête distante doit être badgée");
+        assert_eq!(badge.name, "origin/main");
+
+        // `origin/HEAD` n'ajoute pas une pastille de plus : elle doublerait
+        // celle de `origin/main`.
+        repo.reference_symbolic("refs/remotes/origin/HEAD", "refs/remotes/origin/main", true, "test")
+            .unwrap();
+        let page = git.commit_graph(0, 50).unwrap();
+        assert_eq!(page.commits.len(), 2);
+        assert_eq!(page.commits[0].refs.len(), 1);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn commit_graph_paginates() {
         let (dir, git) = temp_repo();
         for i in 0..5 {
@@ -1172,5 +2100,433 @@ mod tests {
             Err(AppError::NotARepository)
         ));
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Fetch ───────────────────────────────────────────────────────────────
+    //
+    // Un dépôt distant sur le disque suffit : libgit2 sait parler le transport
+    // local, ce qui teste tout l'enchaînement (résolution du distant, callbacks,
+    // rapport) sans réseau ni authentification.
+
+    /// Crée un dépôt « distant » avec un commit, et un clone local qui le suit.
+    fn repo_with_remote() -> (PathBuf, PathBuf, Libgit2Backend) {
+        let (origin_dir, origin) = temp_repo();
+        fs::write(origin_dir.join("a.txt"), "origine\n").unwrap();
+        origin.stage("a.txt").unwrap();
+        origin.commit("commit distant", None, false).unwrap();
+
+        let (local_dir, local) = temp_repo();
+        let repo = Repository::open(&local_dir).unwrap();
+        repo.remote("origin", origin_dir.to_str().unwrap()).unwrap();
+
+        (origin_dir, local_dir, local)
+    }
+
+    /// Dépôt local relié à un **dépôt nu**. Un push vers un dépôt avec working
+    /// directory serait refusé par le distant (sa branche courante), ce que Git
+    /// fait aussi : le distant d'un push est nu dans la vraie vie.
+    fn repo_with_bare_remote() -> (PathBuf, PathBuf, Libgit2Backend) {
+        let origin_dir = unique_dir("origin-bare");
+        Repository::init_bare(&origin_dir).unwrap();
+
+        let (local_dir, local) = temp_repo();
+        let repo = Repository::open(&local_dir).unwrap();
+        repo.remote("origin", origin_dir.to_str().unwrap()).unwrap();
+
+        (origin_dir, local_dir, local)
+    }
+
+    /// Dépôt local suivant un distant sur disque, branche de suivi créée : ce
+    /// qu'un clone laisse, et le minimum dont un pull a besoin.
+    fn repo_tracking_remote() -> (PathBuf, PathBuf, Libgit2Backend, Libgit2Backend, String) {
+        let (origin_dir, origin) = temp_repo();
+        fs::write(origin_dir.join("a.txt"), "1\n").unwrap();
+        origin.stage("a.txt").unwrap();
+        origin.commit("c1", None, false).unwrap();
+        let branch = origin.info().unwrap().branch.unwrap();
+
+        let (local_dir, local) = temp_repo();
+        let repo = Repository::open(&local_dir).unwrap();
+        repo.remote("origin", origin_dir.to_str().unwrap()).unwrap();
+        local.fetch(None).unwrap();
+        local
+            .checkout_remote_branch(&format!("origin/{branch}"))
+            .unwrap();
+
+        (origin_dir, local_dir, origin, local, branch)
+    }
+
+    /// Ajoute un commit au dépôt donné.
+    fn commit_file(dir: &Path, git: &Libgit2Backend, file: &str, content: &str, msg: &str) {
+        fs::write(dir.join(file), content).unwrap();
+        git.stage(file).unwrap();
+        git.commit(msg, None, false).unwrap();
+    }
+
+    #[test]
+    fn pull_fast_forwards_when_the_local_has_not_moved() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2");
+
+        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        assert_eq!(report.remotes, ["origin"]);
+        assert!(matches!(
+            report.outcome,
+            PullOutcome::FastForwarded { commits: 1 }
+        ));
+
+        // Le working directory suit, et la branche est sur le commit distant.
+        assert_eq!(fs::read_to_string(local_dir.join("a.txt")).unwrap(), "2\n");
+        assert_eq!(local.info().unwrap().head, origin.info().unwrap().head);
+        // Rien n'a été fusionné : pas d'état de fusion en travers.
+        assert!(!local.info().unwrap().merging);
+
+        // Sans mouvement en face, un second pull ne fait rien.
+        assert!(matches!(
+            local.pull(PullMode::FastForwardOrMerge).unwrap().outcome,
+            PullOutcome::UpToDate
+        ));
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn pull_fast_forward_only_refuses_a_divergence() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2 distant");
+        commit_file(&local_dir, &local, "b.txt", "local\n", "c2 local");
+        let before = local.info().unwrap().head;
+
+        let report = local.pull(PullMode::FastForwardOnly).unwrap();
+        assert!(
+            matches!(
+                report.outcome,
+                PullOutcome::Diverged {
+                    ahead: 1,
+                    behind: 1
+                }
+            ),
+            "{:?}",
+            report.outcome
+        );
+        // Le fetch, lui, a bien eu lieu : c'est ce qui rend la divergence
+        // mesurable, et pourquoi ce n'est pas une erreur.
+        assert!(!report.updated.is_empty());
+        // Rien n'a bougé en local.
+        assert_eq!(local.info().unwrap().head, before);
+        assert!(!local.info().unwrap().merging);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn pull_merges_when_the_two_sides_touch_different_files() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2 distant");
+        commit_file(&local_dir, &local, "b.txt", "local\n", "c2 local");
+
+        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        assert!(
+            matches!(report.outcome, PullOutcome::Merged { commits: 1 }),
+            "{:?}",
+            report.outcome
+        );
+
+        // Un commit de fusion : deux parents, et l'état de fusion est refermé.
+        let details = local
+            .commit_details(&local.info().unwrap().head.unwrap())
+            .unwrap();
+        assert_eq!(details.parents.len(), 2);
+        assert!(!local.info().unwrap().merging);
+        // Les deux côtés sont là.
+        assert_eq!(fs::read_to_string(local_dir.join("a.txt")).unwrap(), "2\n");
+        assert!(local_dir.join("b.txt").exists());
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn pull_conflict_is_left_to_the_user_then_committed_with_two_parents() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "distant\n", "c2 distant");
+        commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
+
+        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        match report.outcome {
+            PullOutcome::Conflicted { files } => assert_eq!(files, ["a.txt"]),
+            other => panic!("conflit attendu, obtenu {other:?}"),
+        }
+        // Le dépôt reste en fusion : c'est ce qui permet d'en sortir.
+        assert!(local.info().unwrap().merging);
+
+        // Résolution : le fichier est réécrit puis indexé, et le commit reprend
+        // la tête de fusion en second parent.
+        fs::write(local_dir.join("a.txt"), "résolu\n").unwrap();
+        local.stage("a.txt").unwrap();
+        let res = local.commit("Merge distant", None, false).unwrap();
+        let details = local.commit_details(&res.oid).unwrap();
+        assert_eq!(details.parents.len(), 2);
+        // La fusion est refermée : le commit suivant n'en héritera pas.
+        assert!(!local.info().unwrap().merging);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn abort_merge_restores_head_and_clears_the_merge_state() {
+        let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
+        commit_file(&origin_dir, &origin, "a.txt", "distant\n", "c2 distant");
+        commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
+        let before = local.info().unwrap().head;
+
+        local.pull(PullMode::FastForwardOrMerge).unwrap();
+        assert!(local.info().unwrap().merging);
+
+        local.abort_merge().unwrap();
+        let info = local.info().unwrap();
+        assert!(!info.merging);
+        assert_eq!(info.head, before);
+        // Le fichier revient à la version locale, marqueurs de conflit compris.
+        assert_eq!(
+            fs::read_to_string(local_dir.join("a.txt")).unwrap(),
+            "local\n"
+        );
+        assert!(local.status().unwrap().unstaged.is_empty());
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn push_publishes_the_branch_and_sets_its_upstream_once() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        fs::write(local_dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        let branch = git.info().unwrap().branch.unwrap();
+
+        // Premier push : la branche n'a pas d'amont, il est posé au passage.
+        let report = git.push(None).unwrap();
+        assert_eq!(report.remote, "origin");
+        assert_eq!(report.branch, branch);
+        assert!(report.upstream_set, "le premier push pose le suivi");
+
+        // Le distant a la référence, et le local ne montre plus d'écart.
+        let origin = Repository::open(&origin_dir).unwrap();
+        assert!(origin
+            .find_reference(&format!("refs/heads/{branch}"))
+            .is_ok());
+        let gap = |git: &Libgit2Backend| {
+            git.local_branches()
+                .unwrap()
+                .into_iter()
+                .find(|b| b.name == branch)
+                .unwrap()
+                .upstream
+                .expect("la branche suit le distant après un push")
+        };
+        let up = gap(&git);
+        assert_eq!(up.name, format!("origin/{branch}"));
+        assert_eq!((up.ahead, up.behind), (0, 0));
+
+        // Second push : l'amont existe déjà, il n'est pas reposé.
+        fs::write(local_dir.join("a.txt"), "2\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c2", None, false).unwrap();
+        assert_eq!(gap(&git).ahead, 1);
+
+        let report = git.push(None).unwrap();
+        assert!(!report.upstream_set);
+        assert_eq!(gap(&git).ahead, 0);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn push_is_rejected_when_the_remote_moved_ahead() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        fs::write(local_dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        let branch = git.info().unwrap().branch.unwrap();
+        git.push(None).unwrap();
+
+        // Quelqu'un d'autre a poussé entre-temps : le distant a un commit que le
+        // local n'a pas.
+        let origin = Repository::open(&origin_dir).unwrap();
+        let tip = origin
+            .find_reference(&format!("refs/heads/{branch}"))
+            .unwrap()
+            .peel_to_commit()
+            .unwrap();
+        let sig = git2::Signature::now("Autre", "autre@example.com").unwrap();
+        let ahead = origin
+            .commit(None, &sig, &sig, "c2 ailleurs", &tip.tree().unwrap(), &[&tip])
+            .unwrap();
+        origin
+            .reference(&format!("refs/heads/{branch}"), ahead, true, "test")
+            .unwrap();
+
+        // Repousser écraserait ce commit : refusé, et sans force pour insister.
+        fs::write(local_dir.join("a.txt"), "2\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c2 local", None, false).unwrap();
+        let err = git.push(None).unwrap_err();
+        assert!(
+            matches!(err, AppError::PushRejected(_)),
+            "un rejet doit être explicite, pas une erreur générique : {err:?}"
+        );
+
+        // Le distant n'a pas bougé.
+        let origin = Repository::open(&origin_dir).unwrap();
+        let after = origin
+            .find_reference(&format!("refs/heads/{branch}"))
+            .unwrap()
+            .target()
+            .unwrap();
+        assert_eq!(after, ahead);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn fetch_reports_updated_refs_then_nothing() {
+        let (origin_dir, local_dir, git) = repo_with_remote();
+
+        // Premier fetch : la branche distante apparaît (pas d'ancien OID).
+        let report = git.fetch(None).unwrap();
+        assert_eq!(report.remote, "origin");
+        assert_eq!(report.updated.len(), 1);
+        assert!(report.updated[0].name.starts_with("refs/remotes/origin/"));
+        assert!(report.updated[0].old_oid.is_none());
+
+        // Second fetch sans mouvement en face : rien n'est signalé.
+        let report = git.fetch(None).unwrap();
+        assert!(report.updated.is_empty());
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn fetch_reports_moved_ref_with_previous_oid() {
+        let (origin_dir, local_dir, git) = repo_with_remote();
+        git.fetch(None).unwrap();
+
+        // Le distant avance d'un commit.
+        let origin = Libgit2Backend::open(&origin_dir).unwrap();
+        fs::write(origin_dir.join("a.txt"), "origine 2\n").unwrap();
+        origin.stage("a.txt").unwrap();
+        origin.commit("second commit distant", None, false).unwrap();
+
+        let report = git.fetch(None).unwrap();
+        assert_eq!(report.updated.len(), 1);
+        // La référence existait déjà : son OID précédent est renseigné.
+        let moved = &report.updated[0];
+        assert!(moved.old_oid.is_some());
+        assert_ne!(moved.old_oid.as_deref(), Some(moved.new_oid.as_str()));
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn fetch_without_remote_fails_cleanly() {
+        let (dir, git) = temp_repo();
+        assert!(matches!(git.fetch(None), Err(AppError::NoRemote)));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn ssh_keys_are_walked_in_preference_order_skipping_absent_ones() {
+        let dir = unique_dir("ssh");
+        fs::create_dir_all(&dir).unwrap();
+        // id_ecdsa volontairement absent : l'index doit l'enjamber.
+        fs::write(dir.join("id_rsa"), "x").unwrap();
+        fs::write(dir.join("id_ed25519"), "x").unwrap();
+
+        assert_eq!(nth_ssh_key_in(&dir, 0), Some(dir.join("id_ed25519")));
+        assert_eq!(nth_ssh_key_in(&dir, 1), Some(dir.join("id_rsa")));
+        assert_eq!(nth_ssh_key_in(&dir, 2), None);
+
+        // Aucun candidat : le callback doit conclure « rien à proposer ».
+        let empty = unique_dir("ssh-vide");
+        fs::create_dir_all(&empty).unwrap();
+        assert_eq!(nth_ssh_key_in(&empty, 0), None);
+
+        fs::remove_dir_all(&dir).ok();
+        fs::remove_dir_all(&empty).ok();
+    }
+
+    #[test]
+    fn credentials_without_any_key_reports_nothing_to_offer() {
+        let state = Cell::new(CredState::Untouched);
+        // Aucune méthode acceptée par le serveur : rien ne peut être proposé.
+        let out = credentials("", None, CredentialType::empty(), 1, &state);
+        assert!(out.is_err());
+        assert!(state.get() == CredState::NothingToOffer);
+    }
+
+    #[test]
+    fn credentials_give_up_after_the_attempt_cap() {
+        let state = Cell::new(CredState::Untouched);
+        let out = credentials("", None, CredentialType::USER_PASS_PLAINTEXT, MAX_CRED_ATTEMPTS + 1, &state);
+        assert!(out.is_err());
+        // Plafond atteint = tout ce qui a été proposé a été refusé.
+        assert!(state.get() == CredState::Refused);
+    }
+
+    #[test]
+    fn identity_is_written_locally_then_cleared() {
+        let (dir, git) = temp_repo();
+
+        git.set_identity("Profil Test", "profil@example.com").unwrap();
+        let id = git.identity().unwrap();
+        assert_eq!(id.name.as_deref(), Some("Profil Test"));
+        assert_eq!(id.email.as_deref(), Some("profil@example.com"));
+        assert!(id.is_local);
+
+        // Écrit bien dans le dépôt, donc visible par n'importe quel outil Git.
+        let local = Repository::open(&dir)
+            .unwrap()
+            .config()
+            .unwrap()
+            .open_level(ConfigLevel::Local)
+            .unwrap();
+        assert_eq!(local.get_string("user.email").unwrap(), "profil@example.com");
+
+        // Après retrait, l'identité n'est plus propre au dépôt : ce qui subsiste
+        // vient de la config globale de la machine, dont on ne présume rien.
+        git.clear_identity().unwrap();
+        assert!(!git.identity().unwrap().is_local);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fetch_unreachable_remote_is_a_network_error() {
+        let (dir, git) = temp_repo();
+        let repo = Repository::open(&dir).unwrap();
+        // Port fermé sur la boucle locale : refus immédiat, pas d'attente réseau.
+        repo.remote("origin", "https://127.0.0.1:1/x.git").unwrap();
+
+        // libgit2 classe ce refus en `Os`/`GenericError`, pas en `Net` : sans
+        // cette prise en compte l'erreur remontait au frontend en `Git`.
+        assert!(matches!(git.fetch(None), Err(AppError::Network(_))));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fetch_on_unknown_remote_fails_cleanly() {
+        let (origin_dir, local_dir, git) = repo_with_remote();
+        assert!(matches!(git.fetch(Some("amont")), Err(AppError::NoRemote)));
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
     }
 }

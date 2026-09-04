@@ -267,11 +267,15 @@
             onclick={() => repo.selectCommit(row.commit.oid)}
             onkeydown={(e) => onRowKey(e, row.commit.oid)}
           >
-            <!-- La pastille reprend la couleur de la lane du commit. -->
+            <!-- La pastille reprend la couleur de la lane du commit. Les
+                 références distantes portent le nom du distant ("origin/main"),
+                 ce qui suffit à les nommer ; le pointillé les distingue au
+                 premier coup d'œil d'une branche présente en local. -->
             {#each row.commit.refs as r (r.name)}
               <span
                 class="ref"
                 class:head={r.kind === "head"}
+                class:remote={r.kind === "remoteBranch"}
                 style="--lane: {LANE_COLORS[row.color]}"
                 title={r.name}
               >
@@ -362,6 +366,12 @@
     color: var(--bg);
     background: var(--lane);
     font-weight: 600;
+  }
+  /* Référence distante : même couleur de lane, contour pointillé — elle n'est
+     pas ici mais sur le serveur. */
+  .ref.remote {
+    border-style: dashed;
+    opacity: 0.85;
   }
   .summary {
     flex: 1;

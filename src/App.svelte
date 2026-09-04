@@ -3,12 +3,15 @@
   import { repo, tabs } from "./lib/stores/repo.svelte";
   import TabBar from "./lib/components/TabBar.svelte";
   import WelcomeScreen from "./lib/components/WelcomeScreen.svelte";
+  import SettingsView from "./lib/components/SettingsView.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
   import CommitDetailsPanel from "./lib/components/CommitDetailsPanel.svelte";
   import CommitBox from "./lib/components/CommitBox.svelte";
   import ErrorBanner from "./lib/components/ErrorBanner.svelte";
+  import CredentialsDialog from "./lib/components/CredentialsDialog.svelte";
+  import MergeBanner from "./lib/components/MergeBanner.svelte";
 
   onMount(() => {
     // Restaure les onglets de la session précédente.
@@ -20,7 +23,11 @@
   <!-- La barre d'onglets tient lieu de topbar : pas de logo ni de bouton d'ouverture. -->
   <TabBar />
 
-  {#if !tabs.hasTabs}
+  <!-- Les paramètres occupent tout le corps, par-dessus l'accueil comme par
+       dessus un dépôt ouvert : la barre d'onglets, elle, reste accessible. -->
+  {#if tabs.settingsOpen}
+    <SettingsView />
+  {:else if !tabs.hasTabs}
     <WelcomeScreen />
   {:else}
     <div class="body">
@@ -34,6 +41,9 @@
         en cours et la boîte de commit.
       -->
       <aside class="sidebar">
+        <!-- Au-dessus des deux vues : une fusion en cours concerne le dépôt,
+             pas ce qu'on est en train de regarder. -->
+        <MergeBanner />
         {#if repo.selectedCommitOid}
           <CommitDetailsPanel />
         {:else}
@@ -43,6 +53,9 @@
       </aside>
     </div>
   {/if}
+
+  <!-- Saisie d'identifiants pour un dépôt distant (ne rend rien sans demande). -->
+  <CredentialsDialog />
 
   <!-- Bandeau d'erreur en overlay (ne rend rien s'il n'y a pas d'erreur). -->
   <div class="error-overlay">

@@ -1,6 +1,7 @@
 //! Point d'entrée de la bibliothèque applicative (partagé desktop/mobile).
 
 mod commands;
+mod credentials;
 mod dto;
 mod error;
 mod git;
@@ -39,7 +40,25 @@ pub fn run() {
             commands::commit,
             commands::list_recent,
             commands::list_branches,
+            commands::list_remote_branches,
             commands::checkout_branch,
+            commands::checkout_remote_branch,
+            commands::fetch_remote,
+            commands::push_branch,
+            commands::pull,
+            commands::abort_merge,
+            commands::get_pull_mode,
+            commands::set_pull_mode,
+            commands::get_remote_info,
+            commands::set_credentials,
+            commands::forget_credentials,
+            commands::has_credentials,
+            commands::list_profiles,
+            commands::save_profile,
+            commands::delete_profile,
+            commands::get_identity,
+            commands::set_identity,
+            commands::clear_identity,
             commands::list_stashes,
             commands::stash_apply,
             commands::stash_pop,

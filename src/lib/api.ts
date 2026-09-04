@@ -1,4 +1,5 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppError,
@@ -6,7 +7,15 @@ import type {
   CommitDetails,
   CommitGraphPage,
   CommitResult,
+  FetchEvent,
   FileDiff,
+  Identity,
+  Profile,
+  PullEvent,
+  PullMode,
+  PushEvent,
+  RemoteBranchEntry,
+  RemoteInfo,
   RecentRepo,
   RepoInfo,
   RepoStatus,
@@ -75,9 +84,84 @@ export const api = {
 
   // ── Branches & stashes ───────────────────────────────────────────────────
   listBranches: (repoId: string) => call<BranchEntry[]>("list_branches", { repoId }),
+  /**
+   * Branches distantes déjà présentes sur le disque (`refs/remotes/**`). Ne va
+   * pas sur le réseau : c'est `fetchRemote` qui les met à jour.
+   */
+  listRemoteBranches: (repoId: string) =>
+    call<RemoteBranchEntry[]>("list_remote_branches", { repoId }),
   /** Bascule de branche ; renvoie les infos du dépôt à jour. */
   checkoutBranch: (repoId: string, name: string) =>
     call<RepoInfo>("checkout_branch", { repoId, name }),
+  /**
+   * Bascule sur une branche distante ("origin/feature") : le backend crée la
+   * branche locale de suivi ("feature") si elle n'existe pas encore, sinon il
+   * bascule sur celle qui existe déjà, sans la faire avancer.
+   */
+  checkoutRemoteBranch: (repoId: string, name: string) =>
+    call<RepoInfo>("checkout_remote_branch", { repoId, name }),
+  // ── Dépôt distant ────────────────────────────────────────────────────────
+  /**
+   * Lance un fetch et rend la main immédiatement : le backend l'exécute sur un
+   * thread dédié pour ne pas geler les autres onglets. Le résultat n'est donc
+   * *pas* la valeur de retour — il arrive via `onFetched`. Une erreur levée ici
+   * signale un échec de lancement (onglet fermé, fetch déjà en cours), auquel
+   * cas aucun événement ne suivra.
+   */
+  fetchRemote: (repoId: string, remote?: string) =>
+    call<void>("fetch_remote", { repoId, remote: remote ?? null }),
+  /**
+   * S'abonne au résultat des fetch. L'événement porte son `repoId` : il peut
+   * concerner un onglet qui n'est plus celui affiché.
+   */
+  onFetched: (handler: (event: FetchEvent) => void): Promise<UnlistenFn> =>
+    listen<FetchEvent>("repo://fetched", (e) => handler(e.payload)),
+  /**
+   * Publie la branche courante. Même contrat que `fetchRemote` : réponse
+   * immédiate, résultat par `onPushed`. Le suivi est posé au premier push,
+   * et rien n'est jamais forcé — un rejet du distant remonte en erreur.
+   */
+  pushBranch: (repoId: string, remote?: string) =>
+    call<void>("push_branch", { repoId, remote: remote ?? null }),
+  onPushed: (handler: (event: PushEvent) => void): Promise<UnlistenFn> =>
+    listen<PushEvent>("repo://pushed", (e) => handler(e.payload)),
+  /**
+   * Récupère puis intègre, selon le mode. Même contrat que `fetchRemote` :
+   * réponse immédiate, résultat par `onPulled`. C'est la seule opération
+   * distante qui écrit dans le working directory.
+   */
+  pull: (repoId: string, mode: PullMode) => call<void>("pull", { repoId, mode }),
+  onPulled: (handler: (event: PullEvent) => void): Promise<UnlistenFn> =>
+    listen<PullEvent>("repo://pulled", (e) => handler(e.payload)),
+  /** Sortie de secours d'un pull qui a conflité ; renvoie les infos à jour. */
+  abortMerge: (repoId: string) => call<RepoInfo>("abort_merge", { repoId }),
+  /** Mode du bouton Pull : préférence globale, persistée par le backend. */
+  getPullMode: () => call<PullMode>("get_pull_mode"),
+  setPullMode: (mode: PullMode) => call<void>("set_pull_mode", { mode }),
+  /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */
+  getRemoteInfo: (repoId: string, remote?: string) =>
+    call<RemoteInfo>("get_remote_info", { repoId, remote: remote ?? null }),
+  /**
+   * Enregistre les identifiants d'un hôte dans le trousseau du système.
+   * Sens unique : aucune commande ne permet de relire le secret ensuite.
+   */
+  setCredentials: (host: string, username: string, secret: string) =>
+    call<void>("set_credentials", { host, username, secret }),
+  forgetCredentials: (host: string) => call<void>("forget_credentials", { host }),
+  hasCredentials: (host: string) => call<boolean>("has_credentials", { host }),
+
+  // ── Profils d'auteur ─────────────────────────────────────────────────────
+  listProfiles: () => call<Profile[]>("list_profiles"),
+  /** `id` absent = création ; sinon mise à jour du profil visé. */
+  saveProfile: (id: string | null, label: string, name: string, email: string) =>
+    call<Profile>("save_profile", { id, label, name, email }),
+  deleteProfile: (id: string) => call<void>("delete_profile", { id }),
+  /** Identité du dépôt, et si elle lui est propre. */
+  getIdentity: (repoId: string) => call<Identity>("get_identity", { repoId }),
+  setIdentity: (repoId: string, name: string, email: string) =>
+    call<Identity>("set_identity", { repoId, name, email }),
+  clearIdentity: (repoId: string) => call<Identity>("clear_identity", { repoId }),
+
   listStashes: (repoId: string) => call<StashEntry[]>("list_stashes", { repoId }),
   /** Applique un stash sans le retirer de la pile. */
   stashApply: (repoId: string, index: number) =>
