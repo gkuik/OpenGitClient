@@ -199,6 +199,12 @@ export const api = {
   clearIdentity: (repoId: string) => call<Identity>("clear_identity", { repoId }),
 
   listStashes: (repoId: string) => call<StashEntry[]>("list_stashes", { repoId }),
+  /**
+   * Remise les modifications locales, fichiers non suivis compris. Le message
+   * est construit comme celui d'un commit : résumé, puis description.
+   */
+  stashSave: (repoId: string, summary: string, body: string | null) =>
+    call<void>("stash_save", { repoId, summary, body }),
   /** Applique un stash sans le retirer de la pile. */
   stashApply: (repoId: string, index: number) =>
     call<void>("stash_apply", { repoId, index }),

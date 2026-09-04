@@ -102,6 +102,7 @@ export class RepoStore {
   error = $state<AppError | null>(null);
   busy = $state(false);
   committing = $state(false);
+  stashing = $state(false);
   /** Vrai tant que le premier chargement du dépôt n'est pas terminé. */
   loaded = $state(false);
 
@@ -194,6 +195,17 @@ export class RepoStore {
    */
   commitSummary = $state("");
   commitBody = $state("");
+
+  /**
+   * Brouillon de la prochaine remise, distinct de celui du commit.
+   *
+   * Deux brouillons plutôt qu'un : le résumé de commit est déjà édité par la
+   * rangée « modifications en cours » du graph, où un nom de remise n'a rien à
+   * faire, et passer d'un onglet à l'autre écraserait le message en cours de
+   * rédaction de l'autre.
+   */
+  stashSummary = $state("");
+  stashBody = $state("");
 
   // Préférences d'affichage de la liste de fichiers.
   viewMode = $state<ViewMode>("tree");
@@ -469,6 +481,7 @@ export class RepoStore {
     return (
       this.busy ||
       this.committing ||
+      this.stashing ||
       this.checkingOut ||
       this.fetching ||
       this.pushing ||
@@ -604,6 +617,38 @@ export class RepoStore {
       this.stashes = await api.listStashes(this.repoId);
     } catch (e) {
       this.error = e as AppError;
+    }
+  }
+
+  /**
+   * Remise le brouillon (`stashSummary` / `stashBody`) et le vide en cas de
+   * succès. Renvoie `false` sans rien tenter si le nom est vide ou s'il n'y a
+   * aucune modification — les deux cas que le bouton grise déjà.
+   *
+   * Le backend remise les fichiers non suivis aussi : le working directory
+   * ressort propre, donc `refreshStatus` referme au passage un diff dont le
+   * fichier vient de disparaître (`resyncSelection`). L'historique, lui, ne
+   * bouge pas — `refs/stash` n'est pas parcouru par le graph — d'où l'absence
+   * de rechargement de celui-ci.
+   */
+  async stash(): Promise<boolean> {
+    const summary = this.stashSummary.trim();
+    if (summary.length === 0 || this.changeCount === 0) return false;
+    this.stashing = true;
+    this.error = null;
+    try {
+      const body = this.stashBody.trim();
+      await api.stashSave(this.repoId, summary, body.length > 0 ? body : null);
+      this.stashSummary = "";
+      this.stashBody = "";
+      await this.refreshStatus();
+      await this.loadStashes();
+      return true;
+    } catch (e) {
+      this.error = e as AppError;
+      return false;
+    } finally {
+      this.stashing = false;
     }
   }
 

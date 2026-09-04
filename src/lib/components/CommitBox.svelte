@@ -41,6 +41,14 @@
     repo.applyProfile(tabs.profiles.find((p) => p.id === id) ?? null);
   }
 
+  /*
+    Onglet affiché. Local au composant, contrairement aux brouillons : ce n'est
+    pas un état du dépôt mais une façon de regarder la colonne, et rien d'autre
+    ne l'édite. Il reste donc le même d'un onglet de dépôt à l'autre — les
+    champs, eux, changent avec le dépôt.
+  */
+  let pane = $state<"commit" | "stash">("commit");
+
   const SUMMARY_TARGET = 72; // longueur de titre recommandée (convention Git)
 
   /*
@@ -61,60 +69,115 @@
     // Le store committe son propre brouillon et le vide s'il y parvient.
     await repo.commit();
   }
+
+  /*
+    Brouillon de remise, distinct de celui du commit (voir `RepoStore`). Une
+    remise n'a pas besoin d'index : elle range tout ce qui traîne, fichiers non
+    suivis compris — d'où une garde sur le nombre de changements et non sur
+    `hasStaged`.
+  */
+  const stashSummary = $derived(repo.stashSummary);
+
+  const canStash = $derived(
+    stashSummary.trim().length > 0 && !repo.stashing && repo.changeCount > 0,
+  );
+
+  const stashLabel = $derived(repo.stashing ? "En cours…" : "Remiser");
+
+  async function doStash() {
+    if (!canStash) return;
+    await repo.stash();
+  }
 </script>
 
 <div class="commit">
-  <div class="tab">-o- Commit</div>
-
-  <!-- Sous qui l'on commite : au-dessus du message, puisque c'est ce que le
-       commit portera. Écrit dans la config Git du dépôt, pas mémorisé ici.
-       L'identité effective est portée par les libellés plutôt que par une ligne
-       à côté : un seul contrôle, sur toute la largeur de la colonne. -->
-  <select
-    class="author"
-    aria-label="Profil d'auteur"
-    title={fullWho}
-    value={selected}
-    disabled={!repo.repoInfo}
-    onchange={pick}
-  >
-    <option value="">{withWho("Config globale", active || unmatched ? null : who)}</option>
-    {#each tabs.profiles as profile (profile.id)}
-      <option value={profile.id}>{withWho(profile.label, profile.name)}</option>
-    {/each}
-    {#if unmatched}
-      <option value={UNMATCHED}>{withWho("Identité du dépôt", who)}</option>
-    {/if}
-    <option value={MANAGE}>Gérer les profils…</option>
-  </select>
-
-  <div class="field">
-    <input
-      class="summary"
-      placeholder="Résumé du commit"
-      bind:value={repo.commitSummary}
-      disabled={!repo.repoInfo}
-    />
-    <span class="counter" class:over={summary.length > SUMMARY_TARGET}>
-      {summary.length}/{SUMMARY_TARGET}
-    </span>
+  <!-- Deux onglets sur toute la largeur de la colonne : ce qu'on écrit part
+       soit dans un commit, soit dans une remise. -->
+  <div class="tabs">
+    <button class="tab" class:active={pane === "commit"} onclick={() => (pane = "commit")}>
+      Commit
+    </button>
+    <button class="tab" class:active={pane === "stash"} onclick={() => (pane = "stash")}>
+      Remiser
+    </button>
   </div>
 
-  <textarea
-    class="body"
-    placeholder="Description (optionnelle)"
-    rows="3"
-    bind:value={repo.commitBody}
-    disabled={!repo.repoInfo}
-  ></textarea>
+  {#if pane === "commit"}
+    <!-- Sous qui l'on committe : au-dessus du message, puisque c'est ce que le
+         commit portera. Écrit dans la config Git du dépôt, pas mémorisé ici.
+         L'identité effective est portée par les libellés plutôt que par une
+         ligne à côté : un seul contrôle, sur toute la largeur de la colonne.
+         Absent du volet Remiser : une remise n'est pas signée d'un auteur
+         qu'on choisit, elle range du travail en cours. -->
+    <select
+      class="author"
+      aria-label="Profil d'auteur"
+      title={fullWho}
+      value={selected}
+      disabled={!repo.repoInfo}
+      onchange={pick}
+    >
+      <option value="">{withWho("Config globale", active || unmatched ? null : who)}</option>
+      {#each tabs.profiles as profile (profile.id)}
+        <option value={profile.id}>{withWho(profile.label, profile.name)}</option>
+      {/each}
+      {#if unmatched}
+        <option value={UNMATCHED}>{withWho("Identité du dépôt", who)}</option>
+      {/if}
+      <option value={MANAGE}>Gérer les profils…</option>
+    </select>
 
-  {#if repo.repoInfo && !repo.hasStaged}
-    <p class="hint">Indexez des fichiers pour pouvoir committer.</p>
+    <div class="field">
+      <input
+        class="summary"
+        placeholder="Résumé du commit"
+        bind:value={repo.commitSummary}
+        disabled={!repo.repoInfo}
+      />
+      <span class="counter" class:over={summary.length > SUMMARY_TARGET}>
+        {summary.length}/{SUMMARY_TARGET}
+      </span>
+    </div>
+
+    <textarea
+      class="body"
+      placeholder="Description (optionnelle)"
+      rows="3"
+      bind:value={repo.commitBody}
+      disabled={!repo.repoInfo}
+    ></textarea>
+
+    {#if repo.repoInfo && !repo.hasStaged}
+      <p class="hint">Indexez des fichiers pour pouvoir committer.</p>
+    {/if}
+
+    <button class="action" onclick={doCommit} disabled={!canCommit}>
+      -o- {buttonLabel}
+    </button>
+  {:else}
+    <input
+      class="summary lone"
+      placeholder="Nom de la remise"
+      bind:value={repo.stashSummary}
+      disabled={!repo.repoInfo}
+    />
+
+    <textarea
+      class="body"
+      placeholder="Description (optionnelle)"
+      rows="3"
+      bind:value={repo.stashBody}
+      disabled={!repo.repoInfo}
+    ></textarea>
+
+    {#if repo.repoInfo && repo.changeCount === 0}
+      <p class="hint">Aucune modification à remiser.</p>
+    {/if}
+
+    <button class="action" onclick={doStash} disabled={!canStash}>
+      {stashLabel}
+    </button>
   {/if}
-
-  <button class="commit-btn" onclick={doCommit} disabled={!canCommit}>
-    -o- {buttonLabel}
-  </button>
 </div>
 
 <style>
@@ -126,14 +189,33 @@
     border-top: 1px solid var(--border);
     background: var(--bg);
   }
+  /*
+    Barre d'onglets : les deux se partagent la largeur de la colonne à parts
+    égales, et le soulignement accent marque celui qui est actif. La bordure du
+    bas est portée par les deux boutons, transparente sur l'inactif, pour que
+    passer de l'un à l'autre ne décale pas le contenu d'un pixel.
+  */
+  .tabs {
+    display: flex;
+  }
   .tab {
+    flex: 1;
+    background: none;
+    border: none;
+    border-bottom: 2px solid transparent;
+    padding: 0 0 0.3rem;
     font-size: 0.8rem;
+    font-family: inherit;
     font-weight: 600;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+  .tab:hover {
     color: var(--text-dim);
-    border-bottom: 2px solid var(--accent);
-    display: inline-block;
-    padding-bottom: 0.3rem;
-    width: fit-content;
+  }
+  .tab.active {
+    color: var(--text-dim);
+    border-bottom-color: var(--accent);
   }
   /*
     Un seul contrôle, sur toute la largeur de la colonne, calé sur le champ
@@ -174,7 +256,12 @@
   }
   .summary {
     width: 100%;
-    padding-right: 3.2rem;
+    padding-right: 3.2rem; /* place réservée au compteur */
+  }
+  /* Pas de compteur côté remise : le nom d'un stash ne suit aucune convention
+     de longueur, et le creux à droite se verrait. */
+  .summary.lone {
+    padding-right: 0.6rem;
   }
   .counter {
     position: absolute;
@@ -217,7 +304,7 @@
     font-size: 0.72rem;
     color: var(--text-faint);
   }
-  .commit-btn {
+  .action {
     background: var(--accent);
     color: var(--accent-text);
     border: none;
@@ -227,7 +314,7 @@
     font-weight: 600;
     cursor: pointer;
   }
-  .commit-btn:disabled {
+  .action:disabled {
     opacity: 0.45;
     cursor: default;
   }

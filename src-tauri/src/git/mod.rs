@@ -96,6 +96,14 @@ pub trait GitBackend: Send {
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;
 
+    /// Remise les modifications locales sur la pile, sous un message construit
+    /// comme celui d'un commit (`résumé`, puis `\n\n` + description).
+    ///
+    /// Les fichiers **non suivis sont inclus** : le working directory ressort
+    /// propre, ce qui est ce qu'on attend d'une remise. L'index n'est pas
+    /// conservé — ce qui était indexé l'est de nouveau au dépilage.
+    fn stash_save(&self, summary: &str, body: Option<&str>) -> Result<(), AppError>;
+
     /// Applique un stash sur le working directory **sans** le retirer de la pile.
     /// Échoue proprement si l'application entre en conflit.
     fn stash_apply(&self, index: usize) -> Result<(), AppError>;
