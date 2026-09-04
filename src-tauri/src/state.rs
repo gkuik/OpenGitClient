@@ -5,19 +5,21 @@
 //! stable d'une session à l'autre, unique par dépôt (donc pas de doublon possible)
 //! et directement persistable.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::dto::{RecentRepo, SessionInfo};
+use crate::dto::{Profile, PullMode, RecentRepo, SessionInfo};
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
 
 const RECENT_FILE: &str = "recent.json";
 const SESSION_FILE: &str = "session.json";
+const PROFILES_FILE: &str = "profiles.json";
+const PREFS_FILE: &str = "prefs.json";
 const RECENT_MAX: usize = 10;
 
 /// Session persistée : onglets ouverts et onglet actif, pour restaurer l'espace
@@ -37,8 +39,20 @@ pub struct AppState {
     /// Onglet actif. Le backend n'en dépend pas — chaque commande reçoit son
     /// `repo_id` — mais on le persiste pour restaurer la session.
     active: Option<String>,
+    /// Dépôts dont une opération réseau est en cours. Fetch **et** push écrivent
+    /// `refs/remotes/**` (libgit2 met les tips à jour après un push) : les en
+    /// laisser deux se croiser sur le même dépôt les ferait se disputer ces
+    /// références.
+    networking: HashSet<String>,
     /// Chemins des dépôts récemment ouverts (persistés sur disque).
     recent: Vec<PathBuf>,
+    /// Préférences de l'application, communes à tous les onglets.
+    prefs: Prefs,
+    /// Profils d'auteur, partagés par tous les dépôts (persistés sur disque).
+    /// Le dépôt, lui, ne retient pas *quel* profil : son identité vit dans sa
+    /// propre config Git (voir `GitBackend::set_identity`), ce qui évite d'avoir
+    /// à maintenir une association en double.
+    profiles: Vec<Profile>,
     /// Handle Tauri pour résoudre le dossier de configuration.
     app: AppHandle,
 }
@@ -47,12 +61,17 @@ impl AppState {
     /// Construit l'état et charge les récents + la session si elles existent.
     pub fn new(app: AppHandle) -> Self {
         let recent = load_json(&app, RECENT_FILE).unwrap_or_default();
+        let profiles = load_json(&app, PROFILES_FILE).unwrap_or_default();
+        let prefs = load_json(&app, PREFS_FILE).unwrap_or_default();
         let session: Session = load_json(&app, SESSION_FILE).unwrap_or_default();
         Self {
             repos: HashMap::new(),
             order: Vec::new(),
             active: session.active,
+            networking: HashSet::new(),
             recent,
+            prefs,
+            profiles,
             app,
         }
         .with_pending_tabs(session.tabs)
@@ -89,9 +108,24 @@ impl AppState {
         Ok(id)
     }
 
+    /// Réserve le dépôt pour une opération réseau (fetch ou push). `false` si
+    /// une autre y tourne déjà — le thread en cours finira par la libérer via
+    /// [`Self::end_network`].
+    pub fn begin_network(&mut self, id: &str) -> bool {
+        self.networking.insert(id.to_string())
+    }
+
+    /// Libère la réservation posée par [`Self::begin_network`].
+    pub fn end_network(&mut self, id: &str) {
+        self.networking.remove(id);
+    }
+
     /// Ferme un onglet. Sans effet si l'identifiant est inconnu.
     pub fn close(&mut self, id: &str) {
         self.repos.remove(id);
+        // Une opération réseau peut encore tourner sur ce dépôt : sa réservation
+        // part avec l'onglet, sinon elle en bloquerait une après réouverture.
+        self.networking.remove(id);
         self.order.retain(|t| t != id);
         if self.active.as_deref() == Some(id) {
             self.active = self.order.last().cloned();
@@ -145,6 +179,53 @@ impl AppState {
         }
     }
 
+    /// Mode exécuté par le bouton Pull.
+    pub fn pull_mode(&self) -> PullMode {
+        self.prefs.pull_mode
+    }
+
+    /// Change le mode du bouton Pull et le persiste.
+    pub fn set_pull_mode(&mut self, mode: PullMode) -> Result<(), AppError> {
+        self.prefs.pull_mode = mode;
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
+    pub fn profiles(&self) -> Vec<Profile> {
+        self.profiles.clone()
+    }
+
+    /// Crée ou met à jour un profil, et renvoie sa version enregistrée.
+    ///
+    /// Un `id` absent signifie « création » : il est généré ici, car le libellé
+    /// peut être renommé sans que l'identité choisie dans un dépôt ne se perde.
+    pub fn save_profile(
+        &mut self,
+        id: Option<String>,
+        label: String,
+        name: String,
+        email: String,
+    ) -> Result<Profile, AppError> {
+        let profile = Profile {
+            id: id.unwrap_or_else(new_profile_id),
+            label,
+            name,
+            email,
+        };
+        match self.profiles.iter_mut().find(|p| p.id == profile.id) {
+            Some(existing) => *existing = profile.clone(),
+            None => self.profiles.push(profile.clone()),
+        }
+        save_json(&self.app, PROFILES_FILE, &self.profiles)?;
+        Ok(profile)
+    }
+
+    /// Supprime un profil. Les dépôts qui l'utilisaient gardent leur identité :
+    /// elle vit dans leur config Git, pas ici.
+    pub fn delete_profile(&mut self, id: &str) -> Result<(), AppError> {
+        self.profiles.retain(|p| p.id != id);
+        save_json(&self.app, PROFILES_FILE, &self.profiles)
+    }
+
     /// Liste des récents sous forme sérialisable (chemin + nom du dossier).
     pub fn recent_list(&self) -> Vec<RecentRepo> {
         self.recent
@@ -186,6 +267,15 @@ fn config_path(app: &AppHandle, file: &str) -> Result<PathBuf, AppError> {
 
 /// Lit un fichier de configuration JSON. Absence ou contenu illisible donnent
 /// `None` : une configuration corrompue ne doit pas empêcher l'app de démarrer.
+/// Préférences persistées dans `prefs.json`. `Default` couvre le premier
+/// lancement comme un fichier illisible : l'application démarre toujours, quitte
+/// à repartir des valeurs par défaut.
+#[derive(Debug, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct Prefs {
+    pull_mode: PullMode,
+}
+
 fn load_json<T: for<'de> Deserialize<'de>>(app: &AppHandle, file: &str) -> Option<T> {
     let path = config_path(app, file).ok()?;
     let data = fs::read_to_string(path).ok()?;
@@ -200,4 +290,14 @@ fn save_json<T: Serialize>(app: &AppHandle, file: &str, value: &T) -> Result<(),
     let data = serde_json::to_string_pretty(value).map_err(|e| AppError::Io(e.to_string()))?;
     fs::write(&path, data)?;
     Ok(())
+}
+
+/// Identifiant de profil : l'horodatage suffit, les profils étant créés un par un
+/// à la main. Évite une dépendance de plus pour générer un UUID.
+fn new_profile_id() -> String {
+    let nanos = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_nanos())
+        .unwrap_or(0);
+    format!("p{nanos}")
 }

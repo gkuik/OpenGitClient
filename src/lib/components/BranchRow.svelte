@@ -1,22 +1,60 @@
 <script lang="ts">
   import type { BranchTreeNode } from "../tree";
+  import type { BranchEntry, RemoteBranchEntry, Upstream } from "../types";
   import { repo } from "../stores/repo.svelte";
   import BranchRow from "./BranchRow.svelte"; // récursion (auto-import Svelte 5)
 
-  let { node, depth = 0 }: { node: BranchTreeNode; depth?: number } = $props();
+  // La même ligne sert aux sections LOCAL et REMOTE : seule l'entrée portée par
+  // la feuille change, les dossiers étant identiques de part et d'autre.
+  let {
+    node,
+    depth = 0,
+  }: {
+    node: BranchTreeNode<BranchEntry | RemoteBranchEntry>;
+    depth?: number;
+  } = $props();
 
-  function checkout(name: string) {
-    repo.checkoutBranch(name);
+  /**
+   * Une entrée distante porte son distant, une locale son drapeau HEAD : la
+   * forme de l'entrée suffit à les distinguer, sans drapeau à propager le long
+   * de la récursion.
+   */
+  function asLocal(b: BranchEntry | RemoteBranchEntry): BranchEntry | null {
+    return "remote" in b ? null : b;
+  }
+
+  /**
+   * Double-clic / Entrée : bascule sur la branche. Sur une distante, le backend
+   * crée la branche locale de suivi au passage (`origin/x` → `x`), ou bascule
+   * sur celle qui porte déjà ce nom.
+   */
+  function checkout(b: BranchEntry | RemoteBranchEntry) {
+    const local = asLocal(b);
+    if (local) repo.checkoutBranch(local.name);
+    else repo.checkoutRemoteBranch(b.name);
   }
 
   /** Clic simple : sélectionne la tête de la branche dans le graph. */
   function selectTip(oid: string) {
     if (oid) repo.selectCommit(oid);
   }
+
+  /**
+   * Infobulle des compteurs. Elle nomme l'amont et rappelle d'où vient le
+   * chiffre : deux références locales, donc l'état du dernier fetch — pas ce
+   * que le serveur contient à l'instant présent.
+   */
+  function gapHint(up: Upstream): string {
+    const parts: string[] = [];
+    if (up.ahead > 0) parts.push(`${up.ahead} commit${up.ahead > 1 ? "s" : ""} à pousser`);
+    if (up.behind > 0) parts.push(`${up.behind} à récupérer`);
+    return `${parts.join(" · ")} — ${up.name}, au dernier fetch`;
+  }
 </script>
 
 {#if node.type === "branch"}
-  {@const current = node.branch.isHead}
+  {@const local = asLocal(node.branch)}
+  {@const current = local?.isHead ?? false}
   {@const selected = repo.selectedCommitOid === node.branch.oid && node.branch.oid !== ""}
   <!--
     Clic simple : sélectionne le dernier commit de la branche dans le graph.
@@ -30,10 +68,12 @@
     role="button"
     tabindex="0"
     style="padding-left: {depth * 12 + 8}px"
-    title="{node.branch.name} — clic pour voir son dernier commit, double-clic pour basculer"
+    title={local
+      ? `${local.name} — clic pour voir son dernier commit, double-clic pour basculer`
+      : `${node.branch.name} — clic pour voir son dernier commit, double-clic pour basculer (branche locale de suivi créée au besoin)`}
     onclick={() => selectTip(node.branch.oid)}
-    ondblclick={() => checkout(node.branch.name)}
-    onkeydown={(e) => (e.key === "Enter" ? checkout(node.branch.name) : undefined)}
+    ondblclick={() => checkout(node.branch)}
+    onkeydown={(e) => (e.key === "Enter" ? checkout(node.branch) : undefined)}
   >
     <span class="mark">{current ? "✓" : ""}</span>
     <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -44,6 +84,21 @@
       <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" stroke-linecap="round" />
     </svg>
     <span class="bname">{node.name}</span>
+    <!--
+      Écart avec l'amont. Un compteur nul n'est pas affiché, et une branche sans
+      amont n'en a aucun : la pastille signale un écart, elle ne certifie pas
+      une synchronisation.
+    -->
+    {#if local?.upstream}
+      {@const up = local.upstream}
+      {@const hint = gapHint(up)}
+      {#if up.ahead > 0}
+        <span class="gap ahead" title={hint}>↑{up.ahead}</span>
+      {/if}
+      {#if up.behind > 0}
+        <span class="gap behind" title={hint}>↓{up.behind}</span>
+      {/if}
+    {/if}
   </div>
 {:else}
   {@const open = repo.isBranchDirOpen(node.path)}
@@ -113,6 +168,20 @@
   }
   .branch.current .ic {
     color: #4ade80;
+  }
+  /* Écart avec l'amont : à pousser en accent, à récupérer en atténué. Les
+     chiffres sont tabulaires pour que les pastilles ne dansent pas d'une ligne
+     à l'autre. */
+  .gap {
+    flex: none;
+    font-size: 0.68rem;
+    font-variant-numeric: tabular-nums;
+  }
+  .gap.ahead {
+    color: var(--accent-soft);
+  }
+  .gap.behind {
+    color: var(--text-faint);
   }
   .bname,
   .dname {

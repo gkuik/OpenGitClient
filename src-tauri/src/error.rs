@@ -5,7 +5,7 @@ use serde::{Serialize, Serializer};
 /// Toutes les commandes Tauri renvoient `Result<T, AppError>`. La sérialisation
 /// produit un objet `{ "kind": "...", "message": "..." }`, directement exploitable
 /// côté Svelte (voir `src/lib/types.ts`). On n'expose jamais de `panic` au front.
-#[derive(Debug, thiserror::Error)]
+#[derive(Debug, Clone, thiserror::Error)]
 pub enum AppError {
     #[error("Ce dossier n'est pas un dépôt Git valide")]
     NotARepository,
@@ -31,6 +31,33 @@ pub enum AppError {
     #[error("Application du stash impossible : conflit avec les modifications locales")]
     StashConflict,
 
+    #[error("Aucun dépôt distant configuré")]
+    NoRemote,
+
+    #[error("Authentification refusée par le dépôt distant")]
+    RemoteAuth,
+
+    #[error("Aucun identifiant disponible pour ce dépôt distant")]
+    NoCredentials,
+
+    #[error("{0}")]
+    CredentialStore(String),
+
+    #[error("Une opération réseau est déjà en cours sur ce dépôt")]
+    NetworkBusy,
+
+    #[error("Aucune branche courante (HEAD détaché)")]
+    DetachedHead,
+
+    #[error("La branche courante ne suit aucune branche distante : rien à récupérer")]
+    NoUpstream,
+
+    #[error("Push refusé : le distant a avancé ({0}). Fais un Fetch, puis intègre ses commits avant de repousser.")]
+    PushRejected(String),
+
+    #[error("{0}")]
+    Network(String),
+
     #[error("{0}")]
     Git(String),
 
@@ -50,6 +77,15 @@ impl AppError {
             AppError::CheckoutConflict => "CheckoutConflict",
             AppError::CommitNotFound => "CommitNotFound",
             AppError::StashConflict => "StashConflict",
+            AppError::NoRemote => "NoRemote",
+            AppError::RemoteAuth => "RemoteAuth",
+            AppError::NoCredentials => "NoCredentials",
+            AppError::CredentialStore(_) => "CredentialStore",
+            AppError::NetworkBusy => "NetworkBusy",
+            AppError::DetachedHead => "DetachedHead",
+            AppError::NoUpstream => "NoUpstream",
+            AppError::PushRejected(_) => "PushRejected",
+            AppError::Network(_) => "Network",
             AppError::Git(_) => "Git",
             AppError::Io(_) => "Io",
         }

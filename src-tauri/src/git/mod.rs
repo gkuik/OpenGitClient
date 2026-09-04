@@ -9,7 +9,8 @@
 use std::path::Path;
 
 use crate::dto::{
-    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FileDiff, RepoInfo, RepoStatus,
+    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
+    PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus,
     StashEntry,
 };
 use crate::error::AppError;
@@ -56,9 +57,27 @@ pub trait GitBackend: Send {
     /// Liste les branches locales, triées par nom complet.
     fn local_branches(&self) -> Result<Vec<BranchEntry>, AppError>;
 
+    /// Liste les branches distantes (`refs/remotes/**`), triées par nom complet.
+    ///
+    /// Le pointeur symbolique `<distant>/HEAD` en est exclu : il double la
+    /// branche par défaut du distant sans être une branche lui-même.
+    ///
+    /// Lecture pure des références déjà présentes sur le disque — aucun accès
+    /// réseau, donc rien à voir avec [`GitBackend::fetch`], qui est le seul à
+    /// les mettre à jour.
+    fn remote_branches(&self) -> Result<Vec<RemoteBranchEntry>, AppError>;
+
     /// Bascule sur une branche locale. Échoue (sans rien écraser) si des
     /// modifications locales entrent en conflit.
     fn checkout_branch(&self, name: &str) -> Result<(), AppError>;
+
+    /// Bascule sur une branche distante en créant la branche **locale** de suivi
+    /// correspondante (`origin/feature` → `feature`), comme `git checkout
+    /// feature` le fait pour une branche qui n'existe qu'à distance.
+    ///
+    /// Si une branche locale de ce nom existe déjà, elle est simplement
+    /// checkoutée telle quelle : la rattraper sur la distante serait un pull.
+    fn checkout_remote_branch(&self, name: &str) -> Result<(), AppError>;
 
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;
@@ -87,6 +106,55 @@ pub trait GitBackend: Send {
 
     /// Diff d'un fichier au sein d'un commit (commit ↔ premier parent).
     fn commit_file_diff(&self, oid: &str, path: &str) -> Result<FileDiff, AppError>;
+
+    /// Récupère les références du dépôt distant (`git fetch`). `remote` à `None`
+    /// laisse l'implémentation résoudre le distant à interroger.
+    ///
+    /// **Seule méthode bloquante sur le réseau du trait.** Elle ne doit jamais
+    /// être appelée depuis le corps d'une commande Tauri, qui tient le `Mutex` de
+    /// l'état : tous les onglets seraient gelés pour la durée de l'appel, et
+    /// indéfiniment si la connexion ne répond pas. Voir `commands::fetch_remote`,
+    /// qui l'exécute sur un thread dédié.
+    fn fetch(&self, remote: Option<&str>) -> Result<FetchReport, AppError>;
+
+    /// Publie la **branche courante** sur le dépôt distant (`git push`), et pose
+    /// son suivi si elle n'en avait pas (`push -u`).
+    ///
+    /// Jamais de force : un refus du distant remonte tel quel en
+    /// [`AppError::PushRejected`], à charge pour l'utilisateur de récupérer les
+    /// commits manquants d'abord.
+    ///
+    /// **Bloquante sur le réseau**, comme [`GitBackend::fetch`] : mêmes
+    /// contraintes, elle ne doit jamais être appelée depuis le corps d'une
+    /// commande Tauri (voir `commands::push_branch`).
+    fn push(&self, remote: Option<&str>) -> Result<PushReport, AppError>;
+
+    /// Récupère puis intègre, selon le mode choisi (`git pull`).
+    ///
+    /// **Bloquante sur le réseau**, comme [`GitBackend::fetch`] : même thread
+    /// dédié côté commande. C'est aussi la seule opération distante qui écrit
+    /// dans le working directory — d'où la stratégie SAFE, qui refuse plutôt
+    /// que d'écraser des modifications locales.
+    fn pull(&self, mode: PullMode) -> Result<PullReport, AppError>;
+
+    /// Abandonne une fusion en cours : les fichiers reviennent à HEAD et l'état
+    /// de fusion est effacé. Sans elle, un conflit n'aurait aucune issue depuis
+    /// l'application.
+    fn abort_merge(&self) -> Result<(), AppError>;
+
+    /// Dépôt distant qu'un fetch interrogerait, avec son URL. Sert au frontend à
+    /// savoir pour quel hôte demander des identifiants.
+    fn remote_info(&self, remote: Option<&str>) -> Result<RemoteInfo, AppError>;
+
+    /// Identité sous laquelle ce dépôt commite (`user.name` / `user.email`).
+    fn identity(&self) -> Result<Identity, AppError>;
+
+    /// Fixe l'identité **du dépôt** : elle est écrite dans sa config locale, donc
+    /// visible et respectée par n'importe quel autre outil Git.
+    fn set_identity(&self, name: &str, email: &str) -> Result<(), AppError>;
+
+    /// Retire l'identité locale : le dépôt retombe sur la configuration globale.
+    fn clear_identity(&self) -> Result<(), AppError>;
 }
 
 /// Ouvre un dépôt et renvoie le backend correspondant.

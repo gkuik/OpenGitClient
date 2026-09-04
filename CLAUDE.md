@@ -5,11 +5,11 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit (+ recent repos, commit amend, local branch list with double-click checkout, commit graph with commit inspection).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection).
 
-The window is a tab bar (open repositories) over a three-column layout: local branches (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
+The window is a tab bar (open repositories) over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
-**The tab bar *is* the topbar** — no logo, no "open repository" button, just the tabs and a `+` that sits in the same flow, right after the last tab. Tabs show the repository name only (no branch — the current branch is already in the status panel header). With no tab open, `WelcomeScreen` takes the whole body and is the only place the recent-repository list is reachable.
+**The tab bar *is* the topbar** — no logo, no "open repository" button: the tabs, a `+` that sits in the same flow right after the last tab, and a settings gear pinned to the right. The gear lives **outside** `.tabs` (which is `flex: 1` and scrolls), so it stays against the right edge however many tabs are open instead of scrolling away with them. Tabs show the repository name only (no branch — the current branch is already in the status panel header). With no tab open, `WelcomeScreen` takes the whole body and is the only place the recent-repository list is reachable.
 
 On macOS the window uses `titleBarStyle: "Overlay"` + `hiddenTitle` (`tauri.conf.json`), so the tab bar sits **beside the traffic-light buttons**. `TabBar` reserves 92px on the left for them (they span x=20→80), but only when actually running in the native macOS app (`__TAURI_INTERNALS__` + a Macintosh UA) — in a browser those buttons don't exist and the offset would just be a gap.
 
@@ -94,7 +94,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json`. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -113,13 +113,101 @@ The backend returns raw commits (`oid`, `parents`, `refs`) — **lane assignment
 - `ROW_H` is applied to rows as an **inline style, never in CSS** — it is the only thing aligning the canvas with the DOM.
 - The canvas is an overlay with `z-index: 3`, i.e. **above** the rows. Row hover/selection backgrounds span the full width including the gutter; a canvas underneath would be masked by them.
 
-Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — but **not** after stage/unstage, which don't change history.
+Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). The walk pushes `refs/heads/*`, `refs/remotes/*` and HEAD, so a commit reachable only from a remote branch is in the history like any other. Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — and after a fetch that actually moved something — but **not** after stage/unstage, which don't change history.
 
 `DiffTarget` in the store is a discriminated union (`worktree` | `commit`): one field for both diff sources so they can't contradict each other. `selectedPath`/`selectedStaged` are derived getters over it, which is why the status-panel components needed no changes. **It also drives the centre column** — `null` → graph, set → diff — so there is no tab state to keep in sync.
 
 Two independent selections, don't conflate them: `diffTarget` (centre) and `selectedCommitOid` (right column). Closing the diff keeps the commit open, so the next file of the same commit is one click away; closing the commit (× or re-click in the graph) also drops a `commit`-kind `diffTarget`, since its file selector would be gone.
 
 `CenterPanel` keeps **both** views mounted and toggles `visibility`, never `display: none`: the graph must keep its scroll position and its measured height across a diff.
+
+### Fetch and push are the commands that don't do their own work
+
+`fetch` and `push` are the only network calls in the codebase, and the only `GitBackend` methods that block on something outside the machine. `commands::fetch_remote` and `commands::push_branch` therefore **reserve the repo, spawn a thread and return immediately** — running either in the command body would run it under the `AppState` mutex, freezing every tab for its duration and forever on a connection that never answers.
+
+The thread **re-opens its own backend from the path** instead of borrowing the one in `AppState`: the tab id *is* the canonical path and `Libgit2Backend` only stores a `PathBuf`, so it never touches shared state during the network call. It releases the reservation (`AppState::begin_network` / `end_network`) **before** emitting, so the frontend can start the next one the moment it hears back.
+
+**One reservation covers both**, and that's not laziness: libgit2 updates the remote-tracking refs after a push too (`git_remote_update_tips`), so a fetch and a push racing on one repo would fight over `refs/remotes/**` exactly as two fetches would. Hence `NetworkBusy` rather than a fetch-specific error.
+
+Each result comes back as an event — `repo://fetched`, `repo://pushed` — not as a return value; `TabsStore` routes it to the tab named by `repoId`, which is not necessarily the visible one. `core:default` already covers `listen` (via `core:event:default`), so no capability was added.
+
+Push adds three things fetch doesn't need:
+
+- **`push_update_reference` is mandatory, not decorative.** A server can refuse one ref (non-fast-forward, protected branch, hook) while `push()` itself returns `Ok`. Without reading that callback, a rejection would be reported as a success. The client-side refusal is a separate path — libgit2 compares the advertised refs before sending anything and returns `ErrorCode::NotFastForward` — and both funnel into `AppError::PushRejected`.
+- **An explicit refspec** (`refs/heads/<b>:refs/heads/<b>`), not the remote's configured ones: only the current branch is published, never every head. No leading `+` anywhere — **force is not offered at all**, not even `--force-with-lease`.
+- **`push -u` happens after the push, and only if the branch had no upstream.** Setting it earlier would leave a branch tracking a ref that a failed push never created. `PushReport.upstreamSet` reports whether it happened, since `set_upstream` can still fail on its own (that failure doesn't fail the push — the commits *are* published by then).
+
+Two things inside the libgit2 impl that look optional and aren't:
+
+- **Authentication spawns no external process — the app stays standalone.** `Cred::credential_helper` is deliberately *not* used: it runs `git credential-<helper>`, which would make the app depend on an installed Git. Everything goes through libssh2/libgit2, already linked into the binary.
+- **SSH tries the agent, then keys on disk** (`SSH_KEY_NAMES`, newest algorithm first, existing files only). The disk fallback is not optional: libgit2 does not read `~/.ssh/config` and does not look for `~/.ssh/id_*` by itself, so agent-only support locks out anyone whose agent isn't loaded — which is the default on macOS. A passphrase-protected key still fails; a background fetch can't prompt.
+- **HTTPS credentials are the app's own** (`credentials.rs`). It never reads entries written by another tool — reading Git's osxkeychain item would work but triggers a macOS authorization prompt, because that item's ACL doesn't list us. Ours does, so re-reading is silent. macOS stores them as a generic password under service `GitLite`, keyed by host; other platforms behave as an empty store and say so on save rather than accepting a secret they can't read back.
+- **The secret travels one way.** It enters through `set_credentials` and leaves only towards libgit2. No command returns it, `Credentials` derives no `Debug`, and nothing logs it.
+- **A missing credential is a UI event, not an error banner.** `NoCredentials` / `RemoteAuth` open `CredentialsDialog` (via `RepoStore.askCredentials`), which needs the host — hence the `get_remote_info` round trip: only the backend knows which remote a fetch would resolve to. Saving re-runs the fetch straight away.
+- **The credential callback is capped** (`MAX_CRED_ATTEMPTS`) and `attempts` *walks the candidates* — libgit2 re-invokes the callback after every refusal, so returning the same credential each time would loop until the cap instead of trying the next key.
+- **`CredState` separates "nothing to offer" from "everything was refused."** libgit2 reports both as one generic error, but they ask different things of the user (`NoCredentials` vs `RemoteAuth`).
+- **The callbacks share their state through `Rc`**, not borrows, for the same reason `Diff::print` is used over `foreach`: they live inside the `FetchOptions` until the end of the function, so the report they fill has to outlive them.
+
+A fetch only writes `refs/remotes/**` and `FETCH_HEAD` — never the worktree, index or current branch. That's what makes it safe to trigger without asking. **Auto-*pull* would not be.** Both the sidebar's REMOTE section and the graph read those refs, so `onFetched` reloads them — `reloadRemoteRefs()`, and only when the report says a ref actually moved. The graph reload is a full reset to page 0: its pagination is only stable while refs hold still.
+
+### Remote branches: listed, walked, and checked out through a tracking branch
+
+`remote_branches()` reads `refs/remotes/**` off the disk — no network, unlike `fetch`, which is the only thing that moves those refs. Three details it settles rather than guesses:
+
+- **`<remote>/HEAD` is dropped.** It's a *symbolic* ref duplicating the remote's default branch; a symbolic reference has no `target()`, which is exactly what filters it out (and broken refs with it).
+- **The remote name comes from libgit2** (`branch_remote_name`), not from splitting the branch name: a remote name may contain a `/`. The fallback to the first segment keeps orphaned refs — left behind by a deleted remote — in the list instead of losing them.
+- **`RemoteBranchEntry` has no `is_head`**, because HEAD never points at a remote branch. That absence *is* the frontend's discriminant: `BranchRow` renders both sections, and a leaf carrying a `remote` field is the remote flavour — no flag to thread through the recursion.
+
+`buildRemoteTree` groups by that `remote` field, then builds each group's tree from the **full** name and descends under the remote's node. The display drops the prefix while the fold keys keep it, so collapsing `origin/feature` can't also collapse the `feature` group of the LOCAL section — both share `RepoStore.collapsedBranchDirs`.
+
+Remote rows behave like local ones: click selects the tip commit — which lands somewhere real, since the revwalk pushes `refs/remotes/*` and the tip is badged with a dashed outline (`.ref.remote`) — and double-click checks out.
+
+`checkout_remote_branch("origin/feature/x")` is git's DWIM: strip the remote, create the local `feature/x` at the remote tip, set its upstream, switch to it. Three deliberate choices inside:
+
+- **An existing local branch of that name wins**, and is checked out *as it stands* rather than moved onto the remote tip. Fast-forwarding it would be a pull, which this app doesn't do.
+- **The worktree is updated before the branch is created.** Reversing the order would leave a half-made branch behind whenever the checkout hits a conflict; libgit2's SAFE strategy makes that a real case, mapped to `CheckoutConflict` by `map_checkout_error` (shared with the local checkout).
+- **A failing `set_upstream` is swallowed.** It fails on an orphaned ref (deleted remote, no refspec), and the switch has already happened by then — reporting an error for a checkout that worked would be a lie. The upstream only matters to the pull/push that don't exist yet.
+
+`RepoStore.checkoutRemoteBranch` has no "already on this branch" guard, unlike its local twin: only the backend knows the local name, and re-checking out costs nothing. Both share `runCheckout()`, since what a checkout invalidates doesn't depend on where the branch came from — and `refs/remotes/**` is untouched, so the REMOTE section is not reloaded.
+
+### Pull: fetch, then integrate — and a way back out
+
+`pull(mode)` always fetches first, then reads the upstream *afterwards* — that ordering is the whole point. What follows depends on `merge_analysis`: up-to-date, fast-forward (checkout the target, move the branch ref; HEAD already points at it), or a real merge.
+
+**A divergence and a conflict are outcomes, not errors.** `PullOutcome` is a discriminated union carrying `Diverged { ahead, behind }` and `Conflicted { files }` alongside the successes. Reporting them as `AppError` would throw away the other half of the result: the fetch *did* run and *did* move refs, which still have to be reloaded. Errors stay for what genuinely stopped everything — no upstream, detached HEAD, auth, network, and a dirty worktree (SAFE checkout refuses to overwrite, mapped to `CheckoutConflict`).
+
+**A conflicted merge changes what `commit()` means, and that's the sharp edge.** With `MERGE_HEAD` set, the resolution commit must carry *both* parents and then `cleanup_state()`. Without that, `commit()` would silently write a one-parent commit, drop the link to the merged branch and leave the repository stuck in merge state — a corrupt history reported as success. Hence `merge_heads()` read at the top of `commit()` (before any borrow, since `mergehead_foreach` takes `&mut Repository`), the extra parents, and one more consequence: the "nothing to commit" guard is **skipped** during a merge, since a merge resolved entirely in favour of "ours" legitimately has HEAD's tree.
+
+**`abort_merge` is not a convenience.** The app has no per-hunk conflict UI, so without it a conflicted pull would strand the user inside the application. It force-checks-out HEAD — the one place `force` is right, since that's exactly what abandoning means — and clears the merge state. `RepoInfo.merging` exists to surface it: `MergeBanner` sits above both right-column views, because a merge concerns the repository, not whatever is being looked at.
+
+Reload after a pull is wider than after a fetch: `repoInfo` first (it decides whether the banner shows), then the status (this is where conflicted files appear), then the usual remote-ref reload. It's the only remote operation that writes the worktree and index.
+
+### Ahead/behind is measured against the upstream, and only from the last fetch
+
+`BranchEntry.upstream` carries the branch's upstream name plus `ahead`/`behind`, from one `graph_ahead_behind(local, upstream)` per branch in `local_branches()`.
+
+- **The comparison is against `branch.upstream()`, never a hardcoded `origin/<name>`** — that's what a `push` would actually target, and it's the only version that survives a fork (`upstream/main`), a second remote, or a renamed tracking branch. It's also what the `set_upstream` in `checkout_remote_branch` exists to feed.
+- **`upstream` is `Option`, and every missing piece collapses into `None`**: no upstream configured, upstream ref gone with its remote, branch with no commit. The UI draws no badge there, and draws none at zero either — a badge means work pending, never "verified in sync". `↑0` would be a claim the data can't back.
+- **Both counters come from one call, so both are shown.** Ahead answers "what would I push"; behind answers "can I fast-forward" — and behind is the half a fetch actually moves.
+- **The numbers compare two local refs**, so they're only as fresh as the last fetch. The tooltip says so ("au dernier fetch"); nothing auto-fetches.
+
+That last point is why two reloads that used to be unnecessary now are: `commit()` reloads branches (the current branch just moved a commit ahead — the moment you look at the counter), and `reloadRemoteRefs()` reloads them too (a fetch changes `behind`, and that's *all* it changes locally). Miss either and the badge lies exactly when it matters.
+
+`RepoStore.currentGap` derives the HEAD branch's gap for the toolbar counters; it's `null` on a detached HEAD, where no local branch is HEAD.
+
+### Author profiles are stored, the choice is not
+
+A profile is a reusable identity (label + name + email), persisted in `profiles.json` next to `recent.json` and `session.json`. **Which profile a repository uses is deliberately not recorded**: applying one writes `user.name` / `user.email` into that repository's *local* Git config, and the active profile is re-derived by matching the identity back against the list.
+
+That is what makes the feature honest. `commit()` already signs with `repo.signature()`, which reads the same config, so nothing special happens at commit time; a commit made from the terminal picks up the same identity; and no stored association can drift from what Git will actually do. Two profiles with identical name and email are interchangeable by construction, which is why matching on that pair is enough.
+
+`Identity.is_local` is the distinction the UI needs: an identity inherited from the global config is *not* a chosen profile. The selector therefore carries a third, purely descriptive entry — "Identité du dépôt" — for a local identity matching no profile; without it the `<select>` would fall back to its first option and claim a profile is active when none is.
+
+The selector is a single full-width `<select>` at the top of the commit box, and it is the *whole* block: the effective identity rides in the option labels (`Libellé · Nom`) rather than in a line beside it. Its last entry, "Gérer les profils…", opens Settings — it must reset `event.currentTarget.value` first, since nothing in the derived state changed and Svelte would leave the DOM showing that entry as selected.
+
+It carries `appearance: none` and paints its own chevron so it can match the summary input exactly (same background, border, radius, font-size and vertical padding). A native `<select>` imposes its own height and blue button, which no amount of padding will align.
+
+Deleting a profile leaves repositories untouched, for the same reason: their identity lives in their own config. `clear_identity` removes both keys but leaves an empty `[user]` section behind — libgit2 has no remove-section call, and Git ignores it.
 
 ### Commit descriptions render Markdown — without `{@html}`
 
@@ -142,13 +230,25 @@ These caused real breakage; don't undo them.
 - **Never put `direction: rtl` on `.path` in `FileItem.svelte`.** It was used for left-side ellipsis but reorders bidi text, rendering `.bob/config.json` as `bob/config.json.` — breaking every dotfile.
 - **`html, body` carry `overflow: hidden` + `overscroll-behavior: none`** (`app.css`). This is a desktop app: only inner panels scroll. `overscroll-behavior` specifically kills WKWebView's elastic bounce, which otherwise drags the whole UI.
 - **Both side columns share `--sidebar-w`** (`app.css`); `App.svelte` uses it for the left and right grid tracks. Change the variable, not the grid.
-- **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await).
+- **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above.
 - Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: push/pull/fetch, remote auth, merge, hunk-level staging, conflict resolution, tags, rebase, blame. Stashes can be **applied / popped / dropped** (right-click or the ⋮ button in the STASHES section) but **not created** — `git stash save` has no UI yet. Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section, **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere.
 
-The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no remotes/tags in the ref badges (the backend only reads local branches + HEAD). There is no "uncommitted changes" node at the top of the history.
+**The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
+
+The **Settings screen** (gear, far right of the tab bar) holds *Profils* then *Jetons d'accès*: profiles are created there, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
+
+**Only HTTP(S) remotes appear there**, and `RemoteInfo.uses_http` is what decides. An SSH remote has a host too, but a token would never be used for it — listing it invites a pointless entry. The same flag stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes can be **applied / popped / dropped** (right-click or the ⋮ button in the STASHES section) but **not created** — `git stash save` has no UI yet. Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
+
+The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters.
+
+**Pull is a split button**, GitKraken-style: the button runs the chosen mode, the chevron — placed *inside* the cell against its right edge, not beside it, so the two read as one control and the three toolbar buttons keep the same footprint — opens a radio menu that only *picks* the mode (choosing never fires a network call — a menu click that merged would be a nasty surprise). The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
+
+The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). There is no "uncommitted changes" node at the top of the history.
+
+**Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
 Destructive operations (discard changes) and AI features are intentionally absent — don't add UI for features that have no working backend.
