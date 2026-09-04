@@ -66,12 +66,40 @@ export interface GraphEdge {
   kind: GraphEdgeKind;
 }
 
-export interface GraphRow {
-  commit: GraphCommit;
-  /** Colonne du point du commit. */
+/** Géométrie commune à toutes les rangées, commit ou non. */
+interface RowGeometry {
+  /** Colonne du point de la rangée. */
   lane: number;
   color: number;
   edges: GraphEdge[];
+}
+
+export interface CommitRow extends RowGeometry {
+  kind: "commit";
+  commit: GraphCommit;
+}
+
+/**
+ * Rangée des modifications en cours, en tête du graph. Elle n'a pas de commit :
+ * d'où le type discriminé plutôt qu'un faux `GraphCommit`, qui aurait exigé un
+ * oid inventé — et l'aurait rendu comparable à un vrai (sélection, pastilles).
+ */
+export interface WipRow extends RowGeometry {
+  kind: "wip";
+}
+
+export type GraphRow = CommitRow | WipRow;
+
+/**
+ * Nœud « modifications en cours » à placer en tête du graph, quand le working
+ * directory n'est pas propre.
+ */
+export interface WipInput {
+  /**
+   * Commit sur lequel ces modifications reposent (HEAD) — la rangée s'y
+   * raccorde. `null` sur un dépôt sans commit : le nœud est alors seul.
+   */
+  head: string | null;
 }
 
 export interface GraphLayout {
@@ -112,14 +140,37 @@ function widthOf(lanes: (string | null)[]): number {
  * prennent la relève — le premier dans sa propre colonne, les suivants dans une
  * colonne déjà en attente ou dans une nouvelle.
  *
+ * `wip` ajoute en tête la rangée des modifications en cours. Elle est traitée
+ * comme un pseudo-commit dont HEAD serait le parent : la boucle réserve alors la
+ * colonne de HEAD dès le haut du graph, y fait traverser les rangées
+ * intermédiaires et l'y fait aboutir, sans un seul cas particulier de plus. La
+ * branche courante prend donc la colonne 0 même si son commit n'est pas le
+ * premier de la liste — c'est exactement ce que le nœud raconte.
+ *
  * Coût : O(n · lanes). Recalculé intégralement à chaque page chargée, ce qui
  * reste négligeable devant l'appel Tauri.
  */
-export function layoutGraph(commits: GraphCommit[]): GraphLayout {
+export function layoutGraph(
+  commits: GraphCommit[],
+  wip: WipInput | null = null,
+): GraphLayout {
   const rows: GraphRow[] = [];
   // Pour chaque colonne : l'oid attendu, ou null si la colonne est libre.
   const lanes: (string | null)[] = [];
   let laneCount = 0;
+
+  if (wip) {
+    // Rien n'attend encore : la colonne allouée est la 0.
+    const lane = allocLane(lanes);
+    const edges: GraphEdge[] = [];
+    // Sans commit (dépôt vierge), le nœud ne descend nulle part.
+    if (wip.head !== null) {
+      lanes[lane] = wip.head;
+      edges.push({ fromLane: lane, toLane: lane, color: colorOf(lane), kind: "out" });
+    }
+    rows.push({ kind: "wip", lane, color: colorOf(lane), edges });
+    laneCount = Math.max(laneCount, lane + 1);
+  }
 
   for (const commit of commits) {
     // État des colonnes en haut de la rangée, avant traitement du commit.
@@ -171,7 +222,7 @@ export function layoutGraph(commits: GraphCommit[]): GraphLayout {
     }
 
     laneCount = Math.max(laneCount, lane + 1, widthOf(before), widthOf(lanes));
-    rows.push({ commit, lane, color: colorOf(lane), edges });
+    rows.push({ kind: "commit", commit, lane, color: colorOf(lane), edges });
   }
 
   return { rows, laneCount };

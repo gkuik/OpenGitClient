@@ -93,4 +93,46 @@ describe("layoutGraph", () => {
   it("renvoie un layout vide sans commit", () => {
     expect(layoutGraph([])).toEqual({ rows: [], laneCount: 0 });
   });
+
+  it("place la rangée WIP en tête et la raccorde à HEAD", () => {
+    const { rows, laneCount } = layoutGraph([c("A", "B"), c("B")], { head: "A" });
+
+    expect(laneCount).toBe(1);
+    expect(rows.map((r) => r.kind)).toEqual(["wip", "commit", "commit"]);
+
+    // Rien ne descend sur le nœud WIP ; un seul segment en repart, vers HEAD.
+    expect(rows[0].edges).toEqual([
+      { fromLane: 0, toLane: 0, color: 0, kind: "out" },
+    ]);
+    // Et HEAD le reçoit, comme il recevrait celui d'un enfant.
+    expect(rows[1].edges).toContainEqual({
+      fromLane: 0,
+      toLane: 0,
+      color: 0,
+      kind: "in",
+    });
+  });
+
+  it("réserve la colonne de HEAD dès le haut quand ce n'est pas le premier commit", () => {
+    // A est la tête d'une autre branche, listée avant le commit de HEAD.
+    const { rows } = layoutGraph([c("A", "P"), c("H", "P"), c("P")], { head: "H" });
+
+    // La branche courante prend la colonne 0, l'autre est repoussée à droite.
+    expect(rows.map((r) => r.lane)).toEqual([0, 1, 0, 0]);
+
+    // La rangée de A n'est que traversée par la ligne qui descend vers HEAD.
+    expect(rows[1].edges).toContainEqual({
+      fromLane: 0,
+      toLane: 0,
+      color: 0,
+      kind: "through",
+    });
+  });
+
+  it("pose le nœud WIP seul sur un dépôt sans commit", () => {
+    const { rows, laneCount } = layoutGraph([], { head: null });
+
+    expect(laneCount).toBe(1);
+    expect(rows).toEqual([{ kind: "wip", lane: 0, color: 0, edges: [] }]);
+  });
 });

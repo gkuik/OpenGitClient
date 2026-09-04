@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories) over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -114,6 +114,17 @@ The backend returns raw commits (`oid`, `parents`, `refs`) — **lane assignment
 - The canvas is an overlay with `z-index: 3`, i.e. **above** the rows. Row hover/selection backgrounds span the full width including the gutter; a canvas underneath would be masked by them.
 
 Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). The walk pushes `refs/heads/*`, `refs/remotes/*` and HEAD, so a commit reachable only from a remote branch is in the history like any other. Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — and after a fetch that actually moved something — but **not** after stage/unstage, which don't change history.
+
+**The working directory is the graph's first row**, GitKraken-style: a dashed hollow circle, the summary of the commit being written, and the `✎ / + / −` counts, on top of the history. That summary is not a label but **the commit box's own field** — `RepoStore.commitSummary`, edited from either side, showing `// WIP` as a placeholder while it is empty. It is **entirely frontend** — no backend call, no DTO — because everything it needs is already loaded: `repoInfo.head` for the commit it hangs from (detached HEAD included) and `status` for the counts. Those counts go through `countStatuses` — the very function that fills the file tree's per-directory counters — so an untracked file is a `+` in both places instead of being classified twice; `RepoStore.changeCounts` only dedupes the paths first, since a file can be both staged and modified.
+
+It is threaded **through** the lane algorithm rather than drawn beside it: `layoutGraph(commits, wip)` emits the row as a pseudo-commit whose parent is HEAD, so the existing loop reserves HEAD's column from the top, makes the intermediate rows cross it and lands the line on HEAD's dot — with no special case anywhere else. The visible consequence is deliberate: when HEAD's commit is *not* the topmost one, the current branch takes column 0 and the others shift right, which is exactly what the node claims. Drawing the line separately would have meant re-deriving all of that, badly.
+
+Four things that look cosmetic and aren't:
+
+- `GraphRow` is a **discriminated union** (`commit` | `wip`), not a `GraphCommit` with an invented oid. A fake oid would be comparable to a real one — selection, ref badges, scroll-into-view all key on oids.
+- The row appears only once `repo.loaded` is true. The status lands before the history does, so without that guard the node would flash alone on startup with its line hanging in the void.
+- **The commit draft (`commitSummary` / `commitBody`) lives in the tab**, not in `CommitBox`. Two reasons, and the first one predates this row: the commit box is mounted once for every tab, so a local draft followed the user from one repository to the next. The second is that two fields now edit one value, which therefore belongs to neither. `commit()` reads that draft and clears it on success — the reset can't live in a component that isn't the only editor. In the graph row the field's `keydown` **stops propagating**: the row itself listens for Enter and Space to select itself, and its `preventDefault` would swallow every space typed. Enter and Escape only blur — committing needs staged files and stays on the button.
+- **WIP selection has no state of its own**: the row is highlighted when `selectedCommitOid === null`, since that is exactly when the right column shows the working directory. `selectWip()` is `clearCommitSelection()` under another name — one truth, nothing to keep in sync, and no toggle on re-click (deselecting would change nothing but the highlight).
 
 `DiffTarget` in the store is a discriminated union (`worktree` | `commit`): one field for both diff sources so they can't contradict each other. `selectedPath`/`selectedStaged` are derived getters over it, which is why the status-panel components needed no changes. **It also drives the centre column** — `null` → graph, set → diff — so there is no tab state to keep in sync.
 
@@ -262,7 +273,7 @@ The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all
 
 **Pull is a split button**, GitKraken-style: the button runs the chosen mode, the chevron — placed *inside* the cell against its right edge, not beside it, so the two read as one control and the three toolbar buttons keep the same footprint — opens a radio menu that only *picks* the mode (choosing never fires a network call — a menu click that merged would be a nasty surprise). The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
 
-The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). There is no "uncommitted changes" node at the top of the history.
+The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 

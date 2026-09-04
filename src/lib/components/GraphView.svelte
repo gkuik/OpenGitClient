@@ -2,7 +2,8 @@
   import { tick } from "svelte";
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
-  import { lanePalette, layoutGraph } from "../graph/layout";
+  import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
+  import type { TreeCounts } from "../tree";
 
   // ── Géométrie ──────────────────────────────────────────────────────────────
   // ROW_H est la seule chose qui aligne le canvas et le DOM : elle est appliquée
@@ -11,6 +12,8 @@
   const ROW_H = 26;
   const LANE_W = 14;
   const DOT_R = 4;
+  /** Rayon du cercle « modifications en cours » : plus large que le point d'un commit. */
+  const WIP_R = DOT_R + 1.5;
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /** Lanes réservées au minimum : évite que le texte colle au bord. */
@@ -27,7 +30,27 @@
   /** Vrai le temps de rétablir le défilement après un changement d'onglet. */
   let restoring = false;
 
-  const layout = $derived(layoutGraph(repo.graph));
+  /*
+    Rangée « modifications en cours », en tête du graph — comme GitKraken.
+
+    Elle se raccorde à HEAD, que `repoInfo` porte déjà (HEAD détaché compris), et
+    n'apparaît qu'une fois le dépôt chargé : le statut arrive avant l'historique,
+    sans quoi le nœud clignoterait seul, une ligne pendant dans le vide.
+  */
+  const wip = $derived(
+    repo.loaded && repo.changeCount > 0
+      ? { head: repo.repoInfo?.head ?? null }
+      : null,
+  );
+  const layout = $derived(layoutGraph(repo.graph, wip));
+  const counts = $derived(repo.changeCounts);
+  /*
+    La rangée WIP est en surbrillance quand c'est bien elle qu'on regarde, soit
+    quand aucun commit n'est sélectionné : c'est exactement là que la colonne de
+    droite montre le working directory. Aucun état de plus, donc rien qui puisse
+    diverger de ce qui est affiché.
+  */
+  const wipSelected = $derived(repo.selectedCommitOid === null);
   /*
     Le canvas ne voit pas les variables CSS : le thème lui parvient par le
     store, et le redessin suit tout seul — `draw` lit ces dérivées, donc son
@@ -61,6 +84,30 @@
 
   function formatDate(ts: number): string {
     return dateFmt.format(new Date(ts * 1000));
+  }
+
+  /** Clé `{#each}` : les commits ont leur oid, la rangée WIP est unique. */
+  function rowKey(row: GraphRow): string {
+    return row.kind === "wip" ? "wip" : row.commit.oid;
+  }
+
+  function isSelected(row: GraphRow): boolean {
+    return row.kind === "wip" ? wipSelected : row.commit.oid === repo.selectedCommitOid;
+  }
+
+  /** Clic ou Entrée sur une rangée : détail du commit, ou changements en cours. */
+  function activate(row: GraphRow) {
+    if (row.kind === "wip") repo.selectWip();
+    else repo.selectCommit(row.commit.oid);
+  }
+
+  /** Détail de la pastille de compteurs ("4 modifiés, 2 ajoutés"). */
+  function countsLabel(c: TreeCounts): string {
+    const parts: string[] = [];
+    if (c.modified) parts.push(`${c.modified} modifié${c.modified > 1 ? "s" : ""}`);
+    if (c.added) parts.push(`${c.added} ajouté${c.added > 1 ? "s" : ""}`);
+    if (c.deleted) parts.push(`${c.deleted} supprimé${c.deleted > 1 ? "s" : ""}`);
+    return parts.join(", ");
   }
 
   function laneX(lane: number): number {
@@ -119,6 +166,10 @@
       const row = layout.rows[i];
       const top = i * ROW_H - scrollTop;
       const mid = top + ROW_H / 2;
+      const isWip = row.kind === "wip";
+      // Le nœud WIP est un cercle vide : son segment part de sous le cercle et
+      // non de son centre, qui le barrerait. Rien ne descend jamais sur lui.
+      const outY = isWip ? mid + WIP_R : mid;
 
       for (const edge of row.edges) {
         const x1 = laneX(edge.fromLane);
@@ -134,27 +185,39 @@
           link(ctx, x1, top, x2, mid);
         } else {
           // Repart du point vers la rangée suivante.
-          ctx.moveTo(x1, mid);
-          link(ctx, x1, mid, x2, top + ROW_H);
+          ctx.moveTo(x1, outY);
+          link(ctx, x1, outY, x2, top + ROW_H);
         }
         ctx.stroke();
       }
 
-      // Point du commit. L'anneau le détache de la ligne qui le traverse (même
-      // couleur) et reste lisible quelle que soit la surbrillance de la ligne,
-      // sur laquelle le canvas est superposé.
       const x = laneX(row.lane);
-      ctx.beginPath();
-      ctx.arc(x, mid, DOT_R, 0, Math.PI * 2);
-      ctx.fillStyle = lanes[row.color];
-      ctx.fill();
-      ctx.strokeStyle = ring;
-      ctx.lineWidth = 2;
-      ctx.stroke();
-
-      if (row.commit.oid === selected) {
+      const radius = isWip ? WIP_R : DOT_R;
+      if (isWip) {
+        // Cercle vide en pointillés, dans la couleur de la lane de HEAD : ces
+        // modifications sont sur cette branche, mais ne sont pas un commit.
+        ctx.setLineDash([3, 2.5]);
         ctx.beginPath();
-        ctx.arc(x, mid, DOT_R + 3, 0, Math.PI * 2);
+        ctx.arc(x, mid, radius, 0, Math.PI * 2);
+        ctx.strokeStyle = lanes[row.color];
+        ctx.stroke();
+        ctx.setLineDash([]);
+      } else {
+        // Point du commit. L'anneau le détache de la ligne qui le traverse (même
+        // couleur) et reste lisible quelle que soit la surbrillance de la ligne,
+        // sur laquelle le canvas est superposé.
+        ctx.beginPath();
+        ctx.arc(x, mid, radius, 0, Math.PI * 2);
+        ctx.fillStyle = lanes[row.color];
+        ctx.fill();
+        ctx.strokeStyle = ring;
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
+      if (isWip ? selected === null : row.commit.oid === selected) {
+        ctx.beginPath();
+        ctx.arc(x, mid, radius + 3, 0, Math.PI * 2);
         ctx.strokeStyle = halo;
         ctx.lineWidth = 1.5;
         ctx.stroke();
@@ -181,11 +244,23 @@
     maybeLoadMore();
   }
 
-  function onRowKey(e: KeyboardEvent, oid: string) {
+  function onRowKey(e: KeyboardEvent, row: GraphRow) {
     if (e.key === "Enter" || e.key === " ") {
       e.preventDefault();
-      repo.selectCommit(oid);
+      activate(row);
     }
+  }
+
+  /**
+   * Clavier du champ de résumé de la rangée WIP. La rangée écoute déjà Entrée
+   * et l'espace pour se sélectionner : sans arrêt de la propagation, taper une
+   * espace ici serait avalé par son `preventDefault`. Entrée et Échap ne font
+   * que sortir du champ — committer demande des fichiers indexés, et reste au
+   * bouton de la boîte de commit.
+   */
+  function onSummaryKey(e: KeyboardEvent & { currentTarget: HTMLInputElement }) {
+    e.stopPropagation();
+    if (e.key === "Enter" || e.key === "Escape") e.currentTarget.blur();
   }
 
   // Tous les onglets partagent ce composant : en changer remplace l'historique
@@ -244,7 +319,9 @@
     const el = scroller;
     if (!oid || !el) return;
 
-    const index = layout.rows.findIndex((r) => r.commit.oid === oid);
+    const index = layout.rows.findIndex(
+      (r) => r.kind === "commit" && r.commit.oid === oid,
+    );
     if (index < 0) return; // commit hors des pages chargées
 
     const top = index * ROW_H;
@@ -272,35 +349,58 @@
 
     <div class="scroller" bind:this={scroller} onscroll={onScroll}>
       <div class="spacer" style="height: {layout.rows.length * ROW_H}px">
-        {#each visible as row, i (row.commit.oid)}
+        {#each visible as row, i (rowKey(row))}
           <div
             class="row"
-            class:selected={row.commit.oid === repo.selectedCommitOid}
+            class:wip={row.kind === "wip"}
+            class:selected={isSelected(row)}
             style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; padding-left: {gutterW}px"
             role="button"
             tabindex="0"
-            onclick={() => repo.selectCommit(row.commit.oid)}
-            onkeydown={(e) => onRowKey(e, row.commit.oid)}
+            onclick={() => activate(row)}
+            onkeydown={(e) => onRowKey(e, row)}
           >
-            <!-- La pastille reprend la couleur de la lane du commit. Les
-                 références distantes portent le nom du distant ("origin/main"),
-                 ce qui suffit à les nommer ; le pointillé les distingue au
-                 premier coup d'œil d'une branche présente en local. -->
-            {#each row.commit.refs as r (r.name)}
-              <span
-                class="ref"
-                class:head={r.kind === "head"}
-                class:remote={r.kind === "remoteBranch"}
-                style="--lane: {lanes[row.color]}"
-                title={r.name}
-              >
-                {r.name}
+            {#if row.kind === "wip"}
+              <!-- Pas de date, pas d'auteur, pas d'oid : rien de tout ça
+                   n'existe encore. À leur place, le résumé du prochain commit —
+                   le champ *est* celui de la boîte de commit, `repo.commitSummary`,
+                   édité indifféremment d'un côté ou de l'autre. Vide, il ne
+                   montre que « // WIP ». Les compteurs reprennent le vocabulaire
+                   des dossiers de la liste de fichiers (✎ / + / −). -->
+              <input
+                class="wip-summary"
+                aria-label="Résumé du prochain commit"
+                placeholder="// WIP"
+                title={repo.commitSummary || "Résumé du prochain commit"}
+                bind:value={repo.commitSummary}
+                onkeydown={onSummaryKey}
+              />
+              <span class="counts" title={countsLabel(counts)}>
+                {#if counts.modified}<span class="c mod">✎ {counts.modified}</span>{/if}
+                {#if counts.added}<span class="c add">+ {counts.added}</span>{/if}
+                {#if counts.deleted}<span class="c del">− {counts.deleted}</span>{/if}
               </span>
-            {/each}
-            <span class="summary" title={row.commit.summary}>{row.commit.summary}</span>
-            <span class="author" title={row.commit.authorName}>{row.commit.authorName}</span>
-            <span class="date">{formatDate(row.commit.timestamp)}</span>
-            <span class="oid">{row.commit.shortOid}</span>
+            {:else}
+              <!-- La pastille reprend la couleur de la lane du commit. Les
+                   références distantes portent le nom du distant ("origin/main"),
+                   ce qui suffit à les nommer ; le pointillé les distingue au
+                   premier coup d'œil d'une branche présente en local. -->
+              {#each row.commit.refs as r (r.name)}
+                <span
+                  class="ref"
+                  class:head={r.kind === "head"}
+                  class:remote={r.kind === "remoteBranch"}
+                  style="--lane: {lanes[row.color]}"
+                  title={r.name}
+                >
+                  {r.name}
+                </span>
+              {/each}
+              <span class="summary" title={row.commit.summary}>{row.commit.summary}</span>
+              <span class="author" title={row.commit.authorName}>{row.commit.authorName}</span>
+              <span class="date">{formatDate(row.commit.timestamp)}</span>
+              <span class="oid">{row.commit.shortOid}</span>
+            {/if}
           </div>
         {/each}
       </div>
@@ -387,6 +487,51 @@
   .ref.remote {
     border-style: dashed;
     opacity: 0.85;
+  }
+  /* Résumé du prochain commit : un champ, mais qui se lit comme le texte des
+     autres rangées — ni fond ni bordure tant qu'on ne le vise pas. Le liseré au
+     survol et au focus est ce qui dit qu'il s'édite. */
+  .wip-summary {
+    flex: 1;
+    min-width: 0;
+    /* La rangée impose sa police et sa taille : un champ ne les hérite pas. */
+    font: inherit;
+    color: var(--text);
+    background: transparent;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 0.1rem 0.35rem;
+    margin: 0;
+  }
+  .wip-summary::placeholder {
+    color: var(--text-dim);
+    font-style: italic;
+  }
+  .wip-summary:hover {
+    border-color: var(--border);
+  }
+  .wip-summary:focus {
+    outline: none;
+    border-color: var(--accent);
+    background: var(--bg);
+  }
+  /* Compteurs de changements, mêmes symboles et mêmes couleurs que les dossiers
+     de la liste de fichiers (voir TreeRow). */
+  .counts {
+    flex: none;
+    display: flex;
+    gap: 0.4rem;
+    font-size: 0.72rem;
+    white-space: nowrap;
+  }
+  .c.mod {
+    color: var(--warn);
+  }
+  .c.add {
+    color: var(--ok);
+  }
+  .c.del {
+    color: var(--danger);
   }
   .summary {
     flex: 1;
