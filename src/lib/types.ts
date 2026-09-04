@@ -219,6 +219,16 @@ export type PullMode = "fetchAll" | "fastForwardOnly" | "fastForwardOrMerge";
 export type ThemeMode = "system" | "light" | "dark";
 
 /**
+ * Largeurs des deux colonnes latérales, en **rem** — l'unité de toutes les
+ * longueurs de l'interface, donc solidaires de la taille du texte. Le
+ * glissement se mesure en pixels : c'est `layout.svelte.ts` qui convertit.
+ */
+export interface SidebarWidths {
+  left: number;
+  right: number;
+}
+
+/**
  * Ce qu'un pull a fait localement. Une divergence et un conflit ne sont pas des
  * erreurs : le fetch qui précède a réussi et déplacé des références.
  */

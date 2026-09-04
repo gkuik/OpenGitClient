@@ -2,6 +2,7 @@ import { mount } from "svelte";
 import "./app.css";
 import App from "./App.svelte";
 import { font } from "./lib/font.svelte";
+import { layout } from "./lib/layout.svelte";
 import { theme } from "./lib/theme.svelte";
 
 // Avant le montage : la palette doit être posée sur `<html>` dès le premier
@@ -10,6 +11,9 @@ theme.init();
 // La taille du texte, elle, a son défaut dans `app.css` : la lecture de la
 // préférence peut donc attendre le montage sans que rien ne clignote.
 font.init();
+// Idem pour les largeurs des colonnes latérales : leur défaut est dans
+// `app.css`, la préférence arrive après.
+layout.init();
 
 const app = mount(App, {
   target: document.getElementById("app")!,

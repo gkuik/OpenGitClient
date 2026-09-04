@@ -94,7 +94,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme and the text size) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size and the two sidebar widths) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -252,6 +252,47 @@ Three consequences worth keeping:
 - **The preference travels as a number, not an enum** — unlike `ThemeMode` and `PullMode`. A value out of bounds is clamped (`AppState::font_size`, both on read and write); an unknown *variant* would fail the whole `prefs.json` parse and take the theme and Pull mode down with it. `Prefs::default` is hand-written for the same family of reasons: derived, `u8::default()` would start a file written by an earlier version at 0 pt.
 - **What is in px stays in px on purpose**: icon buttons and their glyphs (the sidebar's 56px toolbar squares, the tabs' 30px), and above all the tab bar's `min-height: 49px`, which is measured against `trafficLightPosition` and must not move with the text.
 
+### Sidebar widths are two rem values, dragged on the border
+
+Both side columns are resized by dragging their border, independently of each
+other. The width lives in `prefs.json` like the theme and the text size — a
+global interface preference, not repository state — and is applied by
+`src/lib/layout.svelte.ts` writing `--sidebar-l-w` / `--sidebar-r-w` on
+`<html>`. No component reads anything.
+
+**The stored unit is the rem, not the pixel**, even though the gesture that sets
+it is measured in pixels: every length in the app scales with the root
+font-size, so a width frozen in pixels would truncate branch names the moment
+the text size goes up. `layout.setPx()` divides by `font.rootPx` once, and that
+is the only place the two units meet.
+
+**The handle is `position: absolute` on the border, not a fourth grid column.**
+The grid, the panels and their borders are exactly what they were before the
+feature; nothing shifted when it was added. Its `left` / `right` is the same
+variable as the column's, so it follows the drag without anyone moving it.
+
+Three things that look incidental and aren't:
+
+- **The body's geometry is measured once, on `pointerdown`** — same reasoning as
+  the tab drag: re-reading it per pointer event is a reflow per frame for a
+  value that cannot change mid-gesture. Pointer capture is there for the same
+  reason too: it guarantees the `pointerup` even released outside the window.
+- **The clamp is not just the rem bounds.** `SIDEBAR_W_MIN` / `_MAX` bound each
+  column, but a `CENTER_MIN_PX` floor also protects the centre, which has no
+  minimum width of its own — on a narrow window two otherwise legal columns
+  would crush the graph. `Math.max` keeps the upper bound above the lower one,
+  so on a window too narrow for all three it is the centre that gives way, not
+  the setting that stops working.
+- **`body.resizing` forces the cursor page-wide** (`app.css`). Pointer capture
+  keeps the events on the handle, but the pointer still flies over the panels:
+  without that rule the cursor would flip back to an arrow the moment it leaves
+  the 9px band, and a fast drag would select text on the way.
+
+The write is debounced: a drag emits an event per frame, only its result reaches
+`prefs.json`. Arrow keys nudge the same value through the same clamp — the
+handle is an ARIA window splitter (`role="separator"` + `tabindex`), which is
+what the two `svelte-ignore` directives in the component are about.
+
 ### Commit descriptions render Markdown — without `{@html}`
 
 `src/lib/markdown.ts` parses a **subset** of Markdown into a block tree that `CommitBody.svelte` renders through ordinary Svelte interpolation. **Never replace this with a Markdown library + `{@html}`**: a commit message is third-party content (anyone can write one in a repo you clone) and the webview has `invoke` access, so that would be a live XSS path. It also keeps the zero-runtime-dependency footprint.
@@ -272,7 +313,7 @@ These caused real breakage; don't undo them.
 - **`generate_context!` embeds `src-tauri/icons/*` at compile time.** If those files are missing, even `cargo check` fails with a proc-macro panic. Regenerate with `npm run tauri icon <source.png>`.
 - **Never put `direction: rtl` on `.path` in `FileItem.svelte`.** It was used for left-side ellipsis but reorders bidi text, rendering `.bob/config.json` as `bob/config.json.` — breaking every dotfile.
 - **`html, body` carry `overflow: hidden` + `overscroll-behavior: none`** (`app.css`). This is a desktop app: only inner panels scroll. `overscroll-behavior` specifically kills WKWebView's elastic bounce, which otherwise drags the whole UI.
-- **Both side columns share `--sidebar-w`** (`app.css`); `App.svelte` uses it for the left and right grid tracks. Change the variable, not the grid.
+- **Each side column has its own width variable** — `--sidebar-l-w` / `--sidebar-r-w` (`app.css`), which `App.svelte` uses for the left and right grid tracks and `layout.svelte.ts` rewrites. Change the variables, not the grid.
 - **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above.
 - Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`.
 

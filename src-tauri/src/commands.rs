@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
     Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo, RepoInfo,
-    RepoStatus, SessionInfo, StashEntry, ThemeMode,
+    RepoStatus, SessionInfo, SidebarWidths, StashEntry, ThemeMode,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -385,6 +385,23 @@ pub fn get_font_size(state: State<'_, Mutex<AppState>>) -> Result<u8, AppError> 
 #[tauri::command]
 pub fn set_font_size(size: u8, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     lock(&state)?.set_font_size(size)
+}
+
+/// Largeurs des colonnes latérales, en rem (préférence globale, persistée).
+///
+/// Les deux voyagent ensemble plutôt qu'une commande par côté : c'est un seul
+/// aller-retour au démarrage, et un seul `prefs.json` écrit par glissement.
+#[tauri::command]
+pub fn get_sidebar_widths(state: State<'_, Mutex<AppState>>) -> Result<SidebarWidths, AppError> {
+    Ok(lock(&state)?.sidebar_widths())
+}
+
+#[tauri::command]
+pub fn set_sidebar_widths(
+    widths: SidebarWidths,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.set_sidebar_widths(widths)
 }
 
 /// Aligne l'apparence de la fenêtre principale sur le thème choisi.
