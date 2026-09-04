@@ -12,7 +12,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
-use crate::dto::{Profile, PullMode, RecentRepo, SessionInfo, ThemeMode};
+use crate::dto::{
+    Profile, PullMode, RecentRepo, SessionInfo, ThemeMode, FONT_SIZE_DEFAULT, FONT_SIZE_MAX,
+    FONT_SIZE_MIN,
+};
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
 
@@ -201,6 +204,21 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Taille du corps de texte, en points.
+    ///
+    /// Toujours ramenée dans les bornes à la lecture comme à l'écriture : le
+    /// fichier peut avoir été édité à la main, et une police de 200 pt rendrait
+    /// les paramètres — donc le réglage lui-même — inatteignables.
+    pub fn font_size(&self) -> u8 {
+        self.prefs.font_size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX)
+    }
+
+    /// Change la taille du corps de texte et la persiste.
+    pub fn set_font_size(&mut self, size: u8) -> Result<(), AppError> {
+        self.prefs.font_size = size.clamp(FONT_SIZE_MIN, FONT_SIZE_MAX);
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -281,11 +299,26 @@ fn config_path(app: &AppHandle, file: &str) -> Result<PathBuf, AppError> {
 /// Préférences persistées dans `prefs.json`. `Default` couvre le premier
 /// lancement comme un fichier illisible : l'application démarre toujours, quitte
 /// à repartir des valeurs par défaut.
-#[derive(Debug, Default, Serialize, Deserialize)]
+#[derive(Debug, Serialize, Deserialize)]
 #[serde(default, rename_all = "camelCase")]
 struct Prefs {
     pull_mode: PullMode,
     theme: ThemeMode,
+    /// Corps de texte, en points.
+    font_size: u8,
+}
+
+/// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
+/// un `prefs.json` écrit par une version antérieure — où le champ n'existait
+/// pas — démarrerait donc avec une police de taille nulle.
+impl Default for Prefs {
+    fn default() -> Self {
+        Self {
+            pull_mode: PullMode::default(),
+            theme: ThemeMode::default(),
+            font_size: FONT_SIZE_DEFAULT,
+        }
+    }
 }
 
 fn load_json<T: for<'de> Deserialize<'de>>(app: &AppHandle, file: &str) -> Option<T> {

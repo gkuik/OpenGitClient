@@ -334,6 +334,18 @@ pub enum ThemeMode {
     Dark,
 }
 
+/// Taille du corps de texte, en **points** — l'unité des recommandations
+/// d'Apple, et celle du pixel CSS à l'échelle 1× de macOS. 13 pt est la taille
+/// du texte système sur macOS, donc le défaut ici.
+///
+/// La préférence voyage en nombre plutôt qu'en énumération, et c'est délibéré :
+/// une valeur hors bornes se ramène dans l'intervalle (voir
+/// `AppState::font_size`), là où une variante inconnue ferait échouer la lecture
+/// de *tout* `prefs.json`, emportant le thème et le mode du Pull avec elle.
+pub const FONT_SIZE_DEFAULT: u8 = 13;
+pub const FONT_SIZE_MIN: u8 = 11;
+pub const FONT_SIZE_MAX: u8 = 18;
+
 /// Résultat d'un pull : ce qui a été récupéré, puis ce qui en a été fait.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

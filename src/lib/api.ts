@@ -145,6 +145,13 @@ export const api = {
    */
   getTheme: () => call<ThemeMode>("get_theme"),
   setTheme: (mode: ThemeMode) => call<void>("set_theme", { theme: mode }),
+
+  /**
+   * Taille du corps de texte, en points (préférence globale, persistée). Le
+   * backend ramène dans ses bornes ce qui en sort.
+   */
+  getFontSize: () => call<number>("get_font_size"),
+  setFontSize: (size: number) => call<void>("set_font_size", { size }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */
   getRemoteInfo: (repoId: string, remote?: string) =>
     call<RemoteInfo>("get_remote_info", { repoId, remote: remote ?? null }),

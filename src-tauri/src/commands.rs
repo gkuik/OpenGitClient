@@ -373,6 +373,20 @@ pub fn set_theme(
     Ok(())
 }
 
+/// Taille du corps de texte, en points (préférence globale, persistée).
+///
+/// Rien à faire côté natif, contrairement au thème : la taille ne concerne que
+/// le contenu du webview, que la fenêtre se contente d'héberger.
+#[tauri::command]
+pub fn get_font_size(state: State<'_, Mutex<AppState>>) -> Result<u8, AppError> {
+    Ok(lock(&state)?.font_size())
+}
+
+#[tauri::command]
+pub fn set_font_size(size: u8, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.set_font_size(size)
+}
+
 /// Aligne l'apparence de la fenêtre principale sur le thème choisi.
 ///
 /// `System` se traduit par `None`, qui laisse la fenêtre suivre le système —

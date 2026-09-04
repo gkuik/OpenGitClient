@@ -55,6 +55,8 @@ pub fn run() {
             commands::set_pull_mode,
             commands::get_theme,
             commands::set_theme,
+            commands::get_font_size,
+            commands::set_font_size,
             commands::get_remote_info,
             commands::set_credentials,
             commands::forget_credentials,

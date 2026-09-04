@@ -1,5 +1,6 @@
 <script lang="ts">
   import { tick } from "svelte";
+  import { font } from "../font.svelte";
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
@@ -10,7 +11,13 @@
   // ROW_H est la seule chose qui aligne le canvas et le DOM : elle est appliquée
   // aux lignes en style inline, jamais en CSS, pour qu'elles ne puissent pas
   // diverger.
-  const ROW_H = 26;
+  //
+  // Elle suit la taille du texte, parce que la rangée en porte : figée, elle le
+  // rognerait dès la première taille au-dessus du défaut. Le facteur vaut
+  // exactement 26 px à la taille par défaut — la géométrie du graph est donc
+  // inchangée tant qu'on ne touche pas au réglage. Le canvas se redessine tout
+  // seul, `draw` lisant ces dérivées.
+  const ROW_H = $derived(Math.round(font.rootPx * 1.625));
   const LANE_W = 14;
   const DOT_R = 4;
   /** Rayon du cercle « modifications en cours » : plus large que le point d'un commit. */
@@ -18,13 +25,14 @@
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /*
-    Colonne des noms de branches, à gauche des lanes — comme GitKraken. Fixe et
-    non dérivée du contenu : la calculer sur les rangées montées la ferait
-    varier au défilement, et la calculer sur tout l'historique la ferait sauter
-    à chaque page chargée. Les pastilles y sont alignées à droite, contre le
-    graph, et se resserrent entre elles plutôt que de déborder.
+    Colonne des noms de branches, à gauche des lanes — comme GitKraken. Elle ne
+    dépend que de la taille du texte, jamais du contenu : la calculer sur les
+    rangées montées la ferait varier au défilement, et la calculer sur tout
+    l'historique la ferait sauter à chaque page chargée. 168 px à la taille par
+    défaut. Les pastilles y sont alignées à droite, contre le graph, et se
+    resserrent entre elles plutôt que de déborder.
   */
-  const REFS_W = 168;
+  const REFS_W = $derived(Math.round(font.rootPx * 10.6));
   /*
     Pastilles affichées au maximum, le reste tenant dans un « +n ». Deux tiennent
     dans la colonne ; au-delà elles se réduisent jusqu'à n'être plus qu'un
