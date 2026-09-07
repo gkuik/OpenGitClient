@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
 
   // Corps de la fenêtre quand l'onglet actif est une page « Nouvel onglet »
@@ -12,40 +13,40 @@
 
 <div class="newtab">
   <div class="card">
-    <h1>Nouvel onglet</h1>
-    <p class="sub">Ouvrir, cloner ou créer un dépôt.</p>
+    <h1>{t("newTab.title")}</h1>
+    <p class="sub">{t("newTab.subtitle")}</p>
 
     <div class="actions">
       <button class="action" disabled={tabs.opening} onclick={() => tabs.openFromDialog()}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
           <path d="M1.5 12.5v-9a1 1 0 0 1 1-1h3.2l1.5 1.8h6.3a1 1 0 0 1 1 1v7.2a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1z" />
         </svg>
-        <span class="label">Ouvrir un dépôt local</span>
-        <span class="hint">Choisir un dossier déjà versionné</span>
+        <span class="label">{t("newTab.open.label")}</span>
+        <span class="hint">{t("newTab.open.hint")}</span>
       </button>
 
-      <button class="action" disabled title="Bientôt disponible">
+      <button class="action" disabled title={t("common.notAvailable")}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
           <path d="M4.4 6.2a3.6 3.6 0 0 1 7-.8 2.7 2.7 0 0 1-.4 5.4H5a3 3 0 0 1-.6-5.9z" />
           <path d="M8 8.6v3.9M6.4 10.9 8 12.5l1.6-1.6" />
         </svg>
-        <span class="label">Cloner un dépôt</span>
-        <span class="hint">À venir</span>
+        <span class="label">{t("newTab.clone.label")}</span>
+        <span class="hint">{t("newTab.soon")}</span>
       </button>
 
-      <button class="action" disabled title="Bientôt disponible">
+      <button class="action" disabled title={t("common.notAvailable")}>
         <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" stroke-linecap="round" stroke-linejoin="round">
           <rect x="2.2" y="2.2" width="11.6" height="11.6" rx="1.4" />
           <path d="M8 5.4v5.2M5.4 8h5.2" />
         </svg>
-        <span class="label">Créer un dépôt</span>
-        <span class="hint">À venir</span>
+        <span class="label">{t("newTab.create.label")}</span>
+        <span class="hint">{t("newTab.soon")}</span>
       </button>
     </div>
 
     {#if tabs.recent.length > 0}
       <div class="recent">
-        <span class="rlabel">Récents</span>
+        <span class="rlabel">{t("common.recent")}</span>
         {#each tabs.recent as r (r.path)}
           <button class="item" title={r.path} onclick={() => tabs.open(r.path)}>
             <span class="rname">{r.name}</span>

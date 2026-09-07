@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
 
   // Le dialogue n'est monté que lorsqu'une demande est en cours (voir App.svelte),
@@ -43,28 +44,22 @@
 
 {#if prompt}
   <!-- Fond assombri : cliquer à côté referme, comme le menu des stashes. -->
-  <button class="scrim" aria-label="Annuler" onclick={cancel}></button>
+  <button class="scrim" aria-label={t("action.cancel")} onclick={cancel}></button>
 
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="cred-title">
-    <h2 id="cred-title">Identifiants pour {prompt.remote.host}</h2>
+    <h2 id="cred-title">{t("credentials.title", { host: prompt.remote.host ?? "" })}</h2>
 
     {#if prompt.refused}
-      <p class="note warn">
-        Les identifiants enregistrés ont été refusés par le serveur. Saisis-les à
-        nouveau — un jeton d'accès a pu expirer.
-      </p>
+      <p class="note warn">{t("credentials.refused")}</p>
     {:else}
-      <p class="note">
-        Aucun identifiant enregistré pour cet hôte. GitLite les conserve dans le
-        trousseau du système et ne les partage avec aucun autre outil.
-      </p>
+      <p class="note">{t("credentials.note")}</p>
     {/if}
 
     <p class="url">{prompt.remote.url}</p>
 
     <form onsubmit={submit}>
       <label>
-        Identifiant
+        {t("credentials.username")}
         <!-- svelte-ignore a11y_autofocus -->
         <input
           type="text"
@@ -77,14 +72,14 @@
       </label>
 
       <label>
-        Mot de passe ou jeton d'accès
+        {t("credentials.secret")}
         <input type="password" autocomplete="off" bind:value={secret} />
       </label>
 
       <div class="actions">
-        <button type="button" class="ghost" onclick={cancel}>Annuler</button>
+        <button type="button" class="ghost" onclick={cancel}>{t("action.cancel")}</button>
         <button type="submit" class="primary" disabled={!canSubmit}>
-          {repo.savingCredentials ? "Enregistrement…" : "Enregistrer et réessayer"}
+          {repo.savingCredentials ? t("action.saving") : t("credentials.submit")}
         </button>
       </div>
     </form>

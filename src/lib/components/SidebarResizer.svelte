@@ -13,6 +13,7 @@
     `pointerup` même relâché hors de la fenêtre — sans elle, la poignée resterait
     collée au curseur.
   */
+  import { t } from "../i18n.svelte";
   import {
     layout,
     SIDEBAR_W_MAX,
@@ -81,9 +82,7 @@
   }
 
   const label = $derived(
-    side === "left"
-      ? "Redimensionner la colonne des branches"
-      : "Redimensionner la colonne des changements",
+    side === "left" ? t("layout.resize.left") : t("layout.resize.right"),
   );
   const width = $derived(side === "left" ? layout.left : layout.right);
 </script>

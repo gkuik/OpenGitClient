@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
 
   // Confirmation en deux temps : abandonner jette la résolution en cours, et
@@ -19,20 +20,19 @@
 {#if repo.merging}
   <div class="merge" role="status">
     <p class="text">
-      <strong>Fusion en cours.</strong>
-      Résous les fichiers en conflit, indexe-les, puis committe — le commit reprendra
-      les deux branches.
+      <strong>{t("merge.banner.title")}</strong>
+      {t("merge.banner.text")}
     </p>
     {#if confirming}
       <div class="row">
         <button class="danger" onclick={abort} disabled={repo.busy}>
-          Confirmer l'abandon
+          {t("merge.banner.confirm")}
         </button>
-        <button class="quiet" onclick={() => (confirming = false)}>Annuler</button>
+        <button class="quiet" onclick={() => (confirming = false)}>{t("action.cancel")}</button>
       </div>
     {:else}
       <button class="quiet" onclick={() => (confirming = true)} disabled={repo.busy}>
-        Abandonner la fusion
+        {t("merge.banner.abort")}
       </button>
     {/if}
   </div>

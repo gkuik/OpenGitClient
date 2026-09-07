@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
 
   // Affiché quand aucun onglet n'est ouvert. Reprend l'accès aux dépôts récents,
@@ -8,15 +9,15 @@
 <div class="welcome">
   <div class="card">
     <h1>GitLite</h1>
-    <p class="sub">Aucun dépôt ouvert.</p>
+    <p class="sub">{t("common.noRepo")}</p>
 
     <button class="open" disabled={tabs.opening} onclick={() => tabs.openFromDialog()}>
-      Ouvrir un dépôt…
+      {t("welcome.open")}
     </button>
 
     {#if tabs.recent.length > 0}
       <div class="recent">
-        <span class="label">Récents</span>
+        <span class="label">{t("common.recent")}</span>
         {#each tabs.recent as r (r.path)}
           <button class="item" title={r.path} onclick={() => tabs.open(r.path)}>
             <span class="rname">{r.name}</span>

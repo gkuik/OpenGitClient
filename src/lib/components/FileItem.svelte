@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { FileEntry } from "../types";
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { STATUS_BADGES } from "../badges";
 
@@ -47,8 +48,8 @@
     class="action"
     onclick={toggleStage}
     disabled={repo.busy}
-    title={staged ? "Retirer de l'index" : "Indexer"}
-    aria-label={staged ? "Retirer de l'index" : "Indexer"}
+    title={staged ? t("status.file.unstage") : t("status.file.stage")}
+    aria-label={staged ? t("status.file.unstage") : t("status.file.stage")}
   >
     {staged ? "−" : "+"}
   </button>

@@ -2,16 +2,18 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { font, FONT_SIZES } from "../font.svelte";
+  import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
+  import RichText from "./RichText.svelte";
   import type { AppError, Profile, ThemeMode } from "../types";
 
   /** Les trois thèmes proposés, dans l'ordre d'affichage du segmenté. */
-  const THEMES: { mode: ThemeMode; label: string }[] = [
-    { mode: "light", label: "Clair" },
-    { mode: "dark", label: "Sombre" },
-    { mode: "system", label: "Système" },
-  ];
+  const THEMES: { mode: ThemeMode; label: string }[] = $derived([
+    { mode: "light", label: t("settings.theme.light") },
+    { mode: "dark", label: t("settings.theme.dark") },
+    { mode: "system", label: t("settings.theme.system") },
+  ]);
 
   /** Profil en cours d'édition. `id` à null = création. */
   type Draft = { id: string | null; label: string; name: string; email: string };
@@ -212,21 +214,27 @@
 <div class="settings">
   <div class="sheet">
     <header>
-      <h1>Paramètres</h1>
-      <button class="close" title="Fermer" aria-label="Fermer" onclick={() => tabs.closeSettings()}>
+      <h1>{t("settings.title")}</h1>
+      <button
+        class="close"
+        title={t("action.close")}
+        aria-label={t("action.close")}
+        onclick={() => tabs.closeSettings()}
+      >
         ×
       </button>
     </header>
 
     <section>
-      <h2>Apparence</h2>
+      <h2>{t("settings.appearance")}</h2>
       <p class="intro">
-        Le thème s'applique à toute l'application. <strong>Système</strong> suit
-        l'apparence du système et bascule avec elle, même pendant que GitLite
-        tourne.
+        <RichText
+          key="settings.appearance.intro"
+          params={{ system: { text: t("settings.theme.system"), tag: "strong" } }}
+        />
       </p>
 
-      <div class="seg" role="group" aria-label="Thème de l'interface">
+      <div class="seg" role="group" aria-label={t("settings.appearance.aria")}>
         {#each THEMES as entry (entry.mode)}
           <button
             class:active={theme.mode === entry.mode}
@@ -240,36 +248,40 @@
     </section>
 
     <section>
-      <h2>Taille du texte</h2>
+      <h2>{t("settings.font")}</h2>
       <p class="intro">
-        La taille du corps de texte, en points — l'unité des recommandations
-        d'Apple. <strong>13 pt</strong> est celle du texte système de macOS, et le
-        défaut de GitLite. Le reste de l'interface est exprimé en proportion :
-        titres, mentions secondaires et espacements suivent le texte.
+        <RichText
+          key="settings.font.intro"
+          params={{
+            default: { text: t("settings.font.size", { size: 13 }), tag: "strong" },
+          }}
+        />
       </p>
 
-      <div class="seg" role="group" aria-label="Taille du texte">
+      <div class="seg" role="group" aria-label={t("settings.font")}>
         {#each FONT_SIZES as size (size)}
           <button
             class:active={font.size === size}
             aria-pressed={font.size === size}
             onclick={() => font.set(size)}
           >
-            {size} pt
+            {t("settings.font.size", { size })}
           </button>
         {/each}
       </div>
     </section>
 
     <section>
-      <h2>Profils</h2>
+      <h2>{t("settings.profiles")}</h2>
       <p class="intro">
-        Un profil est une identité d'auteur : un nom et une adresse. Le choisir
-        pour un dépôt écrit <code>user.name</code> et <code>user.email</code> dans
-        sa configuration locale — les commits faits hors de GitLite l'utilisent
-        donc aussi. Le choix se fait dans la boîte de commit, à droite.
-        <strong>Supprimer un profil ne change rien aux dépôts qui l'utilisaient</strong>,
-        leur identité vivant dans leur propre configuration.
+        <RichText
+          key="settings.profiles.intro"
+          params={{
+            name: { text: "user.name", tag: "code" },
+            email: { text: "user.email", tag: "code" },
+            note: { text: t("settings.profiles.intro.note"), tag: "strong" },
+          }}
+        />
       </p>
 
       <ul class="profiles">
@@ -283,19 +295,23 @@
 
               {#if confirmDelete === profile.id}
                 <button class="danger" onclick={() => removeProfile(profile.id)}>
-                  Confirmer
+                  {t("action.confirm")}
                 </button>
-                <button class="ghost" onclick={() => (confirmDelete = null)}>Annuler</button>
+                <button class="ghost" onclick={() => (confirmDelete = null)}>
+                  {t("action.cancel")}
+                </button>
               {:else}
-                <button class="ghost" onclick={() => editProfile(profile)}>Modifier</button>
+                <button class="ghost" onclick={() => editProfile(profile)}>
+                  {t("action.edit")}
+                </button>
                 <button class="danger" onclick={() => (confirmDelete = profile.id)}>
-                  Supprimer
+                  {t("action.delete")}
                 </button>
               {/if}
             </div>
           </li>
         {:else}
-          <li class="empty">Aucun profil pour l'instant.</li>
+          <li class="empty">{t("settings.profiles.empty")}</li>
         {/each}
       </ul>
 
@@ -308,54 +324,63 @@
           }}
         >
           <label>
-            Libellé
-            <input type="text" placeholder="Perso" bind:value={draft.label} />
+            {t("settings.profiles.label")}
+            <input
+              type="text"
+              placeholder={t("settings.profiles.label.placeholder")}
+              bind:value={draft.label}
+            />
           </label>
           <label>
-            Nom
-            <input type="text" placeholder="Prénom Nom" bind:value={draft.name} />
+            {t("settings.profiles.name")}
+            <input
+              type="text"
+              placeholder={t("settings.profiles.name.placeholder")}
+              bind:value={draft.name}
+            />
           </label>
           <label>
-            Adresse e-mail
+            {t("settings.profiles.email")}
             <input type="email" autocapitalize="off" spellcheck="false" bind:value={draft.email} />
           </label>
           <div class="actions">
-            <button type="button" class="ghost" onclick={() => (draft = null)}>Annuler</button>
+            <button type="button" class="ghost" onclick={() => (draft = null)}>
+              {t("action.cancel")}
+            </button>
             <span class="spacer"></span>
             <button type="submit" class="primary" disabled={!draftValid || savingProfile}>
-              {savingProfile ? "Enregistrement…" : "Enregistrer"}
+              {savingProfile ? t("action.saving") : t("action.save")}
             </button>
           </div>
         </form>
       {:else}
-        <button class="ghost add-profile" onclick={newProfile}>Ajouter un profil</button>
+        <button class="ghost add-profile" onclick={newProfile}>
+          {t("settings.profiles.add")}
+        </button>
       {/if}
     </section>
 
     <section>
-      <h2>Jetons d'accès</h2>
+      <h2>{t("settings.tokens")}</h2>
       <p class="intro">
-        Un jeton par hôte, utilisé pour les dépôts en HTTPS. GitLite le conserve
-        dans le trousseau du système et ne le partage avec aucun autre outil.
-        <strong>Il n'est jamais réaffiché</strong> : le modifier consiste à en
-        saisir un nouveau. Les dépôts en SSH ne sont pas listés : ils
-        s'authentifient par une clé, via l'agent ou depuis <code>~/.ssh</code>.
-        Un hôte GitHub fait exception, même cloné en SSH : son jeton ne sert pas
-        au transport mais à lire les pull requests, et il lui faut la portée
-        <code>repo</code>.
+        <RichText
+          key="settings.tokens.intro"
+          params={{
+            never: { text: t("settings.tokens.intro.never"), tag: "strong" },
+            ssh: { text: "~/.ssh", tag: "code" },
+            scope: { text: "repo", tag: "code" },
+          }}
+        />
       </p>
 
       {#if error}
-        <p class="error">{error.message}</p>
+        <p class="error">{errorMessage(error)}</p>
       {/if}
 
       {#if loading}
-        <p class="muted">Chargement…</p>
+        <p class="muted">{t("common.loading")}</p>
       {:else if rows.length === 0}
-        <p class="muted">
-          Aucun hôte à paramétrer parmi les onglets ouverts. Ajoute un hôte
-          ci-dessous pour préparer un jeton à l'avance.
-        </p>
+        <p class="muted">{t("settings.tokens.empty")}</p>
       {/if}
 
       <ul class="hosts">
@@ -370,14 +395,14 @@
               </div>
 
               <span class="state" class:stored={row.stored}>
-                {row.stored ? "Jeton enregistré" : "Aucun jeton"}
+                {row.stored ? t("settings.tokens.stored") : t("settings.tokens.none")}
               </span>
 
               {#if editing === row.host}
-                <button class="ghost" onclick={cancel}>Annuler</button>
+                <button class="ghost" onclick={cancel}>{t("action.cancel")}</button>
               {:else}
                 <button class="ghost" onclick={() => edit(row.host)}>
-                  {row.stored ? "Modifier" : "Renseigner"}
+                  {row.stored ? t("settings.tokens.replace") : t("settings.tokens.set")}
                 </button>
               {/if}
             </div>
@@ -390,7 +415,7 @@
                 }}
               >
                 <label>
-                  Identifiant
+                  {t("settings.tokens.username")}
                   <input
                     type="text"
                     autocomplete="off"
@@ -400,7 +425,7 @@
                   />
                 </label>
                 <label>
-                  Jeton d'accès
+                  {t("settings.tokens.secret")}
                   <input type="password" autocomplete="off" bind:value={secret} />
                 </label>
 
@@ -408,11 +433,11 @@
                   {#if row.stored}
                     {#if confirmForget}
                       <button type="button" class="danger" onclick={() => forget(row.host)}>
-                        Confirmer l'oubli
+                        {t("settings.tokens.forget.confirm")}
                       </button>
                     {:else}
                       <button type="button" class="danger" onclick={() => (confirmForget = true)}>
-                        Oublier
+                        {t("settings.tokens.forget")}
                       </button>
                     {/if}
                   {/if}
@@ -422,7 +447,7 @@
                     class="primary"
                     disabled={username.trim().length === 0 || secret.length === 0 || saving}
                   >
-                    {saving ? "Enregistrement…" : "Enregistrer"}
+                    {saving ? t("action.saving") : t("action.save")}
                   </button>
                 </div>
               </form>
@@ -439,7 +464,7 @@
         }}
       >
         <label>
-          Ajouter un hôte
+          {t("settings.tokens.addHost")}
           <input
             type="text"
             placeholder="github.com"
@@ -450,7 +475,7 @@
           />
         </label>
         <button type="submit" class="ghost" disabled={newHost.trim().length === 0}>
-          Ajouter
+          {t("action.add")}
         </button>
       </form>
     </section>
@@ -508,7 +533,9 @@
     line-height: 1.5;
     color: var(--text-dim);
   }
-  .intro code {
+  /* `:global` parce que ces `<code>` sont rendus par `RichText` : le style
+     scopé d'un composant ne descend pas dans un autre. */
+  .intro :global(code) {
     font-family: var(--mono);
     font-size: 0.76rem;
   }

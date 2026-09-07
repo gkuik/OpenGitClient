@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
 
   // Cette barre remplace l'ancienne topbar (logo + bouton « Ouvrir un dépôt ») :
@@ -221,7 +222,7 @@
   <div class="tabs" class:reordering={drag !== null} bind:this={strip}>
     {#each tabs.tabs as tab, i (tab.id)}
       {@const active = tab.id === tabs.activeId}
-      {@const label = tab.kind === "new" ? "Nouvel onglet" : (tab.repoInfo?.name ?? "…")}
+      {@const label = tab.kind === "new" ? t("tabbar.newTab") : (tab.repoInfo?.name ?? "…")}
       <div
         class="tab"
         class:active
@@ -241,8 +242,8 @@
         <span class="name" class:blank={tab.kind === "new"}>{label}</span>
         <button
           class="close"
-          title="Fermer l'onglet"
-          aria-label="Fermer l'onglet"
+          title={t("tabbar.closeTab")}
+          aria-label={t("tabbar.closeTab")}
           onclick={(e) => onClose(e, tab.id)}
         >
           ×
@@ -254,8 +255,8 @@
          au bord droit de la fenêtre. -->
     <button
       class="add"
-      title="Nouvel onglet"
-      aria-label="Nouvel onglet"
+      title={t("tabbar.newTab")}
+      aria-label={t("tabbar.newTab")}
       onclick={() => tabs.newTab()}
     >
       +
@@ -270,8 +271,8 @@
   <button
     class="settings"
     class:on={tabs.settingsOpen}
-    title="Paramètres"
-    aria-label="Paramètres"
+    title={t("tabbar.settings")}
+    aria-label={t("tabbar.settings")}
     aria-pressed={tabs.settingsOpen}
     onclick={() => tabs.toggleSettings()}
   >

@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import FileList from "./FileList.svelte";
   import SectionHeader from "./SectionHeader.svelte";
@@ -37,56 +38,49 @@
 
 <div class="panel">
   {#if !repo.repoInfo}
-    <p class="empty">Aucun dépôt ouvert.</p>
+    <p class="empty">{t("common.noRepo")}</p>
   {:else}
     <!-- En-tête : « N changements sur <branche> », le tout aligné à gauche. -->
     <div class="sb-head">
-      <span class="count">
-        {repo.changeCount}
-        {repo.changeCount > 1 ? "changements" : "changement"}
-      </span>
+      <span class="count">{t("status.changes", { n: repo.changeCount })}</span>
       {#if repo.repoInfo.branch}
-        <span class="on">sur</span>
+        <span class="on">{t("status.on")}</span>
         <span class="branch" title={repo.repoInfo.branch}>⎇ {repo.repoInfo.branch}</span>
       {:else if repo.repoInfo.isDetached}
-        <span class="on">sur</span>
-        <span class="branch detached">HEAD détaché</span>
+        <span class="on">{t("status.on")}</span>
+        <span class="branch detached">{t("status.detachedHead")}</span>
       {/if}
 
       <button
         class="discard"
         onclick={() => (confirming = !confirming)}
         disabled={repo.changeCount === 0 || repo.busy}
-        title="Abandonner tous les changements en cours"
+        title={t("status.discardAll.hint")}
         aria-expanded={confirming}
       >
-        ↺ Tout abandonner
+        {t("status.discardAll")}
       </button>
 
       {#if confirming}
         <!-- Superposition qui referme au clic à côté, comme les menus de la
              colonne de gauche. -->
-        <button class="scrim" aria-label="Annuler" onclick={() => (confirming = false)}
+        <button
+          class="scrim"
+          aria-label={t("action.cancel")}
+          onclick={() => (confirming = false)}
         ></button>
-        <div class="confirm" role="dialog" aria-label="Abandonner tous les changements">
-          <p class="c-title">Abandonner tous les changements ?</p>
+        <div class="confirm" role="dialog" aria-label={t("status.discard.title")}>
+          <p class="c-title">{t("status.discard.title")}</p>
           <p class="c-text">
-            {#if trackedCount > 0}
-              {trackedCount}
-              {trackedCount > 1 ? "fichiers suivis reviendront" : "fichier suivi reviendra"} à
-              l'état du dernier commit{untrackedCount > 0 ? "," : "."}
-            {/if}
-            {#if untrackedCount > 0}
-              {untrackedCount}
-              {untrackedCount > 1
-                ? "fichiers non suivis seront supprimés"
-                : "fichier non suivi sera supprimé"} du disque.
-            {/if}
-            Rien n'est récupérable ensuite.
+            {#if trackedCount > 0}{t("status.discard.tracked", { n: trackedCount })}{/if}
+            {#if untrackedCount > 0}{t("status.discard.untracked", { n: untrackedCount })}{/if}
+            {t("status.discard.warning")}
           </p>
           <div class="c-actions">
-            <button class="c-cancel" onclick={() => (confirming = false)}>Annuler</button>
-            <button class="c-ok" onclick={discard}>Tout abandonner</button>
+            <button class="c-cancel" onclick={() => (confirming = false)}>
+              {t("action.cancel")}
+            </button>
+            <button class="c-ok" onclick={discard}>{t("status.discardAll")}</button>
           </div>
         </div>
       {/if}
@@ -97,17 +91,17 @@
       <button
         class="sort"
         onclick={() => repo.toggleSort()}
-        title={repo.sortAsc ? "Tri A→Z" : "Tri Z→A"}
-        aria-label="Inverser le tri"
+        title={repo.sortAsc ? t("status.sort.asc") : t("status.sort.desc")}
+        aria-label={t("status.sort.toggle")}
       >
         {repo.sortAsc ? "↑A" : "↓Z"}
       </button>
       <div class="seg">
         <button class:active={repo.viewMode === "path"} onclick={() => repo.setViewMode("path")}>
-          ☰ Path
+          {t("status.view.path")}
         </button>
         <button class:active={repo.viewMode === "tree"} onclick={() => repo.setViewMode("tree")}>
-          ⊟ Tree
+          {t("status.view.tree")}
         </button>
       </div>
     </div>
@@ -120,7 +114,7 @@
     <div class="sections">
       <section class:collapsed={!unstagedOpen}>
         <SectionHeader
-          label="Non indexés"
+          label={t("status.unstaged")}
           icon={pencilIcon}
           count={unstagedCount}
           open={unstagedOpen}
@@ -136,7 +130,7 @@
 
       <section class:collapsed={!stagedOpen}>
         <SectionHeader
-          label="Indexés"
+          label={t("status.staged")}
           icon={checkIcon}
           count={stagedCount}
           open={stagedOpen}
@@ -175,7 +169,7 @@
     onclick={() => repo.stageAll()}
     disabled={unstagedCount === 0 || repo.busy}
   >
-    Tout indexer
+    {t("status.stageAll")}
   </button>
 {/snippet}
 
@@ -185,7 +179,7 @@
     onclick={() => repo.unstageAll()}
     disabled={stagedCount === 0 || repo.busy}
   >
-    Tout retirer
+    {t("status.unstageAll")}
   </button>
 {/snippet}
 

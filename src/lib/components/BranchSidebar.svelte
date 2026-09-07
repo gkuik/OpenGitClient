@@ -1,10 +1,12 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
   import type { Snippet } from "svelte";
   import type { MergeMode, PullMode, PullRequestEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
+  import RichText from "./RichText.svelte";
   import PullRequestSection from "./PullRequestSection.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
@@ -12,28 +14,28 @@
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
   // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
   // n'y a pas de mode correspondant côté backend, donc rien à envoyer.
-  const PULL_ENTRIES: { mode: PullMode | null; label: string; hint: string }[] = [
+  const PULL_ENTRIES: { mode: PullMode | null; label: string; hint: string }[] = $derived([
     {
       mode: "fetchAll",
-      label: "Fetch de tous les distants",
-      hint: "Récupère les références de tous les distants, sans rien intégrer",
+      label: t("toolbar.pull.fetchAll"),
+      hint: t("toolbar.pull.fetchAll.hint"),
     },
     {
       mode: "fastForwardOrMerge",
-      label: "Pull (avance rapide si possible)",
-      hint: "Avance rapide quand elle est possible, fusion sinon",
+      label: t("toolbar.pull.fastForwardOrMerge"),
+      hint: t("toolbar.pull.fastForwardOrMerge.hint"),
     },
     {
       mode: "fastForwardOnly",
-      label: "Pull (avance rapide seulement)",
-      hint: "N'intègre que par avance rapide ; en cas de divergence, ne touche à rien",
+      label: t("toolbar.pull.fastForwardOnly"),
+      hint: t("toolbar.pull.fastForwardOnly.hint"),
     },
     {
       mode: null,
-      label: "Pull (rebase)",
-      hint: "Pas encore disponible : il faut d'abord une résolution de conflits",
+      label: t("toolbar.pull.rebase"),
+      hint: t("toolbar.pull.rebase.hint"),
     },
-  ];
+  ]);
 
   const currentPull = $derived(
     PULL_ENTRIES.find((e) => e.mode === tabs.pullMode) ?? PULL_ENTRIES[1],
@@ -180,7 +182,7 @@
   const canMerge = $derived(
     !repo.mergingBranches && !repo.checkingOut && !repo.busy && !repo.merging,
   );
-  const busyHint = "Une opération est en cours, ou une fusion reste à terminer";
+  const busyHint = $derived(t("branches.merge.busy"));
 
   // ── Menu contextuel d'une pull request ──────────────────────────────────────
   // Rendu ici comme les deux autres menus de la colonne : le geste part d'une
@@ -225,7 +227,7 @@
 
 <nav class="branches">
   {#if !repo.repoInfo}
-    <p class="empty">Aucun dépôt ouvert.</p>
+    <p class="empty">{t("common.noRepo")}</p>
   {:else}
     <!--
       Barre d'actions du dépôt. Elle vit hors de la zone défilante : elle reste
@@ -245,17 +247,17 @@
           menu: openPullMenu,
         })}
         {@render action({
-          label: "Push",
+          label: t("toolbar.push"),
           icon: pushIcon,
-          hint: "Publier la branche courante sur le dépôt distant",
+          hint: t("toolbar.push.hint"),
           run: () => repo.push(),
           busy: repo.busyRemote,
           count: repo.currentGap?.ahead,
         })}
         {@render action({
-          label: "Fetch",
+          label: t("toolbar.fetch"),
           icon: fetchIcon,
-          hint: "Récupérer les références du dépôt distant",
+          hint: t("toolbar.fetch.hint"),
           run: () => repo.fetch(),
           busy: repo.busyRemote,
         })}
@@ -264,13 +266,13 @@
            croiser sur un même dépôt. Sans lui, un fetch qui ne ramène rien
            n'aurait aucun effet visible, la section REMOTE restant identique. -->
       {#if repo.fetching}
-        <p class="status">Fetch en cours…</p>
+        <p class="status">{t("toolbar.status.fetching")}</p>
       {:else if repo.pushing}
-        <p class="status">Push en cours…</p>
+        <p class="status">{t("toolbar.status.pushing")}</p>
       {:else if repo.pulling}
-        <p class="status">Pull en cours…</p>
+        <p class="status">{t("toolbar.status.pulling")}</p>
       {:else if repo.mergingBranches}
-        <p class="status">Fusion en cours…</p>
+        <p class="status">{t("toolbar.status.merging")}</p>
       {:else if repo.opStatus}
         <p class="status">{repo.opStatus}</p>
       {/if}
@@ -279,7 +281,7 @@
     <div class="sections">
       <section class:open={localOpen} class:pinned={firstClosed === "local"}>
         <SectionHeader
-          label="Local"
+          label={t("branches.local")}
           icon={branchIcon}
           count={repo.branches.length}
           open={localOpen}
@@ -292,7 +294,7 @@
             {#each nodes as node (node.type === "dir" ? "d:" + node.path : "b:" + node.branch.name)}
               <BranchRow {node} />
             {:else}
-              <p class="empty small">Aucune branche.</p>
+              <p class="empty small">{t("branches.empty")}</p>
             {/each}
           </div>
         {/if}
@@ -301,7 +303,7 @@
       {#if hasRemotes}
         <section class:open={remotesOpen} class:pinned={firstClosed === "remotes"}>
           <SectionHeader
-            label="Remote"
+            label={t("branches.remote")}
             icon={remoteIcon}
             count={repo.remoteBranches.length}
             open={remotesOpen}
@@ -357,7 +359,7 @@
 
       <section class:open={stashesOpen} class:pinned={firstClosed === "stashes"}>
         <SectionHeader
-          label="Stashes"
+          label={t("stashes.title")}
           icon={stashIcon}
           count={repo.stashes.length}
           open={stashesOpen}
@@ -386,15 +388,15 @@
                 <span class="sbranch">{stash.branch ?? stash.message}</span>
                 <button
                   class="kebab"
-                  title="Actions du stash"
-                  aria-label="Actions du stash"
+                  title={t("stashes.actions")}
+                  aria-label={t("stashes.actions")}
                   onclick={(e) => openFromKebab(e, stash.index)}
                 >
                   ⋮
                 </button>
               </div>
             {:else}
-              <p class="empty small">Aucun stash.</p>
+              <p class="empty small">{t("stashes.empty")}</p>
             {/each}
           </div>
         {/if}
@@ -407,7 +409,7 @@
 {#if menu}
   <button
     class="ctx-overlay"
-    aria-label="Fermer le menu"
+    aria-label={t("common.closeMenu")}
     onclick={close}
     oncontextmenu={(e) => {
       e.preventDefault();
@@ -417,17 +419,17 @@
   <div class="ctx-menu" style="left: {menu.x}px; top: {menu.y}px" role="menu">
     <button class="ctx-item" role="menuitem" onclick={() => apply(false)}>
       {@render applyIcon()}
-      <span>Appliquer</span>
+      <span>{t("stashes.apply")}</span>
     </button>
     <button class="ctx-item" role="menuitem" onclick={() => apply(true)}>
       {@render popIcon()}
-      <span>Pop (appliquer et retirer)</span>
+      <span>{t("stashes.pop")}</span>
     </button>
     <div class="ctx-sep"></div>
     {#if confirmDrop}
       <button class="ctx-item danger" role="menuitem" onclick={drop}>
         {@render dropIcon()}
-        <span>Confirmer la suppression</span>
+        <span>{t("stashes.drop.confirm")}</span>
       </button>
     {:else}
       <button
@@ -436,7 +438,7 @@
         onclick={() => (confirmDrop = true)}
       >
         {@render dropIcon()}
-        <span>Supprimer</span>
+        <span>{t("stashes.drop")}</span>
       </button>
     {/if}
   </div>
@@ -457,7 +459,7 @@
   {@const request = branchMerge.request}
   <button
     class="ctx-overlay"
-    aria-label="Fermer le menu"
+    aria-label={t("common.closeMenu")}
     onclick={() => branchMerge.close()}
     oncontextmenu={(e) => {
       e.preventDefault();
@@ -469,33 +471,37 @@
     style="left: {mergeMenuPos.x}px; top: {mergeMenuPos.y}px"
     role="menu"
   >
-    <p class="ctx-head">
-      {request.target} reçoit la fusion ; on bascule dessus dès qu'un commit doit
-      y être écrit.
-    </p>
+    <p class="ctx-head">{t("branches.merge.head", { target: request.target })}</p>
     <button
       class="ctx-item wrap"
       role="menuitem"
       disabled={!canMerge}
-      title={canMerge
-        ? "Avance rapide quand la cible est simplement en retard, commit de fusion sinon"
-        : busyHint}
+      title={canMerge ? t("branches.merge.item.hint") : busyHint}
       onclick={() => runMerge("fastForwardOrMerge")}
     >
       {@render mergeIcon()}
-      <span>Fusionner <b>{request.source}</b> dans <b>{request.target}</b></span>
+      <!-- Une seule entrée de catalogue, les deux noms de branches restant en
+           gras au milieu de la phrase : `RichText` les met en forme sans la
+           découper, donc sans figer l'ordre des mots. -->
+      <span>
+        <RichText
+          key="branches.merge.item"
+          params={{
+            source: { text: request.source, tag: "strong" },
+            target: { text: request.target, tag: "strong" },
+          }}
+        />
+      </span>
     </button>
     <button
       class="ctx-item wrap"
       role="menuitem"
       disabled={!canMerge}
-      title={canMerge
-        ? "Toujours un commit de fusion, même quand une avance rapide suffirait — la fusion reste visible dans l'historique"
-        : busyHint}
+      title={canMerge ? t("branches.merge.noFastForward.hint") : busyHint}
       onclick={() => runMerge("noFastForward")}
     >
       {@render mergeCommitIcon()}
-      <span>Fusionner sans avance rapide</span>
+      <span>{t("branches.merge.noFastForward")}</span>
     </button>
   </div>
 {/if}
@@ -515,7 +521,7 @@
 {#if pullMenu}
   <button
     class="ctx-overlay"
-    aria-label="Fermer le menu"
+    aria-label={t("common.closeMenu")}
     onclick={() => (pullMenu = null)}
     oncontextmenu={(e) => {
       e.preventDefault();
@@ -527,7 +533,7 @@
     style="left: {pullMenu.x}px; top: {pullMenu.y}px"
     role="menu"
   >
-    <p class="ctx-head">Action par défaut de ce bouton</p>
+    <p class="ctx-head">{t("toolbar.pull.menu")}</p>
     {#each PULL_ENTRIES as entry (entry.label)}
       {@const selected = entry.mode !== null && entry.mode === tabs.pullMode}
       <button
@@ -552,7 +558,7 @@
 {#if prMenu}
   <button
     class="ctx-overlay"
-    aria-label="Fermer le menu"
+    aria-label={t("common.closeMenu")}
     onclick={() => (prMenu = null)}
     oncontextmenu={(e) => {
       e.preventDefault();
@@ -567,7 +573,7 @@
     <p class="ctx-head">#{prMenu.pr.number} · {prMenu.pr.title}</p>
     <button class="ctx-item" role="menuitem" onclick={openPrInBrowser}>
       {@render externalIcon()}
-      <span>Ouvrir sur GitHub</span>
+      <span>{t("pr.open")}</span>
     </button>
   </div>
 {/if}
@@ -604,7 +610,7 @@
     <button
       class="action"
       disabled={!a.run || a.busy}
-      title={a.run ? a.hint : `${a.hint} (pas encore disponible)`}
+      title={a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
       onclick={a.run}
     >
       {@render a.icon()}
@@ -618,8 +624,8 @@
     {#if a.menu}
       <button
         class="caret"
-        title="Choisir l'action par défaut de ce bouton"
-        aria-label="Choisir l'action par défaut de ce bouton"
+        title={t("toolbar.pull.menu.open")}
+        aria-label={t("toolbar.pull.menu.open")}
         onclick={a.menu}
       >
         <!-- Chevron dessiné, pas « ▾ » : ce caractère est le triangle *small*

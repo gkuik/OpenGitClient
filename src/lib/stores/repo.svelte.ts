@@ -1,5 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api, pickRepositoryFolder } from "../api";
+import { t } from "../i18n.svelte";
 import { countStatuses, type TreeCounts } from "../tree";
 import type {
   AppError,
@@ -68,40 +69,39 @@ const CHANGE_RETRY_MS = 400;
 function pullStatus(report: PullReport): string {
   const where = report.remotes.join(", ");
   const o = report.outcome;
-  const n = (c: number) => `${c} commit${c > 1 ? "s" : ""}`;
   switch (o.kind) {
     case "fetchedOnly": {
       const refs = report.updated.length;
       return refs === 0
-        ? `${where} : déjà à jour`
-        : `${where} : ${refs} référence${refs > 1 ? "s" : ""} mise${refs > 1 ? "s" : ""} à jour`;
+        ? t("op.fetch.upToDate", { where })
+        : t("op.fetch.updated", { where, n: refs });
     }
     case "upToDate":
-      return `${where} : déjà à jour`;
+      return t("op.fetch.upToDate", { where });
     case "fastForwarded":
-      return `${where} : ${n(o.commits)} récupéré${o.commits > 1 ? "s" : ""} (avance rapide)`;
+      return t("op.pull.fastForwarded", { where, n: o.commits });
     case "merged":
-      return `${where} : ${n(o.commits)} fusionné${o.commits > 1 ? "s" : ""}`;
+      return t("op.pull.merged", { where, n: o.commits });
     case "conflicted":
-      return `Fusion en conflit : ${o.files.length} fichier${o.files.length > 1 ? "s" : ""} à résoudre`;
+      return t("op.pull.conflicted", { n: o.files.length });
     case "diverged":
-      return `Divergence : ${n(o.ahead)} en local, ${n(o.behind)} en face — fusion non demandée`;
+      return t("op.pull.diverged", { ahead: o.ahead, behind: o.behind });
   }
 }
 
 /** Compte rendu d'une fusion de branche à branche, en une ligne. */
 function mergeStatus(report: MergeReport): string {
-  const n = (c: number) => `${c} commit${c > 1 ? "s" : ""}`;
+  const { source, target } = report;
   const o = report.outcome;
   switch (o.kind) {
     case "upToDate":
-      return `${report.target} contient déjà ${report.source}`;
+      return t("op.merge.upToDate", { source, target });
     case "fastForwarded":
-      return `${report.source} → ${report.target} : ${n(o.commits)} (avance rapide)`;
+      return t("op.merge.fastForwarded", { source, target, n: o.commits });
     case "merged":
-      return `${report.source} fusionnée dans ${report.target} : ${n(o.commits)}`;
+      return t("op.merge.merged", { source, target, n: o.commits });
     case "conflicted":
-      return `Fusion en conflit : ${o.files.length} fichier${o.files.length > 1 ? "s" : ""} à résoudre`;
+      return t("op.pull.conflicted", { n: o.files.length });
   }
 }
 
@@ -1048,8 +1048,8 @@ export class RepoStore {
     const n = updated.length;
     this.setOpStatus(
       n === 0
-        ? `${remote} : déjà à jour`
-        : `${remote} : ${n} référence${n > 1 ? "s" : ""} mise${n > 1 ? "s" : ""} à jour`,
+        ? t("op.fetch.upToDate", { where: remote })
+        : t("op.fetch.updated", { where: remote, n }),
     );
 
     // Un fetch ne touche que `refs/remotes/**`, mais la sidebar comme le graph
@@ -1076,8 +1076,8 @@ export class RepoStore {
     const { remote, branch, upstreamSet } = event.report;
     this.setOpStatus(
       upstreamSet
-        ? `${remote} : ${branch} publiée, suivi configuré`
-        : `${remote} : ${branch} publiée`,
+        ? t("op.push.published.upstream", { remote, branch })
+        : t("op.push.published", { remote, branch }),
     );
 
     // Le push a fait avancer `refs/remotes/**` (libgit2 met les tips à jour) :
@@ -1176,7 +1176,7 @@ export class RepoStore {
       void this.selectCommit(remote.oid);
       return;
     }
-    this.setOpStatus(`${pr.sourceBranch} : branche absente en local, fais un Fetch`);
+    this.setOpStatus(t("pr.branchMissing", { branch: pr.sourceBranch }));
   }
 
   /** Ouvre la page web de la PR dans le navigateur du système. */
@@ -1200,7 +1200,8 @@ export class RepoStore {
         // Sans hôte (chemin local), aucun identifiant n'a de sens à enregistrer.
         this.error = {
           kind: "NoCredentials",
-          message: `Aucun identifiant utilisable pour ${remote.url}`,
+          message: t("credentials.none", { url: remote.url }),
+          localized: true,
         };
         return;
       }
@@ -1210,8 +1211,11 @@ export class RepoStore {
         this.error = {
           kind: refused ? "RemoteAuth" : "NoCredentials",
           message: refused
-            ? `Clé SSH refusée par ${remote.host}. Vérifie que la clé publique y est bien déclarée.`
-            : `Aucune clé SSH utilisable pour ${remote.host} : charge-la dans ssh-agent, ou place-la dans ~/.ssh (id_ed25519, id_ecdsa, id_rsa).`,
+            ? t("credentials.ssh.refused", { host: remote.host })
+            : t("credentials.ssh.none", { host: remote.host }),
+          // Plus précis que l'entrée du catalogue pour ce `kind` : elle parle du
+          // dépôt distant en général, celui-ci dit quoi faire d'une clé SSH.
+          localized: true,
         };
         return;
       }

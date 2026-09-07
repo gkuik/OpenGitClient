@@ -1,6 +1,7 @@
 <script lang="ts">
   import { tick } from "svelte";
   import { font } from "../font.svelte";
+  import { i18n, t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
@@ -103,11 +104,15 @@
     layout.rows.slice(first, first + Math.ceil(viewportH / ROW_H) + 3),
   );
 
-  const dateFmt = new Intl.DateTimeFormat("fr-FR", {
-    day: "2-digit",
-    month: "short",
-    year: "2-digit",
-  });
+  // Dérivé, et non figé au montage : c'est la langue qui décide du format, et
+  // le graph reste monté d'un onglet à l'autre.
+  const dateFmt = $derived(
+    new Intl.DateTimeFormat(i18n.locale, {
+      day: "2-digit",
+      month: "short",
+      year: "2-digit",
+    }),
+  );
 
   function formatDate(ts: number): string {
     return dateFmt.format(new Date(ts * 1000));
@@ -128,12 +133,12 @@
     else repo.selectCommit(row.commit.oid);
   }
 
-  /** Détail de la pastille de compteurs ("4 modifiés, 2 ajoutés"). */
+  /** Détail de la pastille de compteurs ("4 modified, 2 added"). */
   function countsLabel(c: TreeCounts): string {
     const parts: string[] = [];
-    if (c.modified) parts.push(`${c.modified} modifié${c.modified > 1 ? "s" : ""}`);
-    if (c.added) parts.push(`${c.added} ajouté${c.added > 1 ? "s" : ""}`);
-    if (c.deleted) parts.push(`${c.deleted} supprimé${c.deleted > 1 ? "s" : ""}`);
+    if (c.modified) parts.push(t("graph.counts.modified", { n: c.modified }));
+    if (c.added) parts.push(t("graph.counts.added", { n: c.added }));
+    if (c.deleted) parts.push(t("graph.counts.deleted", { n: c.deleted }));
     return parts.join(", ");
   }
 
@@ -360,10 +365,10 @@
 
 <div class="graph">
   {#if !repo.repoInfo}
-    <p class="placeholder">Aucun dépôt ouvert.</p>
+    <p class="placeholder">{t("common.noRepo")}</p>
   {:else if layout.rows.length === 0}
     <p class="placeholder">
-      {repo.graphLoading ? "Chargement de l'historique…" : "Aucun commit."}
+      {repo.graphLoading ? t("graph.loading") : t("graph.empty")}
     </p>
   {:else}
     <!-- Canvas en overlay : uniquement la géométrie des lanes, jamais de texte. -->
@@ -396,9 +401,9 @@
                    des dossiers de la liste de fichiers (✎ / + / −). -->
               <input
                 class="wip-summary"
-                aria-label="Résumé du prochain commit"
+                aria-label={t("graph.wip.summary")}
                 placeholder="// WIP"
-                title={repo.commitSummary || "Résumé du prochain commit"}
+                title={repo.commitSummary || t("graph.wip.summary")}
                 bind:value={repo.commitSummary}
                 onkeydown={onSummaryKey}
               />
@@ -453,7 +458,7 @@
                         stroke-width="1.5"
                         stroke-linejoin="round"
                       >
-                        <title>en local</title>
+                        <title>{t("graph.ref.local")}</title>
                         <rect x="2.25" y="3.25" width="11.5" height="8" rx="1.2" />
                         <path d="M5.5 13.75h5" stroke-linecap="round" />
                       </svg>

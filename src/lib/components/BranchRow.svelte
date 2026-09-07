@@ -1,6 +1,7 @@
 <script lang="ts">
   import type { BranchTreeNode } from "../tree";
   import type { BranchEntry, RemoteBranchEntry, Upstream } from "../types";
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { branchMerge } from "../branchMerge.svelte";
   import BranchRow from "./BranchRow.svelte"; // récursion (auto-import Svelte 5)
@@ -72,9 +73,9 @@
    */
   function gapHint(up: Upstream): string {
     const parts: string[] = [];
-    if (up.ahead > 0) parts.push(`${up.ahead} commit${up.ahead > 1 ? "s" : ""} à pousser`);
-    if (up.behind > 0) parts.push(`${up.behind} à récupérer`);
-    return `${parts.join(" · ")} — ${up.name}, au dernier fetch`;
+    if (up.ahead > 0) parts.push(t("branches.gap.ahead", { n: up.ahead }));
+    if (up.behind > 0) parts.push(t("branches.gap.behind", { n: up.behind }));
+    return t("branches.gap.hint", { gap: parts.join(" · "), upstream: up.name });
   }
 </script>
 
@@ -105,8 +106,8 @@
     data-branch={local?.name}
     style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     title={local
-      ? `${local.name} — clic pour voir son dernier commit, double-clic pour basculer, glisser sur une autre branche pour fusionner`
-      : `${node.branch.name} — clic pour voir son dernier commit, double-clic pour basculer (branche locale de suivi créée au besoin)`}
+      ? t("branches.hint.local", { name: local.name })
+      : t("branches.hint.remote", { name: node.branch.name })}
     onclick={() => selectTip(node.branch.oid)}
     ondblclick={() => checkout(node.branch)}
     onkeydown={(e) => (e.key === "Enter" ? checkout(node.branch) : undefined)}
