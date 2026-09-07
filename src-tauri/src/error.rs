@@ -52,6 +52,18 @@ pub enum AppError {
     #[error("Une opération réseau est déjà en cours sur ce dépôt")]
     NetworkBusy,
 
+    #[error("Aucun jeton d'accès enregistré pour {0}")]
+    ForgeToken(String),
+
+    #[error("Jeton refusé par {0} : il est peut-être expiré, ou sans la portée « repo »")]
+    ForgeAuth(String),
+
+    #[error("Dépôt {0} introuvable : il est privé, ou le jeton n'y a pas accès")]
+    ForgeNotFound(String),
+
+    #[error("Les pull requests ne sont lues que sur GitHub pour l'instant")]
+    ForgeUnsupported,
+
     #[error("Aucune branche courante (HEAD détaché)")]
     DetachedHead,
 
@@ -90,6 +102,10 @@ impl AppError {
             AppError::NoCredentials => "NoCredentials",
             AppError::CredentialStore(_) => "CredentialStore",
             AppError::NetworkBusy => "NetworkBusy",
+            AppError::ForgeToken(_) => "ForgeToken",
+            AppError::ForgeAuth(_) => "ForgeAuth",
+            AppError::ForgeNotFound(_) => "ForgeNotFound",
+            AppError::ForgeUnsupported => "ForgeUnsupported",
             AppError::DetachedHead => "DetachedHead",
             AppError::NoUpstream => "NoUpstream",
             AppError::PushRejected(_) => "PushRejected",
