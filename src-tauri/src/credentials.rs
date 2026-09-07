@@ -9,6 +9,20 @@
 //! service. Comme c'est nous qui la créons, la relire ne déclenche aucune
 //! autorisation système — au contraire d'une entrée créée par Git.
 //!
+//! Ce silence tient à une condition qu'il faut connaître : la liste d'accès de
+//! l'entrée retient l'**identité de signature** du programme qui l'a écrite, pas
+//! son chemin. Une application signée avec une identité stable se reconnaît donc
+//! d'une version à l'autre ; un binaire de développement signé « ad-hoc », lui,
+//! a pour identité son empreinte, qui change à chaque compilation — macOS
+//! redemande alors l'autorisation. C'est un fait de la machine de développement,
+//! pas du code, mais c'est ce qui rend la règle ci-dessous utile.
+//!
+//! **Savoir si une entrée existe ne demande pas de la lire.** La liste d'accès
+//! protège la donnée, pas les attributs : [`has`] cherche l'élément sans réclamer
+//! son contenu, donc sans jamais provoquer de demande d'autorisation. Le secret
+//! n'est déchiffré que là où il sert vraiment — le transport Git et l'API d'une
+//! forge —, et non pour répondre « oui » à l'écran des paramètres.
+//!
 //! Le secret ne fait qu'un aller : il entre par [`store`] et ne ressort que vers
 //! libgit2, jamais vers le frontend.
 
@@ -60,8 +74,25 @@ pub fn host_of(url: &str) -> Option<String> {
 
 #[cfg(target_os = "macos")]
 mod store {
+    use security_framework::item::{ItemClass, ItemSearchOptions};
+
     use super::{Credentials, SERVICE};
     use crate::error::AppError;
+
+    /// Y a-t-il une entrée pour cet hôte ? Sans en lire le contenu.
+    ///
+    /// Recherche sur les seuls attributs (`load_attributes`, jamais
+    /// `load_data`) : c'est ce qui distingue cette fonction de `get` du point de
+    /// vue du trousseau, qui n'a rien à déchiffrer et donc rien à autoriser.
+    pub fn has(host: &str) -> bool {
+        let found = ItemSearchOptions::new()
+            .class(ItemClass::generic_password())
+            .service(SERVICE)
+            .account(host)
+            .load_attributes(true)
+            .search();
+        matches!(found, Ok(items) if !items.is_empty())
+    }
 
     pub fn get(host: &str) -> Option<Credentials> {
         let raw = security_framework::passwords::get_generic_password(SERVICE, host).ok()?;
@@ -98,6 +129,10 @@ mod store {
     use super::Credentials;
     use crate::error::AppError;
 
+    pub fn has(_host: &str) -> bool {
+        false
+    }
+
     pub fn get(_host: &str) -> Option<Credentials> {
         None
     }
@@ -128,9 +163,15 @@ pub fn forget(host: &str) -> Result<(), AppError> {
     store::delete(host)
 }
 
-/// Y a-t-il des identifiants pour cet hôte ? Ne révèle rien de leur contenu.
+/// Y a-t-il des identifiants pour cet hôte ?
+///
+/// Ne révèle rien de leur contenu, et ne le lit pas davantage : c'est la réponse
+/// à une question d'existence, posée à chaque `remote_info` — donc à chaque
+/// ouverture des paramètres. La faire passer par `get` déchiffrait le secret
+/// pour le jeter aussitôt, au prix d'une demande d'autorisation du trousseau
+/// quand l'identité de l'application a changé (voir l'en-tête du module).
 pub fn has(host: &str) -> bool {
-    store::get(host).is_some()
+    store::has(host)
 }
 
 #[cfg(test)]
