@@ -10,8 +10,8 @@ use std::path::{Path, PathBuf};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
-    PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus,
-    StashEntry,
+    MergeMode, MergeReport, PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
+    RepoStatus, StashEntry,
 };
 use crate::error::AppError;
 
@@ -106,6 +106,31 @@ pub trait GitBackend: Send {
     /// Si une branche locale de ce nom existe déjà, elle est simplement
     /// checkoutée telle quelle : la rattraper sur la distante serait un pull.
     fn checkout_remote_branch(&self, name: &str) -> Result<(), AppError>;
+
+    /// Fusionne la branche locale `source` dans la branche locale `target`
+    /// (glisser-déposer et menu contextuel de la section LOCAL).
+    ///
+    /// La cible **reçoit** la fusion, qu'elle soit ou non la branche courante :
+    /// c'est le sens du geste, une branche déposée sur une autre. Trois cas, dans
+    /// cet ordre : la cible contient déjà la source (rien à faire), la cible est
+    /// strictement en retard (avance rapide — une simple référence à déplacer, et
+    /// donc rien à checkouter si la cible n'est pas HEAD), ou les deux ont divergé
+    /// (vraie fusion, qui impose de basculer sur la cible : Git n'écrit pas dans
+    /// une branche inactive).
+    ///
+    /// [`MergeMode::NoFastForward`] supprime le deuxième cas : la fusion est
+    /// toujours matérialisée par un commit, donc toujours précédée d'une bascule
+    /// sur la cible.
+    ///
+    /// Un conflit laisse le dépôt en état de fusion sur la cible, comme un pull :
+    /// `commit()` reprendra `MERGE_HEAD` comme second parent, `abort_merge()` est
+    /// la sortie de secours.
+    fn merge_branches(
+        &self,
+        source: &str,
+        target: &str,
+        mode: MergeMode,
+    ) -> Result<MergeReport, AppError>;
 
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;

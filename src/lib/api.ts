@@ -10,6 +10,8 @@ import type {
   FetchEvent,
   FileDiff,
   Identity,
+  MergeMode,
+  MergeReport,
   Profile,
   PullEvent,
   PullMode,
@@ -143,6 +145,13 @@ export const api = {
   pull: (repoId: string, mode: PullMode) => call<void>("pull", { repoId, mode }),
   onPulled: (handler: (event: PullEvent) => void): Promise<UnlistenFn> =>
     listen<PullEvent>("repo://pulled", (e) => handler(e.payload)),
+  /**
+   * Fusionne une branche locale dans une autre : la cible **reçoit** la fusion,
+   * qu'elle soit ou non la branche courante. Purement local, donc réponse
+   * directe — pas d'événement comme le pull.
+   */
+  mergeBranches: (repoId: string, source: string, target: string, mode: MergeMode) =>
+    call<MergeReport>("merge_branches", { repoId, source, target, mode }),
   /** Sortie de secours d'un pull qui a conflité ; renvoie les infos à jour. */
   abortMerge: (repoId: string) => call<RepoInfo>("abort_merge", { repoId }),
   // ── Surveillance du disque ───────────────────────────────────────────────

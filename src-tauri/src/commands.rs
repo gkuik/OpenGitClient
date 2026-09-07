@@ -16,8 +16,8 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
-    Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo, RepoInfo,
-    RepoStatus, SessionInfo, SidebarWidths, StashEntry, ThemeMode,
+    MergeMode, MergeReport, Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo,
+    RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry, ThemeMode,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -350,6 +350,27 @@ pub fn abort_merge(
     let backend = guard.backend(&repo_id)?;
     backend.abort_merge()?;
     backend.info()
+}
+
+/// Fusionne une branche locale dans une autre : glisser-déposer d'une branche sur
+/// une autre, ou menu contextuel de la section LOCAL.
+///
+/// Purement local — aucun réseau, donc pas de thread dédié comme fetch/push/pull :
+/// la commande rend directement son rapport. Il dit notamment si HEAD a changé de
+/// branche, ce que le frontend ne peut pas deviner (une avance rapide sur une
+/// branche inactive n'y touche pas).
+#[tauri::command]
+pub fn merge_branches(
+    repo_id: String,
+    source: String,
+    target: String,
+    mode: MergeMode,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<MergeReport, AppError> {
+    let guard = lock(&state)?;
+    guard
+        .backend(&repo_id)?
+        .merge_branches(&source, &target, mode)
 }
 
 /// Mode exécuté par le bouton Pull (préférence globale, persistée).

@@ -2,6 +2,7 @@
   import type { BranchTreeNode } from "../tree";
   import type { BranchEntry, RemoteBranchEntry, Upstream } from "../types";
   import { repo } from "../stores/repo.svelte";
+  import { branchMerge } from "../branchMerge.svelte";
   import BranchRow from "./BranchRow.svelte"; // récursion (auto-import Svelte 5)
   import Chevron from "./Chevron.svelte";
 
@@ -35,9 +36,33 @@
     else repo.checkoutRemoteBranch(b.name);
   }
 
-  /** Clic simple : sélectionne la tête de la branche dans le graph. */
+  /**
+   * Clic simple : sélectionne la tête de la branche dans le graph. Le `click`
+   * qui suit un glissement est ignoré : il vise la ligne de départ, alors que le
+   * geste portait sur celle où on a lâché.
+   */
   function selectTip(oid: string) {
+    if (branchMerge.consumeClick()) return;
     if (oid) repo.selectCommit(oid);
+  }
+
+  /**
+   * Clic droit sur une branche locale : propose de fusionner la branche
+   * **courante** dans celle-ci — le même sens que le dépôt, la ligne visée
+   * reçoit la fusion.
+   *
+   * Rien à proposer sur la branche courante elle-même. La source se lit dans la
+   * liste des branches et non dans `repoInfo.branch`, qui nomme aussi une branche
+   * **non encore née** — sans référence, donc rien à fusionner ; un HEAD détaché
+   * tombe du même coup, aucune branche n'y portant `isHead`.
+   *
+   * Le menu natif est refusé dans tous les cas : une ligne de branche
+   * n'appartient pas au webview.
+   */
+  function askMerge(e: MouseEvent, target: string) {
+    e.preventDefault();
+    const source = repo.branches.find((b) => b.isHead)?.name;
+    if (source) branchMerge.ask(source, target, e.clientX, e.clientY);
   }
 
   /**
@@ -62,19 +87,31 @@
     Double-clic pour basculer (convention GitKraken). `Enter` fait la même chose
     pour garder l'équivalent clavier, le dblclick n'étant pas atteignable autrement.
   -->
+  {@const dragged = local !== null && branchMerge.dragging === local.name}
+  {@const dropOn = local !== null && branchMerge.over === local.name}
+  <!--
+    `data-branch` n'est pas décoratif : c'est par lui que le glissement retrouve
+    la ligne sous le curseur (voir `branchMerge.svelte.ts`). Seules les branches
+    locales le portent, donc une branche distante n'est ni source ni cible.
+  -->
   <div
     class="branch"
     class:current
     class:selected
+    class:dragged
+    class:drop-on={dropOn}
     role="button"
     tabindex="0"
+    data-branch={local?.name}
     style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     title={local
-      ? `${local.name} — clic pour voir son dernier commit, double-clic pour basculer`
+      ? `${local.name} — clic pour voir son dernier commit, double-clic pour basculer, glisser sur une autre branche pour fusionner`
       : `${node.branch.name} — clic pour voir son dernier commit, double-clic pour basculer (branche locale de suivi créée au besoin)`}
     onclick={() => selectTip(node.branch.oid)}
     ondblclick={() => checkout(node.branch)}
     onkeydown={(e) => (e.key === "Enter" ? checkout(node.branch) : undefined)}
+    onpointerdown={local ? (e) => branchMerge.startDrag(local.name, e) : undefined}
+    oncontextmenu={local ? (e) => askMerge(e, local.name) : undefined}
   >
     <span class="mark">{current ? "✓" : ""}</span>
     <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">
@@ -154,6 +191,20 @@
   /* Branche dont la tête est le commit affiché à droite. */
   .branch.selected {
     box-shadow: inset 2px 0 0 var(--accent);
+  }
+  /* Branche tenue par le curseur : c'est l'étiquette qui suit le pointeur qui
+     la représente, la ligne s'efface pour le dire. */
+  .branch.dragged {
+    opacity: 0.45;
+  }
+  /* Ligne sous le curseur : là où la fusion serait reçue. Le liseré est en
+     `outline` et non en `border`, qui décalerait la ligne d'un pixel — et le
+     cadre doit se superposer au fond vert de la branche courante, qui est une
+     cible comme une autre. */
+  .branch.drop-on {
+    background: var(--accent-bg);
+    outline: 1px solid var(--accent);
+    outline-offset: -1px;
   }
   .mark {
     flex: none;

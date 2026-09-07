@@ -434,6 +434,60 @@ pub enum PullOutcome {
     Diverged { ahead: usize, behind: usize },
 }
 
+/// Ce que le menu de fusion propose. Deux entrées, deux variantes : le type ne
+/// décrit que ce qui existe (pas de `Squash`, qui n'a rien derrière lui).
+///
+/// Contrairement à [`PullMode`], ce n'est **pas** une préférence persistée : le
+/// choix se fait au coup par coup dans le menu, parce qu'il ne veut pas dire la
+/// même chose selon la branche qu'on fusionne — un correctif versé dans une
+/// branche d'intégration n'appelle pas le même geste qu'une branche de travail
+/// qu'on veut voir dans l'historique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeMode {
+    /// Avance rapide quand la cible est strictement en retard, fusion sinon.
+    FastForwardOrMerge,
+    /// Toujours un commit de fusion, même quand une avance rapide suffirait
+    /// (`git merge --no-ff`) : la fusion reste visible dans l'historique.
+    NoFastForward,
+}
+
+/// Résultat d'une fusion de branche à branche — le glisser-déposer et le menu
+/// contextuel de la section LOCAL, pas le pull.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct MergeReport {
+    /// Branche fusionnée (celle qu'on a déposée, ou la branche courante).
+    pub source: String,
+    /// Branche qui reçoit la fusion (celle sur laquelle on a déposé).
+    pub target: String,
+    /// HEAD a-t-il changé de branche ? Une avance rapide sur une branche qui
+    /// n'est pas la courante ne déplace qu'une référence : ni HEAD ni le working
+    /// directory ne bougent. Une vraie fusion, elle, doit basculer sur la cible —
+    /// Git n'écrit pas dans une branche inactive — et y reste.
+    pub switched: bool,
+    pub outcome: MergeOutcome,
+}
+
+/// Ce qu'une fusion a fait de la cible.
+///
+/// Un conflit n'est **pas** une erreur, pour la même raison que dans
+/// [`PullOutcome`] : le dépôt est en état de fusion, avec les fichiers à
+/// résoudre dans le working directory, et le frontend doit pouvoir le dire.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum MergeOutcome {
+    /// La cible contient déjà tout ce que la source apporte.
+    UpToDate,
+    /// La cible était strictement en retard : sa référence a simplement avancé.
+    FastForwarded { commits: usize },
+    /// Commit de fusion créé, sans conflit.
+    Merged { commits: usize },
+    /// Fusion interrompue par des conflits : à l'utilisateur de les résoudre puis
+    /// de committer (ou d'abandonner), depuis la cible sur laquelle on est resté.
+    Conflicted { files: Vec<String> },
+}
+
 /// Charge utile de l'événement `repo://pulled`, jumelle de [`FetchEvent`].
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]

@@ -11,6 +11,8 @@ import type {
   FileStatus,
   GraphCommit,
   Identity,
+  MergeMode,
+  MergeReport,
   Profile,
   PullEvent,
   PullMode,
@@ -46,8 +48,8 @@ export type DiffTarget =
 /** Taille d'une page d'historique (scroll infini). */
 const GRAPH_PAGE_SIZE = 500;
 
-/** Durée d'affichage du compte rendu d'un fetch ou d'un push, en millisecondes. */
-const REMOTE_STATUS_MS = 6000;
+/** Durée d'affichage du compte rendu d'une opération, en millisecondes. */
+const OP_STATUS_MS = 6000;
 
 /**
  * Délai avant de réessayer d'appliquer un changement détecté sur le disque
@@ -81,6 +83,22 @@ function pullStatus(report: PullReport): string {
       return `Fusion en conflit : ${o.files.length} fichier${o.files.length > 1 ? "s" : ""} à résoudre`;
     case "diverged":
       return `Divergence : ${n(o.ahead)} en local, ${n(o.behind)} en face — fusion non demandée`;
+  }
+}
+
+/** Compte rendu d'une fusion de branche à branche, en une ligne. */
+function mergeStatus(report: MergeReport): string {
+  const n = (c: number) => `${c} commit${c > 1 ? "s" : ""}`;
+  const o = report.outcome;
+  switch (o.kind) {
+    case "upToDate":
+      return `${report.target} contient déjà ${report.source}`;
+    case "fastForwarded":
+      return `${report.source} → ${report.target} : ${n(o.commits)} (avance rapide)`;
+    case "merged":
+      return `${report.source} fusionnée dans ${report.target} : ${n(o.commits)}`;
+    case "conflicted":
+      return `Fusion en conflit : ${o.files.length} fichier${o.files.length > 1 ? "s" : ""} à résoudre`;
   }
 }
 
@@ -144,12 +162,14 @@ export class RepoStore {
   pushing = $state(false);
   pulling = $state(false);
   /**
-   * Compte rendu de la dernière opération distante, affiché brièvement sous la
-   * barre d'actions. Partagé par le fetch et le push : ils ne peuvent pas
-   * tourner ensemble, donc deux lignes ne serviraient à rien.
+   * Compte rendu de la dernière opération, affiché brièvement sous la barre
+   * d'actions : fetch, push, pull et fusion de branches. Une seule ligne pour
+   * tous, parce qu'on ne lit jamais que le résultat du dernier geste — et parce
+   * qu'une fusion, elle, ne se voit pas forcément ailleurs : une avance rapide
+   * sur une branche inactive ne déplace qu'une pastille dans le graph.
    */
-  remoteStatus = $state<string | null>(null);
-  private remoteStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  opStatus = $state<string | null>(null);
+  private opStatusTimer: ReturnType<typeof setTimeout> | null = null;
   /**
    * Demande d'identifiants en cours. Non nul = le dialogue de saisie est ouvert.
    * `refused` distingue « on n'avait rien » de « ce qu'on avait a été refusé »,
@@ -181,6 +201,12 @@ export class RepoStore {
   remoteBranches = $state<RemoteBranchEntry[]>([]);
   stashes = $state<StashEntry[]>([]);
   checkingOut = $state(false);
+  /**
+   * Fusion de branche à branche en cours. Distinct de `checkingOut` : elle en
+   * fait peut-être une (une vraie fusion bascule sur la cible), mais elle écrit
+   * aussi l'index et le working directory, et peut laisser le dépôt en conflit.
+   */
+  mergingBranches = $state(false);
 
   // Graph : historique chargé et commit sélectionné (détail en colonne droite).
   graph = $state<GraphCommit[]>([]);
@@ -479,6 +505,7 @@ export class RepoStore {
       this.committing ||
       this.stashing ||
       this.checkingOut ||
+      this.mergingBranches ||
       this.fetching ||
       this.pushing ||
       this.pulling ||
@@ -760,7 +787,7 @@ export class RepoStore {
     if (this.busyRemote || !this.repoInfo) return;
     this.fetching = true;
     this.error = null;
-    this.setRemoteStatus(null);
+    this.setOpStatus(null);
     try {
       await api.fetchRemote(this.repoId);
     } catch (e) {
@@ -779,7 +806,7 @@ export class RepoStore {
     if (this.busyRemote || !this.repoInfo) return;
     this.pushing = true;
     this.error = null;
-    this.setRemoteStatus(null);
+    this.setOpStatus(null);
     try {
       await api.pushBranch(this.repoId);
     } catch (e) {
@@ -807,7 +834,7 @@ export class RepoStore {
     this.pullMode = mode;
     this.pulling = true;
     this.error = null;
-    this.setRemoteStatus(null);
+    this.setOpStatus(null);
     try {
       await api.pull(this.repoId, mode);
     } catch (e) {
@@ -836,7 +863,7 @@ export class RepoStore {
     }
     if (!event.report) return;
 
-    this.setRemoteStatus(pullStatus(event.report));
+    this.setOpStatus(pullStatus(event.report));
 
     // Un pull touche à tout : références distantes, branche courante, working
     // directory, index. On recharge donc aussi le statut, contrairement au
@@ -869,6 +896,64 @@ export class RepoStore {
     await this.loadGraph();
   }
 
+  /**
+   * Fusionne une branche locale dans une autre : dépôt d'une branche sur une
+   * autre, ou menu contextuel de la section LOCAL. La **cible** reçoit la
+   * fusion, qu'elle soit ou non la branche courante — c'est le sens du geste.
+   *
+   * Aucun réseau ici, contrairement au pull : le rapport revient directement.
+   *
+   * `mode` vient du menu et n'est pas mémorisé : en `noFastForward`, la fusion
+   * est toujours matérialisée par un commit, donc toujours précédée d'une bascule
+   * sur la cible.
+   *
+   * Le rechargement vaut aussi pour un échec, et ce n'est pas une précaution de
+   * style : une vraie fusion bascule sur la cible **avant** d'écrire, donc HEAD
+   * a pu bouger alors même que l'erreur remonte.
+   */
+  async mergeBranches(source: string, target: string, mode: MergeMode) {
+    if (source === target || this.mergingBranches || this.checkingOut || this.busy) return;
+    this.mergingBranches = true;
+    this.error = null;
+    this.setOpStatus(null);
+    try {
+      const report = await api.mergeBranches(this.repoId, source, target, mode);
+      this.setOpStatus(mergeStatus(report));
+      // Le working directory a changé sous la sélection dès que HEAD a bougé ou
+      // que des conflits sont apparus : le fichier ouvert n'est plus celui-là.
+      if (report.switched || report.outcome.kind === "conflicted") {
+        this.diffTarget = null;
+        this.diff = null;
+      }
+    } catch (e) {
+      this.error = e as AppError;
+    } finally {
+      await this.reloadAfterMerge();
+      this.mergingBranches = false;
+    }
+  }
+
+  /**
+   * Ce qu'une fusion invalide. Les infos du dépôt d'abord : c'est `merging` qui
+   * décide du bandeau de sortie de secours, et `branch` a pu changer. Puis le
+   * statut — c'est là qu'apparaissent les fichiers en conflit —, les branches
+   * locales (la cible a avancé, son écart avec l'amont aussi) et le graph, dont
+   * la pagination n'est plus valable dès qu'une référence a bougé.
+   *
+   * `refs/remotes/**` et `refs/stash` ne sont pas touchés : rien à recharger de
+   * ce côté, contrairement à un pull.
+   */
+  private async reloadAfterMerge() {
+    try {
+      this.repoInfo = await api.getRepoInfo(this.repoId);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+    await this.refreshStatus();
+    await this.loadBranches();
+    await this.loadGraph();
+  }
+
   /** Résultat d'un fetch, reçu par événement. */
   onFetched(event: FetchEvent) {
     this.fetching = false;
@@ -886,7 +971,7 @@ export class RepoStore {
 
     const { remote, updated } = event.report;
     const n = updated.length;
-    this.setRemoteStatus(
+    this.setOpStatus(
       n === 0
         ? `${remote} : déjà à jour`
         : `${remote} : ${n} référence${n > 1 ? "s" : ""} mise${n > 1 ? "s" : ""} à jour`,
@@ -914,7 +999,7 @@ export class RepoStore {
     if (!event.report) return;
 
     const { remote, branch, upstreamSet } = event.report;
-    this.setRemoteStatus(
+    this.setOpStatus(
       upstreamSet
         ? `${remote} : ${branch} publiée, suivi configuré`
         : `${remote} : ${branch} publiée`,
@@ -1000,17 +1085,17 @@ export class RepoStore {
     this.credentialsPrompt = null;
   }
 
-  /** Affiche un compte rendu qui s'efface tout seul. */
-  private setRemoteStatus(message: string | null) {
-    if (this.remoteStatusTimer !== null) clearTimeout(this.remoteStatusTimer);
-    this.remoteStatus = message;
-    this.remoteStatusTimer =
+  /** Affiche un compte rendu qui s'efface tout seul (voir `opStatus`). */
+  private setOpStatus(message: string | null) {
+    if (this.opStatusTimer !== null) clearTimeout(this.opStatusTimer);
+    this.opStatus = message;
+    this.opStatusTimer =
       message === null
         ? null
         : setTimeout(() => {
-            this.remoteStatus = null;
-            this.remoteStatusTimer = null;
-          }, REMOTE_STATUS_MS);
+            this.opStatus = null;
+            this.opStatusTimer = null;
+          }, OP_STATUS_MS);
   }
 
   // ── Actions Git ─────────────────────────────────────────────────────────────

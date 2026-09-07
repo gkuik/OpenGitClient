@@ -1,8 +1,9 @@
 <script lang="ts">
   import { repo, tabs } from "../stores/repo.svelte";
+  import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
   import type { Snippet } from "svelte";
-  import type { PullMode } from "../types";
+  import type { MergeMode, PullMode } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
@@ -147,14 +148,46 @@
     close();
     if (index !== undefined) await repo.dropStash(index);
   }
+
+  // ── Menu de la fusion de branches ───────────────────────────────────────────
+  // La demande vient du module : d'un dépôt d'une branche sur une autre, ou d'un
+  // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
+  // ici, une fois pour la colonne, comme celui des stashes.
+  const MERGE_MENU_W = 300;
+  const MERGE_MENU_H = 156;
+
+  /** Position du menu, ramenée dans la fenêtre. */
+  const mergeMenuPos = $derived(
+    branchMerge.request === null
+      ? null
+      : {
+          x: Math.max(8, Math.min(branchMerge.request.x, window.innerWidth - MERGE_MENU_W - 8)),
+          y: Math.max(8, Math.min(branchMerge.request.y, window.innerHeight - MERGE_MENU_H - 8)),
+        },
+  );
+
+  // Une fusion écrit l'index et le working directory : elle attend que ce qui
+  // tourne déjà soit fini, et une fusion en cours doit d'abord être close.
+  const canMerge = $derived(
+    !repo.mergingBranches && !repo.checkingOut && !repo.busy && !repo.merging,
+  );
+  const busyHint = "Une opération est en cours, ou une fusion reste à terminer";
+
+  async function runMerge(mode: MergeMode) {
+    const request = branchMerge.request;
+    branchMerge.close();
+    if (request) await repo.mergeBranches(request.source, request.target, mode);
+  }
 </script>
 
-<!-- Échap ferme les deux menus : celui des stashes et celui du bouton Pull. -->
+<!-- Échap ferme les trois menus : stashes, bouton Pull et fusion. (Pendant un
+     glissement, la même touche l'abandonne — c'est le module qui l'écoute.) -->
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     close();
     pullMenu = null;
+    branchMerge.close();
   }}
 />
 
@@ -204,8 +237,10 @@
         <p class="status">Push en cours…</p>
       {:else if repo.pulling}
         <p class="status">Pull en cours…</p>
-      {:else if repo.remoteStatus}
-        <p class="status">{repo.remoteStatus}</p>
+      {:else if repo.mergingBranches}
+        <p class="status">Fusion en cours…</p>
+      {:else if repo.opStatus}
+        <p class="status">{repo.opStatus}</p>
       {/if}
     </div>
 
@@ -360,6 +395,74 @@
   </div>
 {/if}
 
+<!--
+  Menu de la fusion, même mécanique que les deux autres. Deux entrées, toutes deux
+  vivantes : rien n'est grisé ici pour annoncer une suite, le menu ne dit que ce
+  qu'il fait.
+
+  La seconde n'est pas un réglage fin : elle décide si la fusion laisse une trace
+  dans l'historique. Elle nomme donc son effet, et pas seulement son option.
+
+  L'en-tête n'est pas une redite des libellés : le geste peut faire bouger HEAD,
+  ce qu'aucune des lignes ne laisse deviner.
+-->
+{#if branchMerge.request && mergeMenuPos}
+  {@const request = branchMerge.request}
+  <button
+    class="ctx-overlay"
+    aria-label="Fermer le menu"
+    onclick={() => branchMerge.close()}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      branchMerge.close();
+    }}
+  ></button>
+  <div
+    class="ctx-menu merge-menu"
+    style="left: {mergeMenuPos.x}px; top: {mergeMenuPos.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">
+      {request.target} reçoit la fusion ; on bascule dessus dès qu'un commit doit
+      y être écrit.
+    </p>
+    <button
+      class="ctx-item wrap"
+      role="menuitem"
+      disabled={!canMerge}
+      title={canMerge
+        ? "Avance rapide quand la cible est simplement en retard, commit de fusion sinon"
+        : busyHint}
+      onclick={() => runMerge("fastForwardOrMerge")}
+    >
+      {@render mergeIcon()}
+      <span>Fusionner <b>{request.source}</b> dans <b>{request.target}</b></span>
+    </button>
+    <button
+      class="ctx-item wrap"
+      role="menuitem"
+      disabled={!canMerge}
+      title={canMerge
+        ? "Toujours un commit de fusion, même quand une avance rapide suffirait — la fusion reste visible dans l'historique"
+        : busyHint}
+      onclick={() => runMerge("noFastForward")}
+    >
+      {@render mergeCommitIcon()}
+      <span>Fusionner sans avance rapide</span>
+    </button>
+  </div>
+{/if}
+
+<!-- Étiquette qui suit le curseur pendant le glissement. `pointer-events: none`
+     est indispensable : sinon c'est elle que le test du point trouverait sous le
+     curseur, jamais la ligne visée. -->
+{#if branchMerge.dragging}
+  <div class="drag-chip" style="left: {branchMerge.x}px; top: {branchMerge.y}px">
+    {@render mergeIcon()}
+    <span>{branchMerge.dragging}</span>
+  </div>
+{/if}
+
 <!-- Menu du bouton Pull : même mécanique que celui des stashes (superposition
      qui ferme, position en coordonnées fenêtre, Échap). -->
 {#if pullMenu}
@@ -510,6 +613,30 @@
     <path d="M5.5 4.5v-1a1 1 0 0 1 1-1h3a1 1 0 0 1 1 1v1" />
     <path d="M4.6 4.5l.55 8a1 1 0 0 0 1 .93h3.7a1 1 0 0 0 1-.93l.55-8" />
     <path d="M6.75 7v4M9.25 7v4" />
+  </svg>
+{/snippet}
+
+<!-- Deux traits qui se rejoignent : une branche versée dans une autre. -->
+{#snippet mergeIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4" cy="3.25" r="1.75" />
+    <circle cx="4" cy="12.75" r="1.75" />
+    <circle cx="12" cy="8" r="1.75" />
+    <path d="M4 5v6" />
+    <path d="M5.6 4.4A6 6 0 0 0 10.3 7.6" />
+    <path d="M5.6 11.6A6 6 0 0 1 10.3 8.4" />
+  </svg>
+{/snippet}
+
+<!-- La même jonction, mais le point de rencontre est plein : un commit y naît. -->
+{#snippet mergeCommitIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4" cy="3.25" r="1.75" />
+    <circle cx="4" cy="12.75" r="1.75" />
+    <circle cx="12" cy="8" r="1.75" fill="currentColor" />
+    <path d="M4 5v6" />
+    <path d="M5.6 4.4A6 6 0 0 0 10.3 7.6" />
+    <path d="M5.6 11.6A6 6 0 0 1 10.3 8.4" />
   </svg>
 {/snippet}
 
@@ -867,6 +994,42 @@
   .ctx-item:disabled {
     color: var(--text-faint);
     cursor: default;
+  }
+  /* Menu de la fusion : les noms de branches peuvent être longs, l'entrée passe
+     donc à la ligne au lieu de pousser le menu hors de l'écran. */
+  .merge-menu {
+    min-width: 220px;
+    max-width: 300px;
+  }
+  .ctx-item.wrap {
+    white-space: normal;
+    align-items: flex-start;
+    line-height: 1.35;
+  }
+  /* L'icône garde l'axe de la première ligne de texte quand celui-ci se replie. */
+  .ctx-item.wrap .ctx-ic {
+    margin-top: 0.1rem;
+  }
+  /* Étiquette de glissement : décalée sous le curseur pour ne pas masquer la
+     ligne visée, et transparente aux pointeurs (voir le balisage). */
+  .drag-chip {
+    position: fixed;
+    z-index: 60;
+    transform: translate(0.75rem, 0.5rem);
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    max-width: 16rem;
+    padding: 0.2rem 0.5rem;
+    background: var(--bg-raised);
+    border: 1px solid var(--accent);
+    border-radius: 4px;
+    color: var(--text);
+    font-size: 0.82rem;
+    white-space: nowrap;
+    overflow: hidden;
+    box-shadow: 0 4px 12px var(--shadow-color);
+    pointer-events: none;
   }
   /* Menu du bouton Pull : en-tête explicatif + entrées radio. */
   .pull-menu {

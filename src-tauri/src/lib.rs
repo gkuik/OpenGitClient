@@ -53,6 +53,7 @@ pub fn run() {
             commands::push_branch,
             commands::pull,
             commands::abort_merge,
+            commands::merge_branches,
             commands::get_pull_mode,
             commands::set_pull_mode,
             commands::get_theme,
