@@ -250,7 +250,7 @@
     }}
   ></button>
   <div
-    class="ctx-menu"
+    class="ctx-menu filter-menu"
     style="left: {filterMenu.x}px; top: {filterMenu.y}px"
     role="menu"
   >
@@ -585,48 +585,11 @@
      Même gabarit que les menus de `BranchSidebar` ; il vit ici parce qu'il
      n'appartient qu'à cette section, contrairement à celui des PR, qui se
      déclenche depuis une ligne et se range avec les autres menus de la colonne. */
-  .ctx-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: default;
-  }
-  .ctx-menu {
-    position: fixed;
-    z-index: 51;
+  /* Superposition, boîte, en-tête et entrées sont dans `app.css`, partagés avec
+     les menus de la colonne des branches et celui du bouton Pull. Ne reste ici
+     que la largeur de celui-ci et sa case à cocher. */
+  .filter-menu {
     min-width: 236px;
-    padding: 0.25rem;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 8px 24px var(--shadow-color);
-  }
-  .ctx-head {
-    margin: 0.15rem 0.6rem 0.35rem;
-    color: var(--text-dim);
-    font-size: 0.72rem;
-    line-height: 1.3;
-  }
-  .ctx-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 0.8rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: 4px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
-  .ctx-item:hover {
-    background: var(--accent-bg);
   }
   .check {
     flex: none;

@@ -144,7 +144,7 @@ export const en = {
   "toolbar.pull.rebase": "Pull (rebase)",
   "toolbar.pull.rebase.hint": "Not available yet: conflict resolution has to come first",
   "toolbar.pull.menu": "Default action for this button",
-  "toolbar.pull.menu.open": "Choose the default action of this button",
+  "toolbar.pull.menu.hint": "Right-click to choose what this button does",
   "toolbar.push": "Push",
   "toolbar.push.hint": "Publish the current branch to the remote",
   "toolbar.fetch": "Fetch",
