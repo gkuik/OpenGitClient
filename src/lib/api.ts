@@ -10,6 +10,7 @@ import type {
   FetchEvent,
   FileDiff,
   Identity,
+  MergeMode,
   MergeReport,
   Profile,
   PullEvent,
@@ -149,8 +150,8 @@ export const api = {
    * qu'elle soit ou non la branche courante. Purement local, donc réponse
    * directe — pas d'événement comme le pull.
    */
-  mergeBranches: (repoId: string, source: string, target: string) =>
-    call<MergeReport>("merge_branches", { repoId, source, target }),
+  mergeBranches: (repoId: string, source: string, target: string, mode: MergeMode) =>
+    call<MergeReport>("merge_branches", { repoId, source, target, mode }),
   /** Sortie de secours d'un pull qui a conflité ; renvoie les infos à jour. */
   abortMerge: (repoId: string) => call<RepoInfo>("abort_merge", { repoId }),
   // ── Surveillance du disque ───────────────────────────────────────────────

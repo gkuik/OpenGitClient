@@ -434,6 +434,24 @@ pub enum PullOutcome {
     Diverged { ahead: usize, behind: usize },
 }
 
+/// Ce que le menu de fusion propose. Deux entrées, deux variantes : le type ne
+/// décrit que ce qui existe (pas de `Squash`, qui n'a rien derrière lui).
+///
+/// Contrairement à [`PullMode`], ce n'est **pas** une préférence persistée : le
+/// choix se fait au coup par coup dans le menu, parce qu'il ne veut pas dire la
+/// même chose selon la branche qu'on fusionne — un correctif versé dans une
+/// branche d'intégration n'appelle pas le même geste qu'une branche de travail
+/// qu'on veut voir dans l'historique.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum MergeMode {
+    /// Avance rapide quand la cible est strictement en retard, fusion sinon.
+    FastForwardOrMerge,
+    /// Toujours un commit de fusion, même quand une avance rapide suffirait
+    /// (`git merge --no-ff`) : la fusion reste visible dans l'historique.
+    NoFastForward,
+}
+
 /// Résultat d'une fusion de branche à branche — le glisser-déposer et le menu
 /// contextuel de la section LOCAL, pas le pull.
 #[derive(Debug, Clone, Serialize)]

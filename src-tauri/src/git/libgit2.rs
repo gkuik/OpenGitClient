@@ -16,7 +16,7 @@ use super::{GitBackend, WatchRoots};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
     FetchReport, FetchedRef, FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind,
-    Identity, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushReport,
+    Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushReport,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, Upstream,
 };
 use crate::error::AppError;
@@ -493,7 +493,12 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
-    fn merge_branches(&self, source: &str, target: &str) -> Result<MergeReport, AppError> {
+    fn merge_branches(
+        &self,
+        source: &str,
+        target: &str,
+        mode: MergeMode,
+    ) -> Result<MergeReport, AppError> {
         let repo = self.repo()?;
 
         // Une fusion déjà en cours interdit d'en ouvrir une seconde : `MERGE_HEAD`
@@ -538,7 +543,7 @@ impl GitBackend for Libgit2Backend {
             return Ok(report(false, MergeOutcome::UpToDate));
         }
 
-        if behind == 0 {
+        if behind == 0 && mode == MergeMode::FastForwardOrMerge {
             // Avance rapide. Le working directory ne suit que si la cible est la
             // branche courante ; sinon il n'y a qu'une référence à déplacer, et ni
             // HEAD ni les fichiers n'ont à bouger — c'est tout l'intérêt de ne pas
@@ -558,8 +563,10 @@ impl GitBackend for Libgit2Backend {
             return Ok(report(false, MergeOutcome::FastForwarded { commits: ahead }));
         }
 
-        // Vraie divergence : la cible doit devenir la branche courante pour
-        // recevoir la fusion. La bascule vient **avant** toute écriture, et sa
+        // Divergence — ou avance rapide refusée par le mode. La cible doit devenir
+        // la branche courante pour recevoir la fusion : un commit s'écrit sur HEAD,
+        // pas sur une branche inactive. La bascule vient **avant** toute écriture,
+        // et sa
         // stratégie SAFE refuse d'écraser des modifications locales — la fusion
         // n'est donc jamais entamée sur un working directory qu'on ne pourrait
         // pas préparer.
@@ -2967,6 +2974,9 @@ mod tests {
 
     // ── Fusion de branche à branche ─────────────────────────────────────────
 
+    /// Le mode par défaut du menu, écrit une fois pour ne pas alourdir chaque appel.
+    const FF_OR_MERGE: MergeMode = MergeMode::FastForwardOrMerge;
+
     /// Crée une branche locale sur le commit de HEAD, sans y basculer — il n'y a
     /// pas de création de branche dans le backend, et ces tests n'en demandent pas.
     fn branch_at_head(dir: &Path, name: &str) {
@@ -2991,7 +3001,7 @@ mod tests {
         let (dir, git, current) = repo_with_a_lagging_branch();
         let head_before = git.info().unwrap().head.clone();
 
-        let report = git.merge_branches(&current, "vieille").unwrap();
+        let report = git.merge_branches(&current, "vieille", FF_OR_MERGE).unwrap();
         assert!(matches!(
             report.outcome,
             MergeOutcome::FastForwarded { commits: 1 }
@@ -3011,7 +3021,37 @@ mod tests {
 
         // Et rien à refaire : la cible contient désormais la source.
         assert!(matches!(
-            git.merge_branches(&current, "vieille").unwrap().outcome,
+            git.merge_branches(&current, "vieille", FF_OR_MERGE).unwrap().outcome,
+            MergeOutcome::UpToDate
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn merge_without_fast_forward_always_writes_a_commit() {
+        let (dir, git, current) = repo_with_a_lagging_branch();
+
+        // Le cas où l'avance rapide serait possible : c'est là que le mode change
+        // tout. La cible doit être checkoutée, un commit ne s'écrivant que sur HEAD.
+        let report = git
+            .merge_branches(&current, "vieille", MergeMode::NoFastForward)
+            .unwrap();
+        assert!(matches!(report.outcome, MergeOutcome::Merged { commits: 1 }));
+        assert!(report.switched);
+        assert_eq!(git.info().unwrap().branch.as_deref(), Some("vieille"));
+
+        // Deux parents, et le contenu de la source : c'est bien `--no-ff`.
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 2);
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "2\n");
+
+        // Rien de neuf à verser : le mode ne fabrique pas un commit pour rien.
+        assert!(matches!(
+            git.merge_branches(&current, "vieille", MergeMode::NoFastForward)
+                .unwrap()
+                .outcome,
             MergeOutcome::UpToDate
         ));
 
@@ -3024,7 +3064,7 @@ mod tests {
         let head_before = git.info().unwrap().head.clone();
 
         // Sens inverse : la branche courante contient déjà la vieille.
-        let report = git.merge_branches("vieille", &current).unwrap();
+        let report = git.merge_branches("vieille", &current, FF_OR_MERGE).unwrap();
         assert!(matches!(report.outcome, MergeOutcome::UpToDate));
         assert!(!report.switched);
         assert_eq!(git.info().unwrap().head, head_before);
@@ -3063,7 +3103,7 @@ mod tests {
         let (dir, git, current) = diverged_repo("c.txt");
 
         // La courante est fusionnée **dans** `autre` : c'est le sens du geste.
-        let report = git.merge_branches(&current, "autre").unwrap();
+        let report = git.merge_branches(&current, "autre", FF_OR_MERGE).unwrap();
         assert!(matches!(report.outcome, MergeOutcome::Merged { commits: 1 }));
         // Une vraie fusion doit passer par la cible : HEAD y est resté.
         assert!(report.switched);
@@ -3084,7 +3124,7 @@ mod tests {
         // Les deux côtés touchent `b.txt` : la fusion ne peut pas trancher.
         let (dir, git, current) = diverged_repo("b.txt");
 
-        let report = git.merge_branches(&current, "autre").unwrap();
+        let report = git.merge_branches(&current, "autre", FF_OR_MERGE).unwrap();
         let files = match report.outcome {
             MergeOutcome::Conflicted { files } => files,
             other => panic!("attendu un conflit, obtenu {other:?}"),
@@ -3097,7 +3137,7 @@ mod tests {
 
         // Une seconde fusion par-dessus écraserait `MERGE_HEAD` : refusée.
         assert!(matches!(
-            git.merge_branches(&current, "autre"),
+            git.merge_branches(&current, "autre", FF_OR_MERGE),
             Err(AppError::MergeInProgress)
         ));
 

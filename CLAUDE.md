@@ -245,12 +245,23 @@ cases, in order:
   checked out only when the target is HEAD**. That is the entire reason for
   distinguishing the case: merging the current branch into a branch that lags
   behind it touches neither HEAD nor a single file on disk. `MergeReport.switched`
-  is what tells the frontend whether HEAD moved, because it cannot guess.
+  is what tells the frontend whether HEAD moved, because it cannot guess. This is
+  also the only case `MergeMode::NoFastForward` removes — see below.
 - **otherwise** — a real merge, which **requires the target to be checked out
   first**: Git does not write into an inactive branch. The checkout comes before
   any write, so its SAFE strategy refuses on a dirty worktree and the merge is
   never begun; on conflict we stay on the target, which is where it gets resolved.
   `checkout_local` is shared with `checkout_branch` for exactly that step.
+
+**The menu's two entries are two modes, not a setting.** `MergeMode` is passed per
+gesture and **never persisted**, unlike `PullMode`: `NoFastForward` (`git merge
+--no-ff`) always writes a commit, so the fusion stays visible in the history, and
+the choice depends on which branch is being merged rather than on a global habit.
+Its consequence is worth knowing before clicking: a commit is written on HEAD, so
+that mode **always** switches to the target, even where a fast-forward would have
+moved nothing. Both entries are live; the second one names its effect ("sans
+avance rapide") and carries a filled junction dot, since that dot *is* the commit
+it creates.
 
 The conflict path is the pull's, deliberately: `MERGE_HEAD` set, `MergeBanner`,
 `commit()` picking up the second parent, `abort_merge` as the way out — nothing
@@ -565,7 +576,8 @@ The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all
 **A local branch is merged into another** from the sidebar — dragged onto it, or
 right-clicked — fast-forwarding without a checkout when it can, switching to the
 target when it must, and leaving a conflict in the worktree for the same
-resolve-or-abandon path as a pull. Branch *creation*, renaming and deletion are
+resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
+(`--no-ff`); nothing is ever forced in the `git push --force` sense. Branch *creation*, renaming and deletion are
 still nowhere, and nothing rebases.
 
 The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.

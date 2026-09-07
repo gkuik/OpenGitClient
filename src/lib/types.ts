@@ -248,6 +248,13 @@ export interface PullReport {
 }
 
 /**
+ * Ce que le menu de fusion propose. Pas une préférence persistée, contrairement à
+ * `PullMode` : le choix se fait au coup par coup, parce qu'il ne veut pas dire la
+ * même chose selon la branche qu'on fusionne.
+ */
+export type MergeMode = "fastForwardOrMerge" | "noFastForward";
+
+/**
  * Ce qu'une fusion de branche à branche a fait de la cible (glisser-déposer et
  * menu contextuel de la section LOCAL). Un conflit n'est pas une erreur : le
  * dépôt est en fusion, les fichiers à résoudre sont dans le working directory.

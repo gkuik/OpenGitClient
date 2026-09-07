@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
-    MergeReport, Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo,
+    MergeMode, MergeReport, Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo,
     RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry, ThemeMode,
 };
 use crate::error::AppError;
@@ -364,10 +364,13 @@ pub fn merge_branches(
     repo_id: String,
     source: String,
     target: String,
+    mode: MergeMode,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<MergeReport, AppError> {
     let guard = lock(&state)?;
-    guard.backend(&repo_id)?.merge_branches(&source, &target)
+    guard
+        .backend(&repo_id)?
+        .merge_branches(&source, &target, mode)
 }
 
 /// Mode exécuté par le bouton Pull (préférence globale, persistée).

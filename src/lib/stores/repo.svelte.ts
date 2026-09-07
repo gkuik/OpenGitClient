@@ -11,6 +11,7 @@ import type {
   FileStatus,
   GraphCommit,
   Identity,
+  MergeMode,
   MergeReport,
   Profile,
   PullEvent,
@@ -902,17 +903,21 @@ export class RepoStore {
    *
    * Aucun réseau ici, contrairement au pull : le rapport revient directement.
    *
+   * `mode` vient du menu et n'est pas mémorisé : en `noFastForward`, la fusion
+   * est toujours matérialisée par un commit, donc toujours précédée d'une bascule
+   * sur la cible.
+   *
    * Le rechargement vaut aussi pour un échec, et ce n'est pas une précaution de
    * style : une vraie fusion bascule sur la cible **avant** d'écrire, donc HEAD
    * a pu bouger alors même que l'erreur remonte.
    */
-  async mergeBranches(source: string, target: string) {
+  async mergeBranches(source: string, target: string, mode: MergeMode) {
     if (source === target || this.mergingBranches || this.checkingOut || this.busy) return;
     this.mergingBranches = true;
     this.error = null;
     this.setOpStatus(null);
     try {
-      const report = await api.mergeBranches(this.repoId, source, target);
+      const report = await api.mergeBranches(this.repoId, source, target, mode);
       this.setOpStatus(mergeStatus(report));
       // Le working directory a changé sous la sélection dès que HEAD a bougé ou
       // que des conflits sont apparus : le fichier ouvert n'est plus celui-là.

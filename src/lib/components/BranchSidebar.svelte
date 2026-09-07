@@ -3,7 +3,7 @@
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
   import type { Snippet } from "svelte";
-  import type { PullMode } from "../types";
+  import type { MergeMode, PullMode } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
@@ -154,7 +154,7 @@
   // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
   // ici, une fois pour la colonne, comme celui des stashes.
   const MERGE_MENU_W = 300;
-  const MERGE_MENU_H = 108;
+  const MERGE_MENU_H = 156;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const mergeMenuPos = $derived(
@@ -171,11 +171,12 @@
   const canMerge = $derived(
     !repo.mergingBranches && !repo.checkingOut && !repo.busy && !repo.merging,
   );
+  const busyHint = "Une opération est en cours, ou une fusion reste à terminer";
 
-  async function runMerge() {
+  async function runMerge(mode: MergeMode) {
     const request = branchMerge.request;
     branchMerge.close();
-    if (request) await repo.mergeBranches(request.source, request.target);
+    if (request) await repo.mergeBranches(request.source, request.target, mode);
   }
 </script>
 
@@ -395,12 +396,15 @@
 {/if}
 
 <!--
-  Menu de la fusion, même mécanique que les deux autres. Une seule action pour
-  l'instant : rien n'est grisé ici pour annoncer la suite, le menu ne dit que ce
+  Menu de la fusion, même mécanique que les deux autres. Deux entrées, toutes deux
+  vivantes : rien n'est grisé ici pour annoncer une suite, le menu ne dit que ce
   qu'il fait.
 
-  L'en-tête n'est pas une redite du libellé : le dépôt peut faire bouger HEAD, ce
-  qu'aucune des deux lignes ne laisse deviner.
+  La seconde n'est pas un réglage fin : elle décide si la fusion laisse une trace
+  dans l'historique. Elle nomme donc son effet, et pas seulement son option.
+
+  L'en-tête n'est pas une redite des libellés : le geste peut faire bouger HEAD,
+  ce qu'aucune des lignes ne laisse deviner.
 -->
 {#if branchMerge.request && mergeMenuPos}
   {@const request = branchMerge.request}
@@ -419,20 +423,32 @@
     role="menu"
   >
     <p class="ctx-head">
-      {request.target} reçoit la fusion ; on bascule dessus si une avance rapide
-      ne suffit pas.
+      {request.target} reçoit la fusion ; on bascule dessus dès qu'un commit doit
+      y être écrit.
     </p>
     <button
       class="ctx-item wrap"
       role="menuitem"
       disabled={!canMerge}
       title={canMerge
-        ? `Fusionner ${request.source} dans ${request.target}`
-        : "Une opération est en cours, ou une fusion reste à terminer"}
-      onclick={runMerge}
+        ? "Avance rapide quand la cible est simplement en retard, commit de fusion sinon"
+        : busyHint}
+      onclick={() => runMerge("fastForwardOrMerge")}
     >
       {@render mergeIcon()}
       <span>Fusionner <b>{request.source}</b> dans <b>{request.target}</b></span>
+    </button>
+    <button
+      class="ctx-item wrap"
+      role="menuitem"
+      disabled={!canMerge}
+      title={canMerge
+        ? "Toujours un commit de fusion, même quand une avance rapide suffirait — la fusion reste visible dans l'historique"
+        : busyHint}
+      onclick={() => runMerge("noFastForward")}
+    >
+      {@render mergeCommitIcon()}
+      <span>Fusionner sans avance rapide</span>
     </button>
   </div>
 {/if}
@@ -606,6 +622,18 @@
     <circle cx="4" cy="3.25" r="1.75" />
     <circle cx="4" cy="12.75" r="1.75" />
     <circle cx="12" cy="8" r="1.75" />
+    <path d="M4 5v6" />
+    <path d="M5.6 4.4A6 6 0 0 0 10.3 7.6" />
+    <path d="M5.6 11.6A6 6 0 0 1 10.3 8.4" />
+  </svg>
+{/snippet}
+
+<!-- La même jonction, mais le point de rencontre est plein : un commit y naît. -->
+{#snippet mergeCommitIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4" cy="3.25" r="1.75" />
+    <circle cx="4" cy="12.75" r="1.75" />
+    <circle cx="12" cy="8" r="1.75" fill="currentColor" />
     <path d="M4 5v6" />
     <path d="M5.6 4.4A6 6 0 0 0 10.3 7.6" />
     <path d="M5.6 11.6A6 6 0 0 1 10.3 8.4" />

@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
-    MergeReport, PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
+    MergeMode, MergeReport, PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry,
 };
 use crate::error::AppError;
@@ -118,10 +118,19 @@ pub trait GitBackend: Send {
     /// (vraie fusion, qui impose de basculer sur la cible : Git n'écrit pas dans
     /// une branche inactive).
     ///
+    /// [`MergeMode::NoFastForward`] supprime le deuxième cas : la fusion est
+    /// toujours matérialisée par un commit, donc toujours précédée d'une bascule
+    /// sur la cible.
+    ///
     /// Un conflit laisse le dépôt en état de fusion sur la cible, comme un pull :
     /// `commit()` reprendra `MERGE_HEAD` comme second parent, `abort_merge()` est
     /// la sortie de secours.
-    fn merge_branches(&self, source: &str, target: &str) -> Result<MergeReport, AppError>;
+    fn merge_branches(
+        &self,
+        source: &str,
+        target: &str,
+        mode: MergeMode,
+    ) -> Result<MergeReport, AppError>;
 
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;
