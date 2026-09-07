@@ -30,9 +30,9 @@ Two details that go together: the drop index is an *insertion* index in the curr
 
 The bar carries `data-tauri-drag-region="deep"` so any of its background drags the window. **The `deep` value is load-bearing**: with the bare attribute Tauri only drags when the click target *is* the element carrying it, and the empty space right of the `+` belongs to `.tabs` (`flex: 1`), not to `.tabbar` — so grabbing it did nothing. Tabs and `+` keep their clicks for free: walking up from the target, Tauri stops at the first "clickable" element (`<button>`, or anything with `tabindex` / an interactive `role` — each tab has both) and cancels the drag. Double-clicking the background zooms the window, as on a real title bar. **This needs `core:window:allow-start-dragging` in `capabilities/default.json`** — it is *not* part of `core:default`, and without it the attribute is silently inert and the window simply can't be moved (`allow-internal-toggle-maximize`, for the double-click, *is* in `core:default`).
 
-**There are no *view* tabs** (that's separate from the repository tabs above). The centre shows the graph until a file is opened; the diff then replaces it, and the diff's × brings the graph back. The right column is always the file selector for whatever is being looked at: the commit's file list when a commit is selected, otherwise the working-directory changes + commit box. Selecting a commit therefore hides the commit box — deliberate, to give the graph and diff the full width. That commit box *does* carry two tabs, **Commit | Remiser**, splitting the column's width in two: what is being written goes either into a commit or into a stash (see below).
+**There are no *view* tabs** (that's separate from the repository tabs above). The centre shows the graph until a file is opened; the diff then replaces it, and the diff's × brings the graph back. The right column is always the file selector for whatever is being looked at: the commit's file list when a commit is selected, otherwise the working-directory changes + commit box. Selecting a commit therefore hides the commit box — deliberate, to give the graph and diff the full width. That commit box *does* carry two tabs, **Commit | Stash**, splitting the column's width in two: what is being written goes either into a commit or into a stash (see below).
 
-**Code comments, UI strings, and commit messages are in French.** Match that when editing.
+**Code comments and commit messages are in French; the interface is in English.** Match that when editing — and no UI string is ever written in a component: it lives in `src/lib/locales/en.ts` and is read through `t()` (see *The interface is English, and translatable* below). Git vocabulary stays English in every language: commit, stash, stage, fetch, push, pull, merge, branch, HEAD, upstream, fast-forward, diff, pull request.
 
 ## Commands
 
@@ -54,7 +54,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers `src/lib/graph/layout.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `tree.ts`, `markdown.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -69,12 +69,12 @@ Vite is pinned to port 1420 with `strictPort` (Tauri expects it) — a stale dev
 All Git logic sits behind the `GitBackend` trait in `src-tauri/src/git/mod.rs`. Commands never touch `git2` directly. `git::open_repository()` is the single factory — a future CLI (`git` shell-out) fallback becomes a second impl of this trait with no changes to commands or frontend.
 
 **Adding a Git feature touches this full chain** (all must stay in sync):
-`git/mod.rs` (trait method) → `git/libgit2.rs` (impl) → `commands.rs` (Tauri command) → `lib.rs` (`generate_handler!` registration) → `src/lib/api.ts` (typed wrapper) → `src/lib/types.ts` (TS mirror of the DTO).
+`git/mod.rs` (trait method) → `git/libgit2.rs` (impl) → `commands.rs` (Tauri command) → `lib.rs` (`generate_handler!` registration) → `src/lib/api.ts` (typed wrapper) → `src/lib/types.ts` (TS mirror of the DTO) → `src/lib/locales/en.ts` (the strings the feature displays, plus an `error.<Kind>` entry for any new `AppError` variant).
 
 ### Backend/frontend contract
 
 - DTOs live in `src-tauri/src/dto.rs` with `#[serde(rename_all = "camelCase")]`; `src/lib/types.ts` is a **hand-maintained mirror** — update both together.
-- Every command returns `Result<T, AppError>`. `AppError` (`error.rs`) serializes to `{ kind, message }`; `kind` is a stable discriminant the frontend can branch on. No panics reach the frontend.
+- Every command returns `Result<T, AppError>`. `AppError` (`error.rs`) serializes to `{ kind, message, arg }`; `kind` is a stable discriminant the frontend can branch on **and the key it translates by**, `arg` carrying the variant's payload (a host, a refusal reason) so `{arg}` can be placed anywhere in a translated sentence. The `message` is English and is only a fallback — the one thing displayed for the variants whose payload *is* the message (`Git`, `Io`, `Network`, `CredentialStore`), which have no catalogue entry on purpose. No panics reach the frontend.
 - Tauri converts JS camelCase args → Rust snake_case automatically.
 
 ### Frontend structure
@@ -83,11 +83,54 @@ All Git logic sits behind the `GitBackend` trait in `src-tauri/src/git/mod.rs`. 
 - `src/lib/stores/repo.svelte.ts` holds **one `RepoStore` instance per open repository** (status/diff/selection/view state), plus `TabsStore` (`export const tabs`) which owns the collection, the active tab, recents and session restore. Every mutating action funnels through the private `run()` helper, which refreshes status and captures errors.
 - Frontend is plain Vite + Svelte 5 (runes), **not** SvelteKit — no SSR, no routing.
 
+### The interface is English, and translatable
+
+No component contains a display string. Everything goes through `t("key")`
+(`src/lib/i18n.svelte.ts`) and lands in `src/lib/locales/en.ts` — **the English
+catalogue is the reference**: `MessageKey` is derived from it, so a second
+language is one file typed `Catalog`, where a forgotten key is a compile error,
+plus an entry in `LOCALES` and in `CATALOGS`. Nothing else changes; no component
+knows which language is on, exactly as none knows which theme is on.
+
+A homemade module rather than a library, for the same reason as `markdown.ts`:
+the project ships no runtime dependency, and what a library would really buy —
+plural categories and date formats — is already in the webview, under `Intl`.
+
+- **Git vocabulary stays English in every language.** Translating *stage* as
+  « indexer » had already moved the interface away from the command line its
+  users know. That is a rule about the catalogue's *content*, and it is why so
+  many entries look untranslated.
+- **A sentence is one entry, never fragments to reassemble.** Word order changes
+  between languages, so `"Merge "` + branch + `" into "` + branch would be
+  untranslatable. `RichText.svelte` is what makes that hold when a word inside
+  the sentence carries markup (`<strong>`, `<code>`): `tParts` renders the whole
+  sentence and reports which pieces came from a parameter, and the caller decides
+  their tag. That is the only intended caller of `tParts`.
+- **A plural is an object, not a `n > 1 ? "s" : ""`.** `Intl.PluralRules` picks
+  the form from the `n` parameter; it alone knows a language's categories (two in
+  English, four in Polish, and not at the same threshold in French). Hence
+  `{ one, other }` values in the catalogue, `other` being the only mandatory one.
+- **Dates are `$derived`, not built at mount.** `Intl.DateTimeFormat(i18n.locale, …)`
+  in `GraphView` and `CommitDetailsPanel` — both stay mounted across tabs, so a
+  formatter frozen at mount would outlive the language.
+- **Errors are translated by `kind`, not by their text.** `errorMessage()` looks
+  up `error.<kind>` and injects `arg`; two fallbacks, in this order: a `kind`
+  with no catalogue entry shows the backend's English message, and an error built
+  in the frontend (`localized: true`) is never re-translated — otherwise the
+  generic entry for its `kind` would overwrite a message that says more, which is
+  exactly the case of the SSH-key advice in `askCredentials`.
+- **The language is not persisted in `prefs.json`**, unlike the theme, the text
+  size and the sidebar widths. With one catalogue there would be nothing to
+  choose, and the setting would be a knob with no effect. `i18n.init()` reads the
+  system preference before mounting (nothing to load, so nothing flashes) and
+  writes `<html lang>`, which is what speech synthesis and hyphenation read. A
+  Settings entry belongs with the second language, not before it.
+
 ### Multiple repositories: one tab each
 
 `AppState` holds a `HashMap` of backends, **keyed by the repository's canonical path** — that key *is* the tab id, and it is what `RepoInfo.path` carries. Using the path rather than a generated id means opening an already-open repository can't create a duplicate tab, and the session survives restarts with no id mapping to maintain.
 
-**An open tab is not necessarily a repository.** `+` appends a `NewTab` — the "Nouvel onglet" page: open a local repository (the only live action; clone and create are rendered disabled, since they have no backend behind them), or pick a recent one. `NewTabView` replaces the three columns while it is the active tab, the tab bar staying above it, exactly as `SettingsView` does.
+**An open tab is not necessarily a repository.** `+` appends a `NewTab` — the "New tab" page: open a local repository (the only live action; clone and create are rendered disabled, since they have no backend behind them), or pick a recent one. `NewTabView` replaces the three columns while it is the active tab, the tab bar staying above it, exactly as `SettingsView` does.
 
 That tab exists **only in the frontend**, and it has to: a tab's id *is* its repository's canonical path, so a tab without a repository has no id to give the backend. Hence a counter (`new:<n>`), never sent anywhere, and nothing to restore at startup — a landing page has no state worth persisting. `TabsStore.tabs` is therefore a discriminated union (`RepoStore | NewTab`, on `kind`), which is what forces every site that means *a repository* to say so: `repoTabs` filters them for the event routing, for `set_tab_order` (the backend only knows repositories) and for Settings' host list. `active` still returns a `RepoStore | null` — `null` on a new tab — so the `repo` proxy falls back to `EMPTY_TAB` and no component changed.
 
@@ -106,13 +149,13 @@ Tab state stays in memory while the tab is open, so returning to it is instant; 
 
 ### Status model: 3 backend categories → 2 UI sections
 
-The backend returns `staged` / `unstaged` / `untracked` separately. The sidebar deliberately merges `unstaged + untracked` into one "Non indexés" section (`repo.unstagedEntries`), matching GitKraken's two-section layout. Staged files are `staged=true`; everything else is `staged=false` — that boolean drives both which diff is requested (HEAD↔index vs index↔worktree) and whether the row's button stages or unstages.
+The backend returns `staged` / `unstaged` / `untracked` separately. The sidebar deliberately merges `unstaged + untracked` into one "Unstaged" section (`repo.unstagedEntries`), matching GitKraken's two-section layout. Staged files are `staged=true`; everything else is `staged=false` — that boolean drives both which diff is requested (HEAD↔index vs index↔worktree) and whether the row's button stages or unstages.
 
 After any refresh, `resyncSelection()` re-locates the selected file, because staging moves it between sections.
 
 ### Discarding everything is one reset plus a clean, and it is the only destructive action
 
-`discard_all` sits at the right column's header — `↺ Tout abandonner`, against the right edge of the `N changements sur <branche>` line. It brings tracked files back to HEAD (`ResetType::Hard`, index and worktree) **and deletes untracked files**. That second half is not an extra: the counter beside the button counts untracked files, so leaving them behind would make the button lie about what it just did — the same reasoning that puts `INCLUDE_UNTRACKED` on `stash_save`.
+`discard_all` sits at the right column's header — `↺ Discard all`, against the right edge of the `N changes on <branch>` line. It brings tracked files back to HEAD (`ResetType::Hard`, index and worktree) **and deletes untracked files**. That second half is not an extra: the counter beside the button counts untracked files, so leaving them behind would make the button lie about what it just did — the same reasoning that puts `INCLUDE_UNTRACKED` on `stash_save`.
 
 - **Ignored files are never touched.** They are build output, not changes, and the status the button counts excludes them too. Which is why `recurse_untracked_dirs(true)` is on: it yields untracked files one by one, so an untracked directory holding an ignored file loses only the file. `prune_empty_dirs` then removes what the deletions emptied — `remove_dir` fails on a non-empty directory, so the one still holding an ignored file stops the walk by itself, with nothing to filter.
 - **Directories are skipped, deliberately.** With recursion on, the only thing libgit2 still reports whole is a nested repository, which it won't descend into. Erasing someone's nested repo is exactly what `git clean -fd` refuses without a second `-f`.
@@ -123,7 +166,7 @@ The confirmation is a panel anchored under the button, not a native dialog (no c
 
 ### A stash is written like a commit, and read back from the commit
 
-The commit box's two tabs share their layout and nothing else. The author selector is **Commit-only**: a stash is signed by the repository's identity like any commit, but that is not something one picks when parking work in progress — showing the selector there would suggest a choice that the tab isn't making. The Remiser tab has its own draft (`RepoStore.stashSummary` / `stashBody`, beside the commit's): the commit summary is already edited by the graph's WIP row, where a stash name has no business, and one shared field would let each tab overwrite what the other was writing. Which tab is showing is local to `CommitBox`, unlike the drafts — it is a way of looking at the column, not repository state.
+The commit box's two tabs share their layout and nothing else. The author selector is **Commit-only**: a stash is signed by the repository's identity like any commit, but that is not something one picks when parking work in progress — showing the selector there would suggest a choice that the tab isn't making. The Stash tab has its own draft (`RepoStore.stashSummary` / `stashBody`, beside the commit's): the commit summary is already edited by the graph's WIP row, where a stash name has no business, and one shared field would let each tab overwrite what the other was writing. Which tab is showing is local to `CommitBox`, unlike the drafts — it is a way of looking at the column, not repository state.
 
 `stash_save` always passes `INCLUDE_UNTRACKED`: the point of stashing is a clean working directory, and untracked files left behind would defeat it. No `KEEP_INDEX` — what was staged is staged again on pop. Its guard is `changeCount`, not `hasStaged`: a stash needs no index.
 
@@ -259,8 +302,8 @@ gesture and **never persisted**, unlike `PullMode`: `NoFastForward` (`git merge
 the choice depends on which branch is being merged rather than on a global habit.
 Its consequence is worth knowing before clicking: a commit is written on HEAD, so
 that mode **always** switches to the target, even where a fast-forward would have
-moved nothing. Both entries are live; the second one names its effect ("sans
-avance rapide") and carries a filled junction dot, since that dot *is* the commit
+moved nothing. Both entries are live; the second one names its effect ("without
+fast-forward") and carries a filled junction dot, since that dot *is* the commit
 it creates.
 
 The conflict path is the pull's, deliberately: `MERGE_HEAD` set, `MergeBanner`,
@@ -335,7 +378,7 @@ error for hosts that never had pull requests.
   Push and Fetch stay live while PRs load. The result comes back as
   `repo://pull-requests`, routed by `repoId` like the others.
 - **The token is the one already stored** — `credentials.rs`, one entry per host,
-  what Settings calls a « jeton d'accès ». It is read at request time and only
+  what Settings calls an « access token ». It is read at request time and only
   ever fills an `Authorization` header, the same one-way trip as the HTTPS secret
   handed to libgit2. Hence `RemoteInfo.forge`: a repository cloned over **SSH**
   needs no token to fetch but does to read its PRs, and without that flag its host
@@ -346,7 +389,7 @@ error for hosts that never had pull requests.
 disk — and interrogating the API on a timer would burn the token's quota for a
 column nobody is necessarily looking at. Loads happen on tab open, after a fetch
 or a push (`reloadRemoteRefs`: someone just asked for news of the remote), on the
-section's ↻, and when the « fermées » filter changes — that one alone goes back to
+section's ↻, and when the « closed » filter changes — that one alone goes back to
 the network, drafts being already in the payload.
 
 Two things the failure path decides, and they are not the same decision:
@@ -359,7 +402,7 @@ Two things the failure path decides, and they are not the same decision:
   failure keeps the section in place, because there *are* pull requests behind it
   — we just can't reach them.
 
-The section carries a fourth group, « Autres », that GitKraken doesn't have. It
+The section carries a fourth group, « Others », that GitKraken doesn't have. It
 appears only when non-empty, and it exists because the header counts what was
 loaded: without it, a colleague's PR that concerns us in no way would be counted
 and invisible, and the count would lie.
@@ -423,9 +466,9 @@ A profile is a reusable identity (label + name + email), persisted in `profiles.
 
 That is what makes the feature honest. `commit()` already signs with `repo.signature()`, which reads the same config, so nothing special happens at commit time; a commit made from the terminal picks up the same identity; and no stored association can drift from what Git will actually do. Two profiles with identical name and email are interchangeable by construction, which is why matching on that pair is enough.
 
-`Identity.is_local` is the distinction the UI needs: an identity inherited from the global config is *not* a chosen profile. The selector therefore carries a third, purely descriptive entry — "Identité du dépôt" — for a local identity matching no profile; without it the `<select>` would fall back to its first option and claim a profile is active when none is.
+`Identity.is_local` is the distinction the UI needs: an identity inherited from the global config is *not* a chosen profile. The selector therefore carries a third, purely descriptive entry — "Repository identity" — for a local identity matching no profile; without it the `<select>` would fall back to its first option and claim a profile is active when none is.
 
-The selector is a single full-width `<select>` at the top of the commit box, and it is the *whole* block: the effective identity rides in the option labels (`Libellé · Nom`) rather than in a line beside it. Its last entry, "Gérer les profils…", opens Settings — it must reset `event.currentTarget.value` first, since nothing in the derived state changed and Svelte would leave the DOM showing that entry as selected.
+The selector is a single full-width `<select>` at the top of the commit box, and it is the *whole* block: the effective identity rides in the option labels (`Label · Name`) rather than in a line beside it. Its last entry, "Manage profiles…", opens Settings — it must reset `event.currentTarget.value` first, since nothing in the derived state changed and Svelte would leave the DOM showing that entry as selected.
 
 It carries `appearance: none` and paints its own chevron so it can match the summary input exactly (same background, border, radius, font-size and vertical padding). A native `<select>` imposes its own height and blue button, which no amount of padding will align.
 
@@ -636,13 +679,13 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Autres » group that only shows when it has something in it), searchable, filterable on drafts and closed PRs, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), searchable, filterable on drafts and closed PRs, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 
-The **Settings screen** (gear, far right of the tab bar) holds *Apparence*, *Taille du texte*, *Profils*, then *Jetons d'accès*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
+The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Text size*, *Profiles*, then *Access tokens*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 

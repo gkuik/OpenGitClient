@@ -3,74 +3,83 @@ use serde::{Serialize, Serializer};
 /// Erreur applicative unique remontée au frontend.
 ///
 /// Toutes les commandes Tauri renvoient `Result<T, AppError>`. La sérialisation
-/// produit un objet `{ "kind": "...", "message": "..." }`, directement exploitable
-/// côté Svelte (voir `src/lib/types.ts`). On n'expose jamais de `panic` au front.
+/// produit un objet `{ "kind": "...", "message": "...", "arg": ... }`,
+/// directement exploitable côté Svelte (voir `src/lib/types.ts`). On n'expose
+/// jamais de `panic` au front.
+///
+/// **Les messages sont en anglais, et ne sont qu'un repli** : le frontend
+/// traduit sur le `kind`, qui est stable, et `arg` lui donne le paramètre que la
+/// variante porte (l'hôte, le motif d'un refus). Sans ce champ, la traduction
+/// devrait ré-extraire cette valeur du message — donc en connaître la forme dans
+/// chaque langue, ce qui n'a pas de sens. Les variantes dont le message *est* le
+/// contenu (`Git`, `Io`, `Network`, `CredentialStore`) n'ont rien à paramétrer :
+/// le front affiche alors le message tel quel.
 #[derive(Debug, Clone, thiserror::Error)]
 pub enum AppError {
-    #[error("Ce dossier n'est pas un dépôt Git valide")]
+    #[error("This folder is not a valid Git repository")]
     NotARepository,
 
-    #[error("Aucun dépôt ouvert")]
+    #[error("No repository open")]
     NoRepoOpen,
 
-    #[error("Rien à committer (aucun changement indexé)")]
+    #[error("Nothing to commit (no staged change)")]
     NothingToCommit,
 
-    #[error("Aucun commit à amender")]
+    #[error("No commit to amend")]
     NothingToAmend,
 
-    #[error("Signature Git absente : configure user.name et user.email")]
+    #[error("Missing Git signature: set user.name and user.email")]
     MissingSignature,
 
-    #[error("Changement de branche impossible : des modifications locales seraient écrasées")]
+    #[error("Cannot switch branch: local changes would be overwritten")]
     CheckoutConflict,
 
-    #[error("Commit introuvable")]
+    #[error("Commit not found")]
     CommitNotFound,
 
-    #[error("Application du stash impossible : conflit avec les modifications locales")]
+    #[error("Cannot apply the stash: it conflicts with local changes")]
     StashConflict,
 
-    #[error("Rien à remiser (aucune modification locale)")]
+    #[error("Nothing to stash (no local change)")]
     NothingToStash,
 
-    #[error("Une fusion est déjà en cours : termine-la ou abandonne-la avant d'en lancer une autre")]
+    #[error("A merge is already in progress: finish it or abort it before starting another one")]
     MergeInProgress,
 
-    #[error("Aucun dépôt distant configuré")]
+    #[error("No remote configured")]
     NoRemote,
 
-    #[error("Authentification refusée par le dépôt distant")]
+    #[error("Authentication refused by the remote")]
     RemoteAuth,
 
-    #[error("Aucun identifiant disponible pour ce dépôt distant")]
+    #[error("No credentials available for this remote")]
     NoCredentials,
 
     #[error("{0}")]
     CredentialStore(String),
 
-    #[error("Une opération réseau est déjà en cours sur ce dépôt")]
+    #[error("A network operation is already running on this repository")]
     NetworkBusy,
 
-    #[error("Aucun jeton d'accès enregistré pour {0}")]
+    #[error("No access token saved for {0}")]
     ForgeToken(String),
 
-    #[error("Jeton refusé par {0} : il est peut-être expiré, ou sans la portée « repo »")]
+    #[error("Token refused by {0}: it may have expired, or lack the “repo” scope")]
     ForgeAuth(String),
 
-    #[error("Dépôt {0} introuvable : il est privé, ou le jeton n'y a pas accès")]
+    #[error("Repository {0} not found: it is private, or the token cannot reach it")]
     ForgeNotFound(String),
 
-    #[error("Les pull requests ne sont lues que sur GitHub pour l'instant")]
+    #[error("Pull requests are only read from GitHub for now")]
     ForgeUnsupported,
 
-    #[error("Aucune branche courante (HEAD détaché)")]
+    #[error("No current branch (detached HEAD)")]
     DetachedHead,
 
-    #[error("La branche courante ne suit aucune branche distante : rien à récupérer")]
+    #[error("The current branch tracks no remote branch: nothing to pull")]
     NoUpstream,
 
-    #[error("Push refusé : le distant a avancé ({0}). Fais un Fetch, puis intègre ses commits avant de repousser.")]
+    #[error("Push refused: the remote has moved ahead ({0}). Fetch, then integrate its commits before pushing again.")]
     PushRejected(String),
 
     #[error("{0}")]
@@ -114,6 +123,19 @@ impl AppError {
             AppError::Io(_) => "Io",
         }
     }
+
+    /// Paramètre de la variante, quand elle en porte un : c'est le `{arg}` de la
+    /// traduction. `None` pour les variantes qui transportent déjà un message
+    /// complet — il n'y a alors rien à réinjecter dans un gabarit.
+    fn arg(&self) -> Option<&str> {
+        match self {
+            AppError::ForgeToken(arg)
+            | AppError::ForgeAuth(arg)
+            | AppError::ForgeNotFound(arg)
+            | AppError::PushRejected(arg) => Some(arg),
+            _ => None,
+        }
+    }
 }
 
 impl Serialize for AppError {
@@ -122,9 +144,10 @@ impl Serialize for AppError {
         S: Serializer,
     {
         use serde::ser::SerializeStruct;
-        let mut s = serializer.serialize_struct("AppError", 2)?;
+        let mut s = serializer.serialize_struct("AppError", 3)?;
         s.serialize_field("kind", self.kind())?;
         s.serialize_field("message", &self.to_string())?;
+        s.serialize_field("arg", &self.arg())?;
         s.end()
     }
 }

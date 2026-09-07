@@ -372,7 +372,23 @@ export interface Identity {
 /** Forme sérialisée d'une erreur backend (`AppError`). */
 export interface AppError {
   kind: string;
+  /**
+   * Message anglais du backend. Il sert de repli : l'affichage passe d'abord
+   * par le catalogue, à la clé `error.<kind>` (voir `errorMessage`).
+   */
   message: string;
+  /**
+   * Paramètre porté par la variante — l'hôte d'un `ForgeToken`, le motif d'un
+   * `PushRejected`. Il alimente le `{arg}` de la traduction ; sans lui, il
+   * faudrait le retrouver dans le message, ce qu'aucune traduction ne permet.
+   */
+  arg?: string | null;
+  /**
+   * Erreur construite côté frontend, déjà dans la langue active : `errorMessage`
+   * la laisse telle quelle. Sans ce drapeau, le catalogue écraserait par le
+   * message générique du `kind` un message qui en dit davantage.
+   */
+  localized?: boolean;
 }
 
 // ── Pull requests ───────────────────────────────────────────────────────────

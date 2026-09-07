@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
 
   function sign(kind: string): string {
@@ -9,15 +10,16 @@
 
   // D'où vient le diff affiché : working directory (indexé ou non) ou commit.
   const tag = $derived.by(() => {
-    const t = repo.diffTarget;
-    if (t?.kind === "commit") return `commit ${t.oid.slice(0, 7)}`;
-    return repo.selectedStaged ? "indexé" : "modifié";
+    const target = repo.diffTarget;
+    if (target?.kind === "commit")
+      return t("diff.tag.commit", { oid: target.oid.slice(0, 7) });
+    return repo.selectedStaged ? t("diff.tag.staged") : t("diff.tag.modified");
   });
 </script>
 
 <div class="diff">
   {#if !repo.selectedPath}
-    <p class="placeholder">Sélectionne un fichier pour afficher son diff.</p>
+    <p class="placeholder">{t("diff.pick")}</p>
   {:else}
     <!--
       L'en-tête (et donc la croix de fermeture) est affiché dès qu'un fichier est
@@ -30,19 +32,19 @@
       <button
         class="close"
         onclick={() => repo.clearSelection()}
-        title="Fermer la visualisation"
-        aria-label="Fermer la visualisation"
+        title={t("diff.close")}
+        aria-label={t("diff.close")}
       >
         ×
       </button>
     </div>
 
     {#if !repo.diff}
-      <p class="placeholder">Chargement du diff…</p>
+      <p class="placeholder">{t("diff.loading")}</p>
     {:else if repo.diff.isBinary}
-      <p class="placeholder">Fichier binaire — diff non affichable.</p>
+      <p class="placeholder">{t("diff.binary")}</p>
     {:else if repo.diff.hunks.length === 0}
-      <p class="placeholder">Aucune différence à afficher.</p>
+      <p class="placeholder">{t("diff.empty")}</p>
     {:else}
       <div class="code">
         {#each repo.diff.hunks as hunk, hi (hi)}

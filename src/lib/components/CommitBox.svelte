@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
 
   /**
@@ -20,7 +21,7 @@
   const fullWho = $derived(
     identity?.name || identity?.email
       ? `${identity.name ?? "—"} <${identity.email ?? "—"}>`
-      : "Aucune identité Git configurée",
+      : t("commit.author.none"),
   );
 
   /** Suffixe « · Nom » ajouté à une option, quand ce nom est connu. */
@@ -62,7 +63,9 @@
     summary.trim().length > 0 && !repo.committing && repo.hasStaged,
   );
 
-  const buttonLabel = $derived(repo.committing ? "En cours…" : "Committer");
+  const buttonLabel = $derived(
+    repo.committing ? t("commit.button.busy") : t("commit.button"),
+  );
 
   async function doCommit() {
     if (!canCommit) return;
@@ -82,7 +85,9 @@
     stashSummary.trim().length > 0 && !repo.stashing && repo.changeCount > 0,
   );
 
-  const stashLabel = $derived(repo.stashing ? "En cours…" : "Remiser");
+  const stashLabel = $derived(
+    repo.stashing ? t("stash.button.busy") : t("stash.button"),
+  );
 
   async function doStash() {
     if (!canStash) return;
@@ -95,10 +100,10 @@
        soit dans un commit, soit dans une remise. -->
   <div class="tabs">
     <button class="tab" class:active={pane === "commit"} onclick={() => (pane = "commit")}>
-      Commit
+      {t("commit.tab.commit")}
     </button>
     <button class="tab" class:active={pane === "stash"} onclick={() => (pane = "stash")}>
-      Remiser
+      {t("commit.tab.stash")}
     </button>
   </div>
 
@@ -111,26 +116,28 @@
          qu'on choisit, elle range du travail en cours. -->
     <select
       class="author"
-      aria-label="Profil d'auteur"
+      aria-label={t("commit.author.aria")}
       title={fullWho}
       value={selected}
       disabled={!repo.repoInfo}
       onchange={pick}
     >
-      <option value="">{withWho("Config globale", active || unmatched ? null : who)}</option>
+      <option value="">
+        {withWho(t("commit.author.global"), active || unmatched ? null : who)}
+      </option>
       {#each tabs.profiles as profile (profile.id)}
         <option value={profile.id}>{withWho(profile.label, profile.name)}</option>
       {/each}
       {#if unmatched}
-        <option value={UNMATCHED}>{withWho("Identité du dépôt", who)}</option>
+        <option value={UNMATCHED}>{withWho(t("commit.author.repository"), who)}</option>
       {/if}
-      <option value={MANAGE}>Gérer les profils…</option>
+      <option value={MANAGE}>{t("commit.author.manage")}</option>
     </select>
 
     <div class="field">
       <input
         class="summary"
-        placeholder="Résumé du commit"
+        placeholder={t("commit.summary.placeholder")}
         bind:value={repo.commitSummary}
         disabled={!repo.repoInfo}
       />
@@ -141,14 +148,14 @@
 
     <textarea
       class="body"
-      placeholder="Description (optionnelle)"
+      placeholder={t("commit.body.placeholder")}
       rows="3"
       bind:value={repo.commitBody}
       disabled={!repo.repoInfo}
     ></textarea>
 
     {#if repo.repoInfo && !repo.hasStaged}
-      <p class="hint">Indexez des fichiers pour pouvoir committer.</p>
+      <p class="hint">{t("commit.needStaged")}</p>
     {/if}
 
     <button class="action" onclick={doCommit} disabled={!canCommit}>
@@ -157,21 +164,21 @@
   {:else}
     <input
       class="summary lone"
-      placeholder="Nom de la remise"
+      placeholder={t("stash.name.placeholder")}
       bind:value={repo.stashSummary}
       disabled={!repo.repoInfo}
     />
 
     <textarea
       class="body"
-      placeholder="Description (optionnelle)"
+      placeholder={t("commit.body.placeholder")}
       rows="3"
       bind:value={repo.stashBody}
       disabled={!repo.repoInfo}
     ></textarea>
 
     {#if repo.repoInfo && repo.changeCount === 0}
-      <p class="hint">Aucune modification à remiser.</p>
+      <p class="hint">{t("stash.nothing")}</p>
     {/if}
 
     <button class="action" onclick={doStash} disabled={!canStash}>

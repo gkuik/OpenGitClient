@@ -65,7 +65,7 @@ impl GitHub {
         response
             .body_mut()
             .read_json::<T>()
-            .map_err(|e| AppError::Network(format!("Réponse GitHub illisible : {e}")))
+            .map_err(|e| AppError::Network(format!("Unreadable GitHub response: {e}")))
     }
 
     /// Traduit l'erreur de transport en erreur applicative.
@@ -81,7 +81,7 @@ impl GitHub {
             }
             ureq::Error::StatusCode(404) => AppError::ForgeNotFound(self.remote.slug()),
             ureq::Error::StatusCode(code) => {
-                AppError::Network(format!("GitHub a répondu {code}"))
+                AppError::Network(format!("GitHub replied {code}"))
             }
             other => AppError::Network(other.to_string()),
         }

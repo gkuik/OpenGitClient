@@ -1201,7 +1201,7 @@ fn credentials(
 ) -> Result<Cred, git2::Error> {
     if attempts > MAX_CRED_ATTEMPTS {
         state.set(CredState::Refused);
-        return Err(git2::Error::from_str("identifiants refusés"));
+        return Err(git2::Error::from_str("credentials refused"));
     }
 
     // En SSH, libgit2 réclame d'abord le nom d'utilisateur seul, puis la clé.
@@ -1228,7 +1228,7 @@ fn credentials(
             return Cred::ssh_key(user, None, &path, None);
         }
         state.set(CredState::NothingToOffer);
-        return Err(git2::Error::from_str("aucune clé SSH utilisable"));
+        return Err(git2::Error::from_str("no usable SSH key"));
     }
 
     // HTTPS : les identifiants que l'application a elle-même enregistrés pour
@@ -1250,7 +1250,7 @@ fn credentials(
 
     state.set(CredState::NothingToOffer);
     Err(git2::Error::from_str(
-        "aucune méthode d'authentification disponible",
+        "no authentication method available",
     ))
 }
 

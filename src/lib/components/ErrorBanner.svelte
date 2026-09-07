@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage, t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
 
   // Deux sources : l'échec d'ouverture d'un dépôt (qui n'appartient à aucun
@@ -15,8 +16,8 @@
 {#if error}
   <div class="error" role="alert">
     <span class="kind">{error.kind}</span>
-    <span class="msg">{error.message}</span>
-    <button class="close" onclick={dismiss} aria-label="Fermer">×</button>
+    <span class="msg">{errorMessage(error)}</span>
+    <button class="close" onclick={dismiss} aria-label={t("action.close")}>×</button>
   </div>
 {/if}
 

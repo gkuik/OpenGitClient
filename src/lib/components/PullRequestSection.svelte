@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { errorMessage, t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
   import type { PullRequestEntry } from "../types";
   import SectionHeader from "./SectionHeader.svelte";
@@ -60,22 +61,22 @@
   const groups = $derived([
     {
       id: "mine",
-      label: "Mes pull requests",
+      label: t("pr.group.mine"),
       items: repo.prFiltered.filter((pr) => pr.mine),
     },
     {
       id: "assigned",
-      label: "Qui me sont assignées",
+      label: t("pr.group.assigned"),
       items: repo.prFiltered.filter((pr) => pr.assigned && !pr.mine),
     },
     {
       id: "review",
-      label: "En attente de ma revue",
+      label: t("pr.group.review"),
       items: repo.prFiltered.filter((pr) => pr.reviewing),
     },
     {
       id: "others",
-      label: "Autres",
+      label: t("pr.group.others"),
       items: repo.prFiltered.filter(
         (pr) => !pr.mine && !pr.assigned && !pr.reviewing,
       ),
@@ -100,7 +101,13 @@
 
   /** Ce qu'un survol doit dire d'une PR, que la ligne tronque forcément. */
   function hint(pr: PullRequestEntry): string {
-    const state = pr.merged ? "fusionnée" : pr.closed ? "fermée" : pr.draft ? "brouillon" : "ouverte";
+    const state = pr.merged
+      ? t("pr.state.merged")
+      : pr.closed
+        ? t("pr.state.closed")
+        : pr.draft
+          ? t("pr.state.draft")
+          : t("pr.state.open");
     return `#${pr.number} · ${pr.title}\n${pr.author} · ${pr.sourceBranch} → ${pr.targetBranch}\n${state}`;
   }
 </script>
@@ -113,7 +120,7 @@
 
 <section class:open class:pinned>
   <SectionHeader
-    label="Pull requests"
+    label={t("pr.title")}
     icon={prIcon}
     count={total}
     {open}
@@ -130,15 +137,15 @@
       <div class="search">
         <input
           type="search"
-          placeholder="Rechercher une pull request"
+          placeholder={t("pr.search")}
           value={repo.prQuery}
           oninput={(e) => (repo.prQuery = e.currentTarget.value)}
         />
         <button
           class="funnel"
           class:on={filterMenu !== null}
-          title="Filtrer les pull requests"
-          aria-label="Filtrer les pull requests"
+          title={t("pr.filter")}
+          aria-label={t("pr.filter")}
           onclick={openFilterMenu}
         >
           {@render funnelIcon()}
@@ -146,23 +153,21 @@
       </div>
 
       {#if repo.prLoading && !repo.prLoaded}
-        <p class="note">Chargement…</p>
+        <p class="note">{t("common.loading")}</p>
       {:else if repo.prError}
         <!-- Le message dit quoi faire, pas seulement ce qui a raté : ces deux
              échecs-là se règlent dans les Réglages, en deux clics. -->
-        <p class="note">{repo.prError.message}</p>
+        <p class="note">{errorMessage(repo.prError)}</p>
         {#if repo.prError.kind === "ForgeToken" || repo.prError.kind === "ForgeAuth"}
           <button class="link" onclick={() => (tabs.settingsOpen = true)}>
-            Ouvrir les Réglages pour saisir un jeton
+            {t("pr.settings")}
           </button>
         {:else}
-          <button class="link" onclick={() => repo.loadPullRequests()}>Réessayer</button>
+          <button class="link" onclick={() => repo.loadPullRequests()}>{t("action.retry")}</button>
         {/if}
       {:else if total === 0}
         <p class="note">
-          {repo.prQuery.trim().length > 0
-            ? "Aucune pull request ne correspond."
-            : "Aucune pull request."}
+          {repo.prQuery.trim().length > 0 ? t("pr.noMatch") : t("pr.empty")}
         </p>
       {:else}
         {#each groups as group (group.id)}
@@ -201,9 +206,9 @@
                 <span class="line">
                   <span class="num">#{pr.number}</span>
                   <span class="ptitle">{pr.title}</span>
-                  {#if pr.draft}<span class="tag draft">brouillon</span>{/if}
-                  {#if pr.merged}<span class="tag merged">fusionnée</span>
-                  {:else if pr.closed}<span class="tag closed">fermée</span>{/if}
+                  {#if pr.draft}<span class="tag draft">{t("pr.state.draft")}</span>{/if}
+                  {#if pr.merged}<span class="tag merged">{t("pr.state.merged")}</span>
+                  {:else if pr.closed}<span class="tag closed">{t("pr.state.closed")}</span>{/if}
                 </span>
                 <span class="line sub">
                   <span class="pbranch">{pr.sourceBranch}</span>
@@ -213,8 +218,8 @@
                 </span>
                 <button
                   class="kebab"
-                  title="Actions de la pull request"
-                  aria-label="Actions de la pull request"
+                  title={t("pr.actions")}
+                  aria-label={t("pr.actions")}
                   onclick={(e) => {
                     e.stopPropagation();
                     const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
@@ -237,7 +242,7 @@
 {#if filterMenu}
   <button
     class="ctx-overlay"
-    aria-label="Fermer le menu"
+    aria-label={t("common.closeMenu")}
     onclick={() => (filterMenu = null)}
     oncontextmenu={(e) => {
       e.preventDefault();
@@ -249,29 +254,29 @@
     style="left: {filterMenu.x}px; top: {filterMenu.y}px"
     role="menu"
   >
-    <p class="ctx-head">Ce que la section affiche</p>
+    <p class="ctx-head">{t("pr.filter.head")}</p>
     <button
       class="ctx-item"
       role="menuitemcheckbox"
       aria-checked={repo.prIncludeDrafts}
-      title="Les brouillons sont déjà chargés : les masquer ne demande rien au serveur"
+      title={t("pr.filter.drafts.hint")}
       onclick={() => repo.togglePrDrafts()}
     >
       <span class="check">{repo.prIncludeDrafts ? "☑" : "☐"}</span>
-      <span>Brouillons</span>
+      <span>{t("pr.filter.drafts")}</span>
     </button>
     <button
       class="ctx-item"
       role="menuitemcheckbox"
       aria-checked={repo.prIncludeClosed}
-      title="Les PR fermées ne sont pas demandées par défaut : cocher relance un chargement"
+      title={t("pr.filter.closed.hint")}
       onclick={() => {
         filterMenu = null;
         void repo.togglePrClosed();
       }}
     >
       <span class="check">{repo.prIncludeClosed ? "☑" : "☐"}</span>
-      <span>Fermées et fusionnées</span>
+      <span>{t("pr.filter.closed")}</span>
     </button>
   </div>
 {/if}
@@ -281,9 +286,9 @@
   <button
     class="reload"
     title={repo.prReport
-      ? `Recharger les pull requests de ${repo.prReport.repo}`
-      : "Recharger les pull requests"}
-    aria-label="Recharger les pull requests"
+      ? t("pr.reload.repo", { repo: repo.prReport.repo })
+      : t("pr.reload")}
+    aria-label={t("pr.reload")}
     disabled={repo.prLoading}
     onclick={(e) => {
       e.stopPropagation();

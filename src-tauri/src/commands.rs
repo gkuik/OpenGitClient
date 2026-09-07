@@ -30,7 +30,7 @@ fn lock<'a>(
 ) -> Result<MutexGuard<'a, AppState>, AppError> {
     state
         .lock()
-        .map_err(|_| AppError::Io("État interne corrompu".into()))
+        .map_err(|_| AppError::Io("Corrupted internal state".into()))
 }
 
 // ── Onglets / cycle de vie ──────────────────────────────────────────────────
@@ -758,7 +758,7 @@ pub fn load_pull_requests(
 #[tauri::command]
 pub fn open_pull_request(url: String) -> Result<(), AppError> {
     if !crate::forge::is_openable(&url) {
-        return Err(AppError::Io(format!("Adresse refusée : {url}")));
+        return Err(AppError::Io(format!("Address refused: {url}")));
     }
     tauri_plugin_opener::open_url(url, None::<&str>)
         .map_err(|e| AppError::Io(e.to_string()))

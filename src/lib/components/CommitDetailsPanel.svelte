@@ -1,4 +1,5 @@
 <script lang="ts">
+  import { i18n, t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { STATUS_BADGES } from "../badges";
   import CommitBody from "./CommitBody.svelte";
@@ -9,10 +10,11 @@
   // l'affichage d'un diff : c'est elle qui sert à passer d'un fichier à l'autre.
   const details = $derived(repo.commitDetails);
 
-  const dateFmt = new Intl.DateTimeFormat("fr-FR", {
-    dateStyle: "medium",
-    timeStyle: "short",
-  });
+  // Dérivé, et non figé au montage : la langue décide du format, et le panneau
+  // est monté une fois pour tous les onglets.
+  const dateFmt = $derived(
+    new Intl.DateTimeFormat(i18n.locale, { dateStyle: "medium", timeStyle: "short" }),
+  );
 
   /** Le fichier ouvert au centre, s'il provient de ce commit. */
   function isOpen(path: string): boolean {
@@ -32,20 +34,20 @@
 
 <div class="panel">
   <div class="sb-head">
-    <span class="label">Commit</span>
+    <span class="label">{t("commitDetails.label")}</span>
     <span class="oid">{details?.shortOid ?? "…"}</span>
     <button
       class="close"
       onclick={() => repo.clearCommitSelection()}
-      title="Fermer le commit"
-      aria-label="Fermer le commit"
+      title={t("commitDetails.close")}
+      aria-label={t("commitDetails.close")}
     >
       ×
     </button>
   </div>
 
   {#if !details}
-    <p class="placeholder">Chargement du commit…</p>
+    <p class="placeholder">{t("commitDetails.loading")}</p>
   {:else}
     <!-- Ordre : titre · commentaire · auteur, puis la liste des fichiers, qui est
          une section comme celles des deux colonnes. -->
@@ -69,7 +71,7 @@
 
     <section class:collapsed={!filesOpen}>
       <SectionHeader
-        label="Fichiers"
+        label={t("commitDetails.files")}
         icon={fileIcon}
         count={details.files.length}
         open={filesOpen}
@@ -95,7 +97,7 @@
               </span>
             </div>
           {:else}
-            <p class="placeholder small">Aucun fichier modifié.</p>
+            <p class="placeholder small">{t("commitDetails.noFile")}</p>
           {/each}
         </div>
       {/if}
@@ -114,7 +116,7 @@
 <!-- Un commit de fusion n'est comparé qu'à son premier parent : le dire ici
      évite de laisser croire que la liste couvre les deux côtés. -->
 {#snippet parentHint()}
-  <span class="hint">vs premier parent</span>
+  <span class="hint">{t("commitDetails.firstParent")}</span>
 {/snippet}
 
 <style>
