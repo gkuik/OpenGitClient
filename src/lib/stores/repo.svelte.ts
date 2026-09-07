@@ -1,6 +1,6 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api, pickRepositoryFolder } from "../api";
-import { allDirPaths, countStatuses, type TreeCounts } from "../tree";
+import { countStatuses, type TreeCounts } from "../tree";
 import type {
   AppError,
   BranchEntry,
@@ -288,12 +288,6 @@ export class RepoStore {
     return countStatuses(this.changedPaths.values());
   }
 
-  /** Tous les dossiers sont-ils dépliés ? (label du lien Tout déplier/replier) */
-  get allDirsExpanded(): boolean {
-    const dirs = this.everyDirPath();
-    return dirs.length > 0 && dirs.every((d) => this.expandedDirs.has(d));
-  }
-
   // ── Préférences d'affichage ─────────────────────────────────────────────────
 
   setViewMode(mode: ViewMode) {
@@ -321,15 +315,6 @@ export class RepoStore {
   toggleBranchDir(path: string) {
     if (this.collapsedBranchDirs.has(path)) this.collapsedBranchDirs.delete(path);
     else this.collapsedBranchDirs.add(path);
-  }
-
-  /** Déplie tout / replie tout selon l'état courant. */
-  toggleExpandAll() {
-    if (this.allDirsExpanded) {
-      this.expandedDirs.clear();
-    } else {
-      for (const d of this.everyDirPath()) this.expandedDirs.add(d);
-    }
   }
 
   clearError() {
@@ -1144,16 +1129,6 @@ export class RepoStore {
     for (const e of this.status?.untracked ?? []) byPath.set(e.path, e.status);
     for (const e of this.status?.staged ?? []) byPath.set(e.path, e.status);
     return byPath;
-  }
-
-  /** Tous les chemins de dossiers (sections indexée + non indexée confondues). */
-  private everyDirPath(): string[] {
-    const combined = [
-      ...(this.status?.staged ?? []),
-      ...(this.status?.unstaged ?? []),
-      ...(this.status?.untracked ?? []),
-    ];
-    return allDirPaths(combined);
   }
 
   /** Exécute une action mutante puis rafraîchit le statut, erreurs capturées. */

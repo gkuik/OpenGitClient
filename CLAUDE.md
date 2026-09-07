@@ -406,13 +406,31 @@ has no style to reinvent.
   its own. Two consequences: every SVG in the header is `display: block` (inline,
   it would sit on a baseline and its box would gain the descender space below,
   pushing the drawing half a descender up), and the chevron is a **drawn
-  triangle, not the `▶` glyph** the branch rows use — that glyph's ink sits half a
-  pixel high in its line box, and it was the one element off the axis. A path is
-  centred on its `viewBox` by construction, in every font.
+  triangle, not the `▶` glyph** — that glyph's ink sits half a pixel high in its
+  line box, and it was the one element off the axis. A path is centred on its
+  `viewBox` by construction, in every font.
+- **The gutter is a sum, not a value** — `--sec-gutter: calc(--sec-inset + --row-inset)`
+  in `app.css`. A row's content starts after two insets (the body's, which lifts
+  the hover chips off the column edge, then the row's own inside its chip), while
+  the header does not sit inside `.sec-body` at all, so it must carry both. Three
+  independent numbers used to live here and the header landed 3px left of its own
+  rows; a section's chevron and its folders' now share one column, at any text
+  size. Tree depth adds 12px per level on top, inline in the components.
+- **One `Chevron.svelte` for every fold marker**, section headers included: the
+  four places that drew one (section header, branch directory, remote node, file
+  tree directory) had each written their own and already disagreed — 0.55rem here,
+  0.6rem there — and the header's switch to a path made the mismatch plain. Its
+  size is in **rem**, unlike the section icons: a chevron marks a fold *in text*
+  and follows that text, where a category icon is a fixed badge.
 - **Which section is "first" is computed in the component, not in CSS.** The left
   column's collapsed sections are moved to the bottom by `order`, so a
   `section + section` rule would put the line on the wrong one. `firstVisual` is
   the first *open* section — or, if everything is collapsed, the first one at all.
+  Both it and `firstClosed` read a list of the sections actually **rendered** and
+  name them by id, never by a fixed index: REMOTE is dropped when the repository
+  has no remote branch, and an index would keep counting a section that isn't
+  there — the separator and the collapsed block's margin would both land one
+  section off.
 - **Icons are sized from the wrapper, globally.** A snippet keeps the style scope
   of the component that *defined* it, not of the one that renders it, so
   `SectionHeader` reaches its icon through `.ic-slot :global(svg)`. That is what
@@ -467,7 +485,9 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section, **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+drawn at all while there is no remote branch to put in it, and comes back on the
+first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 

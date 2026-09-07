@@ -231,17 +231,3 @@ function underRemote(
   }
   return current;
 }
-
-/** Tous les chemins de dossiers présents (pour « Tout déplier »). */
-export function allDirPaths(entries: FileEntry[]): string[] {
-  const set = new Set<string>();
-  for (const e of entries) {
-    const parts = e.path.split("/");
-    let cur = "";
-    for (let i = 0; i < parts.length - 1; i++) {
-      cur = cur ? `${cur}/${parts[i]}` : parts[i];
-      set.add(cur);
-    }
-  }
-  return [...set];
-}

@@ -197,7 +197,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0.3rem 0.3rem 0.6rem;
+    padding: 0.3rem var(--sec-inset) 0.6rem;
   }
   .hint {
     font-size: 0.7rem;
@@ -256,7 +256,7 @@
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.25rem 0.4rem;
+    padding: 0.25rem 0.4rem 0.25rem var(--row-inset);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.8rem;

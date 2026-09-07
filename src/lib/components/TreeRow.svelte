@@ -3,6 +3,7 @@
   import { repo } from "../stores/repo.svelte";
   import FileItem from "./FileItem.svelte";
   import TreeRow from "./TreeRow.svelte"; // récursion (auto-import Svelte 5)
+  import Chevron from "./Chevron.svelte";
 
   let {
     node,
@@ -17,11 +18,11 @@
   {@const open = repo.isDirOpen(node.path)}
   <button
     class="dir"
-    style="padding-left: {depth * 12 + 8}px"
+    style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     onclick={() => repo.toggleDir(node.path)}
     aria-expanded={open}
   >
-    <span class="chev" class:open>▶</span>
+    <Chevron {open} />
     <span class="dname">{node.name}</span>
     <span class="counts">
       {#if node.counts.modified}<span class="c mod">✎ {node.counts.modified}</span>{/if}
@@ -53,17 +54,6 @@
   }
   .dir:hover {
     background: var(--bg-raised);
-  }
-  .chev {
-    flex: none;
-    display: inline-block;
-    width: 0.7rem;
-    font-size: 0.6rem;
-    transition: transform 0.1s ease;
-    color: var(--text-faint);
-  }
-  .chev.open {
-    transform: rotate(90deg);
   }
   .dname {
     flex: 1;

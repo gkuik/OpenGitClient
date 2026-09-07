@@ -129,11 +129,6 @@
         />
         {#if unstagedOpen}
           <div class="sec-body">
-            {#if repo.viewMode === "tree" && unstagedCount > 0}
-              <button class="expand-all" onclick={() => repo.toggleExpandAll()}>
-                {repo.allDirsExpanded ? "Tout replier" : "Tout déplier"}
-              </button>
-            {/if}
             <FileList entries={repo.unstagedEntries} staged={false} />
           </div>
         {/if}
@@ -395,7 +390,7 @@
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0.3rem 0.3rem 0.6rem;
+    padding: 0.3rem var(--sec-inset) 0.6rem;
   }
   .sec-action {
     background: transparent;
@@ -425,17 +420,6 @@
   .sec-action:disabled {
     opacity: 0.4;
     cursor: default;
-  }
-  .expand-all {
-    background: transparent;
-    border: none;
-    color: var(--accent-soft);
-    font-size: 0.72rem;
-    padding: 0.1rem 0.5rem 0.3rem;
-    cursor: pointer;
-  }
-  .expand-all:hover {
-    text-decoration: underline;
   }
   .empty {
     color: var(--text-dim);

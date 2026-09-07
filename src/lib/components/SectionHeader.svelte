@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { Snippet } from "svelte";
+  import Chevron from "./Chevron.svelte";
 
   /*
     En-tête de section, commun aux deux colonnes latérales. C'est le **seul**
@@ -23,8 +24,9 @@
 
     Tout se centre sur l'axe de la barre, ce qui ne va pas de soi : `align-items`
     centre des *boîtes*, or l'encre d'un texte ou d'un SVG n'occupe pas forcément
-    le milieu de la sienne. D'où le chevron dessiné et les `display: block` plus
-    bas — voir les notes à chaque endroit.
+    le milieu de la sienne. D'où le `display: block` sur l'icône plus bas, la
+    taille du compteur héritée du titre, et le chevron confié à `Chevron` — qui
+    dessine un tracé plutôt que le glyphe « ▶ », pour cette raison exactement.
   */
   let {
     label,
@@ -50,16 +52,7 @@
 
 <header class:first>
   <button class="sec-title" onclick={onToggle} aria-expanded={open}>
-    <!-- Triangle dessiné, et non le glyphe « ▶ » des lignes de branches : dans une
-         boîte de ligne, c'est le *cadre* du texte qui se centre, pas son encre, et
-         celle de ce caractère est haute d'un demi-pixel — le seul élément de la
-         barre qui ne tombait pas sur son axe. Le tracé, lui, est centré sur son
-         `viewBox` par construction, dans toutes les polices. -->
-    <span class="chev" class:open>
-      <svg viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
-        <path d="M6 3.5 11 8 6 12.5Z" />
-      </svg>
-    </span>
+    <Chevron {open} />
     <span class="ic-slot">{@render icon()}</span>
     <span class="label">{label}</span>
     {#if count !== undefined}
@@ -77,7 +70,7 @@
     align-items: center;
     gap: 0.5rem;
     flex: none;
-    padding: 0.5rem 0.6rem;
+    padding: 0.5rem var(--sec-gutter);
     border-top: 1px solid var(--border);
     background: var(--bg);
   }
@@ -111,23 +104,6 @@
     text-overflow: ellipsis;
     white-space: nowrap;
     text-transform: uppercase;
-  }
-  /* `display: block` sur le SVG, ici comme sur l'icône : en `inline`, il
-     s'assoirait sur une ligne de base et sa boîte gagnerait le jambage du
-     dessous, ce qui décentrerait le dessin de la moitié de ce jambage. */
-  .chev {
-    flex: none;
-    display: inline-flex;
-    color: var(--text-faint);
-    transition: transform 0.1s ease;
-  }
-  .chev svg {
-    display: block;
-    width: 12px;
-    height: 12px;
-  }
-  .chev.open {
-    transform: rotate(90deg);
   }
   /*
     Un extrait rendu ici garde la portée de style du composant qui l'a *défini*,
