@@ -5,6 +5,7 @@
   import WelcomeScreen from "./lib/components/WelcomeScreen.svelte";
   import NewTabView from "./lib/components/NewTabView.svelte";
   import SettingsView from "./lib/components/SettingsView.svelte";
+  import RepoBar from "./lib/components/RepoBar.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
@@ -36,31 +37,42 @@
   {:else if tabs.activeIsNew}
     <NewTabView />
   {:else}
-    <div class="body">
-      <BranchSidebar />
-      <!-- Poignées posées sur les deux frontières : hors de la grille, elles ne
-           déplacent aucune colonne (voir SidebarResizer). -->
-      <SidebarResizer side="left" />
-      <SidebarResizer side="right" />
-      <main class="main">
-        <CenterPanel />
-      </main>
-      <!--
-        La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
-        le détail du commit quand un commit est sélectionné, sinon les changements
-        en cours et la boîte de commit.
-      -->
-      <aside class="sidebar">
-        <!-- Au-dessus des deux vues : une fusion en cours concerne le dépôt,
-             pas ce qu'on est en train de regarder. -->
-        <MergeBanner />
-        {#if repo.selectedCommitOid}
-          <CommitDetailsPanel />
-        {:else}
-          <StatusPanel />
-          <CommitBox />
-        {/if}
-      </aside>
+    <!-- Le dépôt occupe la rangée souple de `.app` : sa barre en haut, puis les
+         trois colonnes. Un conteneur plutôt qu'une rangée de plus dans `.app` —
+         les trois autres vues (accueil, nouvel onglet, paramètres) n'ont pas de
+         barre, et une rangée déclarée mais vide décalerait leur hauteur. -->
+    <div class="repo">
+      <!-- Nom du dépôt · Pull / Push / Fetch · compte rendu. Ces trois actions
+           concernent le dépôt entier : elles ont quitté la colonne des branches,
+           qui n'en portait qu'à titre de voisinage. -->
+      <RepoBar />
+
+      <div class="body">
+        <BranchSidebar />
+        <!-- Poignées posées sur les deux frontières : hors de la grille, elles
+             ne déplacent aucune colonne (voir SidebarResizer). -->
+        <SidebarResizer side="left" />
+        <SidebarResizer side="right" />
+        <main class="main">
+          <CenterPanel />
+        </main>
+        <!--
+          La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
+          le détail du commit quand un commit est sélectionné, sinon les
+          changements en cours et la boîte de commit.
+        -->
+        <aside class="sidebar">
+          <!-- Au-dessus des deux vues : une fusion en cours concerne le dépôt,
+               pas ce qu'on est en train de regarder. -->
+          <MergeBanner />
+          {#if repo.selectedCommitOid}
+            <CommitDetailsPanel />
+          {:else}
+            <StatusPanel />
+            <CommitBox />
+          {/if}
+        </aside>
+      </div>
     </div>
   {/if}
 
@@ -78,6 +90,13 @@
     display: grid;
     grid-template-rows: auto 1fr;
     height: 100vh;
+    overflow: hidden;
+  }
+  /* La barre du dépôt puis les trois colonnes, qui prennent tout le reste. */
+  .repo {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    min-height: 0;
     overflow: hidden;
   }
   .body {

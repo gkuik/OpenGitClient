@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
 Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection and an uncommitted-changes row at its top).
 
-The window is a tab bar (open repositories) over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
+The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
 **The tab bar *is* the topbar** — no logo, no "open repository" button: the tabs, a `+` that sits in the same flow right after the last tab, and a settings gear pinned to the right. The gear lives **outside** `.tabs` (which is `flex: 1` and scrolls), so it stays against the right edge however many tabs are open instead of scrolling away with them. Tabs show the repository name only (no branch — the current branch is already in the status panel header). The `+` opens a **new-tab page** rather than the folder dialog (see below). With no tab open at all, `WelcomeScreen` takes the whole body.
 
@@ -458,7 +458,7 @@ The app's own writes come back as events (staging writes `.git/index`), so a red
 
 That last point is why two reloads that used to be unnecessary now are: `commit()` reloads branches (the current branch just moved a commit ahead — the moment you look at the counter), and `reloadRemoteRefs()` reloads them too (a fetch changes `behind`, and that's *all* it changes locally). Miss either and the badge lies exactly when it matters.
 
-`RepoStore.currentGap` derives the HEAD branch's gap for the toolbar counters; it's `null` on a detached HEAD, where no local branch is HEAD.
+`RepoStore.currentGap` derives the HEAD branch's gap for the repository bar's counters; it's `null` on a detached HEAD, where no local branch is HEAD.
 
 ### Author profiles are stored, the choice is not
 
@@ -499,7 +499,7 @@ Three consequences worth keeping:
 
 - **The default lives in `app.css`, not in the store.** `font.init()` applies nothing until the preference comes back, so nothing flashes — unlike the theme, which has to be resolved before the first paint. It is also what a browser shows, where there is no backend to answer.
 - **The preference travels as a number, not an enum** — unlike `ThemeMode` and `PullMode`. A value out of bounds is clamped (`AppState::font_size`, both on read and write); an unknown *variant* would fail the whole `prefs.json` parse and take the theme and Pull mode down with it. `Prefs::default` is hand-written for the same family of reasons: derived, `u8::default()` would start a file written by an earlier version at 0 pt.
-- **What is in px stays in px on purpose**: icon buttons and their glyphs (the sidebar's 56px toolbar squares, the tabs' 30px), and above all the tab bar's `min-height: 49px`, which is measured against `trafficLightPosition` and must not move with the text.
+- **What is in px stays in px on purpose**: icon buttons and their glyphs (the repository bar's 48px squares, the tabs' 30px), and above all the tab bar's `min-height: 49px`, which is measured against `trafficLightPosition` and must not move with the text.
 
 ### Sidebar widths are two rem values, dragged on the border
 
@@ -544,8 +544,8 @@ what the two `svelte-ignore` directives in the component are about.
 
 ### The left sidebar never scrolls — its sections do
 
-`BranchSidebar` is a column that fits, always: the toolbar on top, then
-`.sections` filling exactly what's left. **The scroll lives in each section's
+`BranchSidebar` is a column that fits, always: `.sections` fills it entirely
+(the toolbar that used to sit on top is now `RepoBar`, above the three columns). **The scroll lives in each section's
 `.sec-body`**, never in the sidebar as a whole, and the section headers are
 plain flow (they used to be `sticky` against the one scroller that no longer
 exists).
@@ -592,7 +592,8 @@ has no style to reinvent.
 - **The separator belongs to the header, not to the section.** The header *is*
   the section's first child, so a `border-top` there lands exactly where the
   section starts, and the caller never has to know it exists. `first` removes it
-  where the element above already draws one (`BranchSidebar`'s toolbar). There is
+  where the element above already draws one — the repository bar over the left
+  column, the panel header over the right one. There is
   **one** line, above: a second one under the title would box the header off from
   the content it announces.
 - **Everything sits on the bar's axis, which `align-items: center` alone does not
@@ -673,6 +674,14 @@ These caused real breakage; don't undo them.
 - **`generate_context!` embeds `src-tauri/icons/*` at compile time.** If those files are missing, even `cargo check` fails with a proc-macro panic. Regenerate with `npm run tauri icon <source.png>`.
 - **Never put `direction: rtl` on `.path` in `FileItem.svelte`.** It was used for left-side ellipsis but reorders bidi text, rendering `.bob/config.json` as `bob/config.json.` — breaking every dotfile.
 - **`html, body` carry `overflow: hidden` + `overscroll-behavior: none`** (`app.css`). This is a desktop app: only inner panels scroll. `overscroll-behavior` specifically kills WKWebView's elastic bounce, which otherwise drags the whole UI.
+- **The context-menu chrome is in `app.css`, not in a component** — `.ctx-overlay`,
+  `.ctx-menu`, `.ctx-head`, `.ctx-item`. Three components open menus now (the
+  branch column, the PULL REQUESTS section, the repository bar) and the first two
+  copies had already drifted apart: 176px against 236px of `min-width`, a hover
+  that ignored `:disabled` in one of them. What stays local to a component is
+  what distinguishes *its* menu — its width (`.pull-menu`, `.pr-menu`,
+  `.merge-menu`, `.filter-menu`), its icons and its bullets. The classes need no
+  `:global`: they are written in the components' own markup.
 - **Each side column has its own width variable** — `--sidebar-l-w` / `--sidebar-r-w` (`app.css`), which `App.svelte` uses for the left and right grid tracks and `layout.svelte.ts` rewrites. Change the variables, not the grid.
 - **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above.
 - Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` + `core:window:allow-start-dragging` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`. **`tauri-plugin-opener` is deliberately not registered**: it is called from Rust, so the webview gains no URL-opening command and the capability file stays as it is (see the pull requests section).
@@ -689,9 +698,14 @@ The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Te
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
-The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters.
+**The repository bar** (`RepoBar`, under the tab bar and over the three columns) holds Pull / Push / Fetch, all three working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters. It is a `1fr auto 1fr` grid — repository name, then the buttons, then the report of the last operation — so the buttons sit at the middle of the *window* whatever the length of the name or of the message; `justify-content` on one row would shift them as soon as either grew. It renders only for a repository tab: the welcome screen, the new-tab page and Settings have no bar, which is why it lives in a `.repo` wrapper inside `App.svelte` rather than as a third row of `.app` — a row declared but empty would move those three views down.
 
-**Pull is a split button**, GitKraken-style: the button runs the chosen mode, the chevron — placed *inside* the cell against its right edge, not beside it, so the two read as one control and the three toolbar buttons keep the same footprint — opens a radio menu that only *picks* the mode (choosing never fires a network call — a menu click that merged would be a nasty surprise). The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
+**Pull runs the chosen mode, and a right-click on it opens the radio menu that only *picks* that mode** (choosing never fires a network call — a menu click that merged would be a nasty surprise). No chevron: the gesture is the one the stashes and the branches already use, and the three buttons keep the same footprint. Two consequences worth knowing:
+
+- **The menu has to stay reachable while the button is disabled** by a running remote operation — that is exactly when one wants to change what it will do next. WebKit dispatches no mouse event on a disabled `<button>`, so the `contextmenu` handler sits on the frame around it and the disabled button drops to `pointer-events: none`, letting the click fall through to that frame.
+- **Nothing on the button announces the menu any more**, the chevron having been its only sign. The tooltip's second line says it instead, and the `ContextMenu` key opens it from the keyboard, as on a stash row.
+
+The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
 
 **A local branch is merged into another** from the sidebar — dragged onto it, or
 right-clicked — fast-forwarding without a checkout when it can, switching to the

@@ -1,64 +1,14 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
-  import { repo, tabs } from "../stores/repo.svelte";
+  import { repo } from "../stores/repo.svelte";
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
-  import type { Snippet } from "svelte";
-  import type { MergeMode, PullMode, PullRequestEntry } from "../types";
+  import type { MergeMode, PullRequestEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import RichText from "./RichText.svelte";
   import PullRequestSection from "./PullRequestSection.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
-
-  // ── Menu du bouton Pull ─────────────────────────────────────────────────────
-  // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
-  // n'y a pas de mode correspondant côté backend, donc rien à envoyer.
-  const PULL_ENTRIES: { mode: PullMode | null; label: string; hint: string }[] = $derived([
-    {
-      mode: "fetchAll",
-      label: t("toolbar.pull.fetchAll"),
-      hint: t("toolbar.pull.fetchAll.hint"),
-    },
-    {
-      mode: "fastForwardOrMerge",
-      label: t("toolbar.pull.fastForwardOrMerge"),
-      hint: t("toolbar.pull.fastForwardOrMerge.hint"),
-    },
-    {
-      mode: "fastForwardOnly",
-      label: t("toolbar.pull.fastForwardOnly"),
-      hint: t("toolbar.pull.fastForwardOnly.hint"),
-    },
-    {
-      mode: null,
-      label: t("toolbar.pull.rebase"),
-      hint: t("toolbar.pull.rebase.hint"),
-    },
-  ]);
-
-  const currentPull = $derived(
-    PULL_ENTRIES.find((e) => e.mode === tabs.pullMode) ?? PULL_ENTRIES[1],
-  );
-
-  /** Position du menu du bouton Pull, en coordonnées fenêtre. */
-  let pullMenu = $state<{ x: number; y: number } | null>(null);
-  const PULL_MENU_W = 268;
-
-  function openPullMenu(e: MouseEvent) {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    // Aligné sous le bouton, ramené dans la fenêtre s'il déborde à droite.
-    pullMenu = {
-      x: Math.max(8, Math.min(r.left, window.innerWidth - PULL_MENU_W - 8)),
-      y: r.bottom + 2,
-    };
-  }
-
-  function choosePull(mode: PullMode) {
-    pullMenu = null;
-    // Choisir ne déclenche rien : le menu fixe ce que **le bouton** fera.
-    void tabs.setPullMode(mode);
-  }
 
   // D'autres catégories (TAGS…) viendront s'ajouter ici : chacune est une
   // <section> autonome sur ce même modèle.
@@ -213,13 +163,13 @@
   }
 </script>
 
-<!-- Échap ferme les trois menus : stashes, bouton Pull et fusion. (Pendant un
-     glissement, la même touche l'abandonne — c'est le module qui l'écoute.) -->
+<!-- Échap ferme les trois menus de la colonne : stashes, pull requests et
+     fusion. (Pendant un glissement, la même touche l'abandonne — c'est le
+     module qui l'écoute.) -->
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     close();
-    pullMenu = null;
     prMenu = null;
     branchMerge.close();
   }}
@@ -229,55 +179,6 @@
   {#if !repo.repoInfo}
     <p class="empty">{t("common.noRepo")}</p>
   {:else}
-    <!--
-      Barre d'actions du dépôt. Elle vit hors de la zone défilante : elle reste
-      visible quand on parcourt une longue liste de branches, et elle n'entre pas
-      en conflit avec les en-têtes de section, qui sont `sticky` en haut de
-      celle-ci. D'autres commandes viendront s'ajouter à la suite.
-    -->
-    <div class="toolbar">
-      <div class="actions">
-        {@render action({
-          label: "Pull",
-          icon: pullIcon,
-          hint: currentPull.hint,
-          run: currentPull.mode ? () => repo.pull(currentPull.mode!) : undefined,
-          busy: repo.busyRemote,
-          count: repo.currentGap?.behind,
-          menu: openPullMenu,
-        })}
-        {@render action({
-          label: t("toolbar.push"),
-          icon: pushIcon,
-          hint: t("toolbar.push.hint"),
-          run: () => repo.push(),
-          busy: repo.busyRemote,
-          count: repo.currentGap?.ahead,
-        })}
-        {@render action({
-          label: t("toolbar.fetch"),
-          icon: fetchIcon,
-          hint: t("toolbar.fetch.hint"),
-          run: () => repo.fetch(),
-          busy: repo.busyRemote,
-        })}
-      </div>
-      <!-- Compte rendu partagé : le backend ne laisse pas un fetch et un push se
-           croiser sur un même dépôt. Sans lui, un fetch qui ne ramène rien
-           n'aurait aucun effet visible, la section REMOTE restant identique. -->
-      {#if repo.fetching}
-        <p class="status">{t("toolbar.status.fetching")}</p>
-      {:else if repo.pushing}
-        <p class="status">{t("toolbar.status.pushing")}</p>
-      {:else if repo.pulling}
-        <p class="status">{t("toolbar.status.pulling")}</p>
-      {:else if repo.mergingBranches}
-        <p class="status">{t("toolbar.status.merging")}</p>
-      {:else if repo.opStatus}
-        <p class="status">{repo.opStatus}</p>
-      {/if}
-    </div>
-
     <div class="sections">
       <section class:open={localOpen} class:pinned={firstClosed === "local"}>
         <SectionHeader
@@ -516,42 +417,6 @@
   </div>
 {/if}
 
-<!-- Menu du bouton Pull : même mécanique que celui des stashes (superposition
-     qui ferme, position en coordonnées fenêtre, Échap). -->
-{#if pullMenu}
-  <button
-    class="ctx-overlay"
-    aria-label={t("common.closeMenu")}
-    onclick={() => (pullMenu = null)}
-    oncontextmenu={(e) => {
-      e.preventDefault();
-      pullMenu = null;
-    }}
-  ></button>
-  <div
-    class="ctx-menu pull-menu"
-    style="left: {pullMenu.x}px; top: {pullMenu.y}px"
-    role="menu"
-  >
-    <p class="ctx-head">{t("toolbar.pull.menu")}</p>
-    {#each PULL_ENTRIES as entry (entry.label)}
-      {@const selected = entry.mode !== null && entry.mode === tabs.pullMode}
-      <button
-        class="ctx-item"
-        class:selected
-        role="menuitemradio"
-        aria-checked={selected}
-        disabled={entry.mode === null}
-        title={entry.hint}
-        onclick={() => entry.mode && choosePull(entry.mode)}
-      >
-        <span class="radio">{selected ? "◉" : "○"}</span>
-        <span>{entry.label}</span>
-      </button>
-    {/each}
-  </div>
-{/if}
-
 <!-- Menu d'une pull request. Une seule entrée : la PR s'ouvre sur la forge.
      Rien ne se fusionne ni ne se ferme d'ici — l'application lit les PR, elle
      ne les pilote pas. -->
@@ -577,95 +442,6 @@
     </button>
   </div>
 {/if}
-
-<!--
-  Un bouton de la barre d'actions : icône au-dessus, libellé en dessous.
-  Ajouter une commande se réduit à un `{@render action(...)}` de plus.
-
-  Un bouton sans `run` est désactivé : c'est le cas de Pull et Push, qui n'ont pas
-  encore de backend. Le libellé reste visible pour que la place de la commande
-  soit acquise.
-
-  `count` est l'écart de la branche courante avec son amont — ce que le bouton
-  traiterait. Zéro et « pas d'amont » ne mettent pas de pastille : elle signale
-  du travail en attente, pas une synchronisation vérifiée.
--->
-{#snippet action(a: {
-  label: string;
-  icon: Snippet;
-  hint: string;
-  run?: () => void;
-  busy?: boolean;
-  count?: number;
-  menu?: (e: MouseEvent) => void;
-})}
-  <!--
-    La flèche vit **dans** la boîte du bouton, pas à côté : c'est le cadre
-    `.split` qui porte le fond, la bordure et le survol, les deux boutons
-    n'étant que des zones de clic à l'intérieur. Deux `<button>` restent
-    nécessaires (on n'imbrique pas un bouton dans un bouton) mais ils se lisent
-    comme un seul contrôle, séparés par un filet qui apparaît au survol.
-  -->
-  <div class="split" class:disabled={!a.run || a.busy}>
-    <button
-      class="action"
-      disabled={!a.run || a.busy}
-      title={a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
-      onclick={a.run}
-    >
-      {@render a.icon()}
-      <span>{a.label}</span>
-      {#if a.count}
-        <span class="badge">{a.count}</span>
-      {/if}
-    </button>
-    <!-- Ouvre le menu même quand l'action est indisponible (opération distante
-         en cours) : c'est par là qu'on change ce que le bouton fera. -->
-    {#if a.menu}
-      <button
-        class="caret"
-        title={t("toolbar.pull.menu.open")}
-        aria-label={t("toolbar.pull.menu.open")}
-        onclick={a.menu}
-      >
-        <!-- Chevron dessiné, pas « ▾ » : ce caractère est le triangle *small*
-             d'Unicode, qui se rend minuscule quelle que soit la taille de
-             police — `font-size` ne peut rien pour lui. En SVG il suit la même
-             langue graphique que les autres icônes de la barre, et sa taille
-             est enfin réglable. -->
-        <svg class="caret-ic" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round">
-          <path d="M2.5 4.5 6 8l3.5-3.5" />
-        </svg>
-      </button>
-    {/if}
-  </div>
-{/snippet}
-
-{#snippet pullIcon()}
-  <!-- Flèche descendante vers une base : le distant vient jusqu'au local. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M8 1.75v7.5" />
-    <path d="M4.75 6 8 9.25 11.25 6" />
-    <path d="M3 13.25h10" />
-  </svg>
-{/snippet}
-
-{#snippet fetchIcon()}
-  <!-- Flèche circulaire : rapatrie les références sans toucher au working dir. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M13.4 9.2A5.5 5.5 0 1 1 12 4.2" />
-    <path d="M9.4 4.6 12 4.2l-.4-2.6" />
-  </svg>
-{/snippet}
-
-{#snippet pushIcon()}
-  <!-- Flèche montante depuis une base : le local part vers le distant. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M8 14.25v-7.5" />
-    <path d="M4.75 10 8 6.75 11.25 10" />
-    <path d="M3 2.75h10" />
-  </svg>
-{/snippet}
 
 <!-- Icônes des actions de stash. Trait `currentColor` : suivent la couleur du
      bouton (rouge sur « Supprimer »). -->
@@ -770,125 +546,6 @@
     display: flex;
     flex-direction: column;
     overflow: hidden;
-  }
-  .toolbar {
-    flex: none;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    gap: 0.35rem;
-    padding: 0.5rem;
-    border-bottom: 1px solid var(--border);
-  }
-  .actions {
-    display: flex;
-    justify-content: center;
-    gap: 0.4rem;
-  }
-  /* Compte rendu du dernier fetch ; s'efface tout seul. */
-  .status {
-    margin: 0;
-    font-size: 0.72rem;
-    color: var(--text-dim);
-    text-align: center;
-  }
-  /* Le cadre du bouton : c'est lui qui porte fond, bordure et survol, pour que
-     l'action et sa flèche se lisent comme un seul contrôle. */
-  .split {
-    position: relative;
-    flex: none;
-    display: flex;
-    align-items: stretch;
-    border: 1px solid transparent;
-    border-radius: 6px;
-  }
-  /* Le survol vaut pour toute la boîte, flèche comprise — sans quoi passer sur
-     la flèche éteindrait le bouton, qui n'est pas son ancêtre. */
-  .split:hover:not(.disabled) {
-    background: var(--bg-raised);
-    border-color: var(--border);
-  }
-  /* Boutons carrés, icône au-dessus du libellé. `relative` pour ancrer la
-     pastille de compteur dans le coin. */
-  .action {
-    position: relative;
-    flex: none;
-    width: 56px;
-    height: 56px;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    justify-content: center;
-    gap: 0.3rem;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 6px;
-    color: var(--text);
-    font-size: 0.7rem;
-    cursor: pointer;
-  }
-  /* Le chevron se pose **dans** la cellule, contre son bord droit, plutôt que de
-     l'élargir : les trois boutons gardent la même empreinte, le libellé reste
-     centré, et la flèche se lit comme une partie du bouton et non comme un
-     bouton voisin. Cible de 20×30, bien plus grande que le chevron. */
-  .caret {
-    position: absolute;
-    top: 50%;
-    right: 0;
-    transform: translateY(-50%);
-    width: 20px;
-    height: 30px;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-  /* Plus petit que l'icône de l'action (20px) — il reste secondaire — mais
-     assez grand pour se voir et se viser. Seul point à régler si besoin. */
-  .caret-ic {
-    width: 14px;
-    height: 14px;
-  }
-  .split:hover .caret {
-    color: var(--text);
-  }
-  /* Le filet de séparation n'apparaît qu'au survol : au repos, une seule boîte. */
-  .split:hover .caret {
-    border-left-color: var(--border);
-  }
-  /* Survolée seule, la flèche s'éclaire sans se détacher du bouton. */
-  .caret:hover {
-    background: var(--bg);
-    color: var(--text);
-  }
-  .action:disabled {
-    color: var(--text-faint);
-    cursor: default;
-  }
-  .action-ic {
-    width: 20px;
-    height: 20px;
-  }
-  /* Compteur d'écart. Sa couleur est fixée ici, sinon il hériterait du gris de
-     `.action:disabled` — Pull et Push étant justement désactivés. */
-  .badge {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    min-width: 1rem;
-    padding: 0 0.2rem;
-    border-radius: 999px;
-    background: var(--accent-bg);
-    color: var(--accent-soft);
-    font-size: 0.62rem;
-    font-variant-numeric: tabular-nums;
-    line-height: 1.4;
   }
   /* Une section est une liste sur laquelle on agit, pas de la prose : y
      sélectionner du texte gênerait le clic sans rien apporter. Ce qui se copie —
@@ -1035,53 +692,15 @@
     color: var(--text);
   }
 
-  /* ── Menu contextuel ── */
-  .ctx-overlay {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: default;
-  }
-  .ctx-menu {
-    position: fixed;
-    z-index: 51;
-    min-width: 176px;
-    padding: 0.25rem;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 8px 24px var(--shadow-color);
-  }
-  .ctx-item {
-    display: flex;
-    align-items: center;
-    gap: 0.5rem;
-    width: 100%;
-    text-align: left;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 0.8rem;
-    padding: 0.35rem 0.6rem;
-    border-radius: 4px;
-    cursor: pointer;
-    white-space: nowrap;
-  }
+  /* ── Menus contextuels ──
+     Superposition, boîte, en-tête et entrées sont dans `app.css` : trois
+     composants les dessinent désormais. Ne reste ici que le propre de ces
+     menus-là. */
   /* Suit la couleur du texte du bouton (rouge pour l'action de suppression). */
   .ctx-ic {
     flex: none;
     width: 14px;
     height: 14px;
-  }
-  .ctx-item:hover:not(:disabled) {
-    background: var(--accent-bg);
-  }
-  .ctx-item:disabled {
-    color: var(--text-faint);
-    cursor: default;
   }
   /* Menu de la fusion : les noms de branches peuvent être longs, l'entrée passe
      donc à la ligne au lieu de pousser le menu hors de l'écran. */
@@ -1133,29 +752,6 @@
     overflow: hidden;
   }
 
-  /* Menu du bouton Pull : en-tête explicatif + entrées radio. */
-  .pull-menu {
-    min-width: 268px;
-  }
-  .ctx-head {
-    margin: 0.15rem 0.6rem 0.35rem;
-    max-width: 240px;
-    color: var(--text-dim);
-    font-size: 0.72rem;
-    line-height: 1.3;
-  }
-  .radio {
-    flex: none;
-    width: 0.9rem;
-    font-size: 0.7rem;
-    color: var(--text-faint);
-  }
-  .ctx-item.selected {
-    background: var(--accent-bg);
-  }
-  .ctx-item.selected .radio {
-    color: var(--accent-soft);
-  }
   .ctx-item.danger {
     color: var(--danger);
   }
