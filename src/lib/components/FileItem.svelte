@@ -32,7 +32,7 @@
   class:selected
   role="button"
   tabindex="0"
-  style="padding-left: {depth * 12 + 8}px"
+  style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
   onclick={selectFile}
   onkeydown={(e) => (e.key === "Enter" ? selectFile() : undefined)}
 >

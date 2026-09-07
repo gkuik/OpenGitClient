@@ -385,6 +385,80 @@ inside itself.
 - Section heights are **not** draggable, unlike the sidebar widths; if that ever
   changes, it belongs on `SidebarResizer`'s model, not on a new one.
 
+### Every section in both columns is `border · [icon] title · content`
+
+`SectionHeader.svelte` is the single component that draws a section's header, in
+`BranchSidebar` (LOCAL / REMOTE / STASHES), `StatusPanel` (non-indexés /
+indexés) and `CommitDetailsPanel` (the commit's file list). The two columns had
+drifted apart on every one of these points — icon on the left only, count folded
+into the label on the right, bold title one side and dim uppercase the other,
+separator line owned by a differently-named class in each file. A new section now
+has no style to reinvent.
+
+- **The separator belongs to the header, not to the section.** The header *is*
+  the section's first child, so a `border-top` there lands exactly where the
+  section starts, and the caller never has to know it exists. `first` removes it
+  where the element above already draws one (`BranchSidebar`'s toolbar). There is
+  **one** line, above: a second one under the title would box the header off from
+  the content it announces.
+- **Everything sits on the bar's axis, which `align-items: center` alone does not
+  give you** — it centres *boxes*, and neither text nor an SVG necessarily fills
+  its own. Two consequences: every SVG in the header is `display: block` (inline,
+  it would sit on a baseline and its box would gain the descender space below,
+  pushing the drawing half a descender up), and the chevron is a **drawn
+  triangle, not the `▶` glyph** — that glyph's ink sits half a pixel high in its
+  line box, and it was the one element off the axis. A path is centred on its
+  `viewBox` by construction, in every font.
+- **The gutter is a sum, not a value** — `--sec-gutter: calc(--sec-inset + --row-inset)`
+  in `app.css`. A row's content starts after two insets (the body's, which lifts
+  the hover chips off the column edge, then the row's own inside its chip), while
+  the header does not sit inside `.sec-body` at all, so it must carry both. Three
+  independent numbers used to live here and the header landed 3px left of its own
+  rows; a section's chevron and its folders' now share one column, at any text
+  size. Tree depth adds 12px per level on top, inline in the components.
+- **One `Chevron.svelte` for every fold marker**, section headers included: the
+  four places that drew one (section header, branch directory, remote node, file
+  tree directory) had each written their own and already disagreed — 0.55rem here,
+  0.6rem there — and the header's switch to a path made the mismatch plain. Its
+  size is in **rem**, unlike the section icons: a chevron marks a fold *in text*
+  and follows that text, where a category icon is a fixed badge.
+- **Which section is "first" is computed in the component, not in CSS.** The left
+  column's collapsed sections are moved to the bottom by `order`, so a
+  `section + section` rule would put the line on the wrong one. `firstVisual` is
+  the first *open* section — or, if everything is collapsed, the first one at all.
+  Both it and `firstClosed` read a list of the sections actually **rendered** and
+  name them by id, never by a fixed index: REMOTE is dropped when the repository
+  has no remote branch, and an index would keep counting a section that isn't
+  there — the separator and the collapsed block's margin would both land one
+  section off.
+- **Icons are sized from the wrapper, globally.** A snippet keeps the style scope
+  of the component that *defined* it, not of the one that renders it, so
+  `SectionHeader` reaches its icon through `.ic-slot :global(svg)`. That is what
+  makes every section icon the same size whatever `viewBox` its author chose.
+- **The count sits against the title, actions against the right edge.** The title
+  button carries `flex: 1`, so it also absorbs the empty middle — the collapse
+  target is the whole free width of the header, not just the words.
+- **The count has no type size of its own**, and that is what aligns it: two
+  nearby font sizes give two line-box heights, and centring *boxes* then leaves
+  their baselines a quarter-pixel apart — enough for the number to float above
+  the title. Inheriting the title's size makes the two boxes identical, in every
+  engine. A `align-items: baseline` group would also work, but it leans on the
+  baseline a flex item with `overflow: hidden` exposes, which is exactly the kind
+  of detail WebKit and Chromium have already disagreed on here. Colour and weight
+  are what tell the count from the label.
+- Labels are written in normal case and capitalised by CSS, so a new section
+  cannot get the casing wrong.
+- **A section's text is not selectable** — `user-select: none` on the `<section>`
+  itself, so it covers the header and the body in one declaration and reaches
+  every child component (`BranchRow`, `FileList`) by inheritance. A section is a
+  list you act on: dragging across branch names or file paths would fight the
+  click and copy nothing worth having. It is deliberately **not** a rule about
+  the sidebars: `CommitDetailsPanel`'s `.meta` block sits outside any section
+  precisely so the commit's summary and description stay selectable — they are
+  the one thing in that column anyone copies. The same holds for `SettingsView`,
+  whose `<section>`s are prose and forms, hence the per-panel rule rather than a
+  global `section` selector in `app.css`.
+
 ### Commit descriptions render Markdown — without `{@html}`
 
 `src/lib/markdown.ts` parses a **subset** of Markdown into a block tree that `CommitBody.svelte` renders through ordinary Svelte interpolation. **Never replace this with a Markdown library + `{@html}`**: a commit message is third-party content (anyone can write one in a repo you clone) and the webview has `invoke` access, so that would be a live XSS path. It also keeps the zero-runtime-dependency footprint.
@@ -411,7 +485,9 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section, **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+drawn at all while there is no remote branch to put in it, and comes back on the
+first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 

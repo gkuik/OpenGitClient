@@ -2,6 +2,7 @@
   import { repo } from "../stores/repo.svelte";
   import { STATUS_BADGES } from "../badges";
   import CommitBody from "./CommitBody.svelte";
+  import SectionHeader from "./SectionHeader.svelte";
 
   // Occupe la colonne de droite à la place des changements en cours tant qu'un
   // commit est sélectionné. Sa liste de fichiers reste visible pendant
@@ -23,6 +24,10 @@
     const oid = repo.commitDetails?.oid;
     if (oid) repo.selectCommitFile(oid, path);
   }
+
+  // La liste se replie comme n'importe quelle section des deux colonnes ; l'état
+  // est local, comme celui des sections voisines.
+  let filesOpen = $state(true);
 </script>
 
 <div class="panel">
@@ -42,8 +47,9 @@
   {#if !details}
     <p class="placeholder">Chargement du commit…</p>
   {:else}
-    <!-- Ordre : titre · commentaire · auteur · nombre de fichiers · liste. -->
-    <div class="content">
+    <!-- Ordre : titre · commentaire · auteur, puis la liste des fichiers, qui est
+         une section comme celles des deux colonnes. -->
+    <div class="meta">
       <h2 class="title">{details.summary}</h2>
 
       {#if details.body}
@@ -59,39 +65,57 @@
           <span class="merge">merge</span>
         {/if}
       </div>
-
-      <div class="files-head">
-        {details.files.length}
-        {details.files.length > 1 ? "fichiers modifiés" : "fichier modifié"}
-        {#if details.parents.length > 1}
-          <span class="dim">(vs premier parent)</span>
-        {/if}
-      </div>
-
-      <div class="files">
-        {#each details.files as f (f.path)}
-          <div
-            class="file"
-            class:selected={isOpen(f.path)}
-            role="button"
-            tabindex="0"
-            onclick={() => openFile(f.path)}
-            onkeydown={(e) => (e.key === "Enter" ? openFile(f.path) : undefined)}
-          >
-            <span class="badge {STATUS_BADGES[f.status].cls}">
-              {STATUS_BADGES[f.status].label}
-            </span>
-            <span class="path" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}>
-              {f.path}
-            </span>
-          </div>
-        {:else}
-          <p class="placeholder small">Aucun fichier modifié.</p>
-        {/each}
-      </div>
     </div>
+
+    <section class:collapsed={!filesOpen}>
+      <SectionHeader
+        label="Fichiers"
+        icon={fileIcon}
+        count={details.files.length}
+        open={filesOpen}
+        onToggle={() => (filesOpen = !filesOpen)}
+        actions={details.parents.length > 1 ? parentHint : undefined}
+      />
+      {#if filesOpen}
+        <div class="sec-body">
+          {#each details.files as f (f.path)}
+            <div
+              class="file"
+              class:selected={isOpen(f.path)}
+              role="button"
+              tabindex="0"
+              onclick={() => openFile(f.path)}
+              onkeydown={(e) => (e.key === "Enter" ? openFile(f.path) : undefined)}
+            >
+              <span class="badge {STATUS_BADGES[f.status].cls}">
+                {STATUS_BADGES[f.status].label}
+              </span>
+              <span class="path" title={f.oldPath ? `${f.oldPath} → ${f.path}` : f.path}>
+                {f.path}
+              </span>
+            </div>
+          {:else}
+            <p class="placeholder small">Aucun fichier modifié.</p>
+          {/each}
+        </div>
+      {/if}
+    </section>
   {/if}
 </div>
+
+<!-- Feuille : le fichier touché par le commit. -->
+{#snippet fileIcon()}
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M9 1.8H4.5a1 1 0 0 0-1 1v10.4a1 1 0 0 0 1 1h7a1 1 0 0 0 1-1V5.3z" />
+    <path d="M9 1.8V5.3h3.5" />
+  </svg>
+{/snippet}
+
+<!-- Un commit de fusion n'est comparé qu'à son premier parent : le dire ici
+     évite de laisser croire que la liste couvre les deux côtés. -->
+{#snippet parentHint()}
+  <span class="hint">vs premier parent</span>
+{/snippet}
 
 <style>
   .panel {
@@ -143,11 +167,41 @@
     color: var(--text);
   }
 
-  .content {
-    flex: 1;
+  /* Le bloc d'identité défile chez lui : l'en-tête de la liste des fichiers ne
+     s'en va donc plus avec un long message de commit. Les deux blocs se
+     rétrécissent proportionnellement quand la place manque, si bien que la
+     liste garde toujours une part visible. */
+  .meta {
+    flex: 0 1 auto;
     min-height: 0;
     overflow-y: auto;
     padding: 0.5rem 0.7rem 0.7rem;
+  }
+  /* La liste des fichiers se clique, elle ne se cite pas — contrairement au
+     bloc `.meta` juste au-dessus, dont le titre et la description du commit
+     restent sélectionnables : c'est le seul texte de la colonne qu'on copie. */
+  section {
+    display: flex;
+    flex-direction: column;
+    flex: 1 1 auto;
+    min-height: 0;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+  /* Repliée : rien que son en-tête. */
+  section.collapsed {
+    flex: none;
+  }
+  /* En-tête et trait de séparation : voir `SectionHeader`. */
+  .sec-body {
+    flex: 1;
+    min-height: 0;
+    overflow-y: auto;
+    padding: 0.3rem var(--sec-inset) 0.6rem;
+  }
+  .hint {
+    font-size: 0.7rem;
+    color: var(--text-faint);
   }
   .placeholder {
     margin: 0;
@@ -198,23 +252,11 @@
   .body {
     margin-top: 0.45rem;
   }
-  .files-head {
-    margin: 0.7rem 0 0.4rem;
-    font-size: 0.72rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    color: var(--text-dim);
-  }
-  /* Séparateur entre le décompte et la liste elle-même. */
-  .files {
-    border-top: 1px solid var(--border);
-    padding-top: 0.35rem;
-  }
   .file {
     display: flex;
     align-items: center;
     gap: 0.5rem;
-    padding: 0.25rem 0.4rem;
+    padding: 0.25rem 0.4rem 0.25rem var(--row-inset);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.8rem;

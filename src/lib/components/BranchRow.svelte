@@ -3,6 +3,7 @@
   import type { BranchEntry, RemoteBranchEntry, Upstream } from "../types";
   import { repo } from "../stores/repo.svelte";
   import BranchRow from "./BranchRow.svelte"; // récursion (auto-import Svelte 5)
+  import Chevron from "./Chevron.svelte";
 
   // La même ligne sert aux sections LOCAL et REMOTE : seule l'entrée portée par
   // la feuille change, les dossiers étant identiques de part et d'autre.
@@ -67,7 +68,7 @@
     class:selected
     role="button"
     tabindex="0"
-    style="padding-left: {depth * 12 + 8}px"
+    style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     title={local
       ? `${local.name} — clic pour voir son dernier commit, double-clic pour basculer`
       : `${node.branch.name} — clic pour voir son dernier commit, double-clic pour basculer (branche locale de suivi créée au besoin)`}
@@ -104,11 +105,11 @@
   {@const open = repo.isBranchDirOpen(node.path)}
   <button
     class="dir"
-    style="padding-left: {depth * 12 + 8}px"
+    style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     onclick={() => repo.toggleBranchDir(node.path)}
     aria-expanded={open}
   >
-    <span class="chev" class:open>▶</span>
+    <Chevron {open} />
     <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
       <path d="M1.75 4.25a1 1 0 0 1 1-1h3.1l1.5 1.6h6.9a1 1 0 0 1 1 1v6.4a1 1 0 0 1-1 1H2.75a1 1 0 0 1-1-1z" />
     </svg>
@@ -192,16 +193,5 @@
   }
   .dir {
     color: var(--text-dim);
-  }
-  .chev {
-    flex: none;
-    display: inline-block;
-    width: 0.7rem;
-    font-size: 0.55rem;
-    color: var(--text-faint);
-    transition: transform 0.1s ease;
-  }
-  .chev.open {
-    transform: rotate(90deg);
   }
 </style>

@@ -4,6 +4,8 @@
   import type { Snippet } from "svelte";
   import type { PullMode } from "../types";
   import BranchRow from "./BranchRow.svelte";
+  import SectionHeader from "./SectionHeader.svelte";
+  import Chevron from "./Chevron.svelte";
 
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
   // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
@@ -60,11 +62,30 @@
   let remotesOpen = $state(true);
   let stashesOpen = $state(true);
 
+  // REMOTE disparaît quand il n'y a rien à y mettre : un dépôt sans distant n'a
+  // pas à porter une section vide, et elle réapparaît d'elle-même au premier
+  // fetch qui ramène une référence.
+  const hasRemotes = $derived(repo.remoteBranches.length > 0);
+
+  // Les sections **rendues**, dans l'ordre du DOM. Les deux repères ci-dessous
+  // se lisent dessus plutôt que sur des indices figés : avec un indice, une
+  // section masquée continuerait de compter et les deux tomberaient à côté.
+  const shown = $derived([
+    { id: "local", open: localOpen },
+    ...(hasRemotes ? [{ id: "remotes", open: remotesOpen }] : []),
+    { id: "stashes", open: stashesOpen },
+  ]);
+
   // Les sections repliées descendent en bas de la colonne (`order` en CSS) ;
   // la **première** d'entre elles porte la marge automatique qui les y colle —
   // une marge par section repliée se partagerait l'espace libre et les
-  // éparpillerait. Cet index suit l'ordre du DOM, qui est aussi le leur.
-  const firstClosed = $derived([localOpen, remotesOpen, stashesOpen].indexOf(false));
+  // éparpillerait.
+  const firstClosed = $derived(shown.find((s) => !s.open)?.id ?? null);
+  // Le trait de séparation se calcule ici et pas en CSS : `order` dissocie
+  // l'ordre du DOM de l'ordre affiché, donc un `section + section` désignerait
+  // la mauvaise. La section en tête de colonne est la première ouverte — ou, si
+  // tout est replié, la première tout court.
+  const firstVisual = $derived((shown.find((s) => s.open) ?? shown[0]).id);
 
   const nodes = $derived(buildBranchTree(repo.branches));
   // Un niveau de plus que LOCAL : le distant, puis son arborescence.
@@ -189,18 +210,15 @@
     </div>
 
     <div class="sections">
-      <section class:open={localOpen} class:pinned={firstClosed === 0}>
-        <header>
-          <button class="sec-title" onclick={() => (localOpen = !localOpen)} aria-expanded={localOpen}>
-            <span class="chev" class:open={localOpen}>▶</span>
-            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
-              <rect x="2.5" y="3" width="11" height="7.5" rx="1" />
-              <path d="M1 12.5h14" stroke-linecap="round" />
-            </svg>
-            LOCAL
-          </button>
-          <span class="count">{repo.branches.length}</span>
-        </header>
+      <section class:open={localOpen} class:pinned={firstClosed === "local"}>
+        <SectionHeader
+          label="Local"
+          icon={branchIcon}
+          count={repo.branches.length}
+          open={localOpen}
+          onToggle={() => (localOpen = !localOpen)}
+          first={firstVisual === "local"}
+        />
 
         {#if localOpen}
           <div class="sec-body">
@@ -213,65 +231,57 @@
         {/if}
       </section>
 
-      <section class:open={remotesOpen} class:pinned={firstClosed === 1}>
-        <header>
-          <button
-            class="sec-title"
-            onclick={() => (remotesOpen = !remotesOpen)}
-            aria-expanded={remotesOpen}
-          >
-            <span class="chev" class:open={remotesOpen}>▶</span>
-            {@render remoteIcon()}
-            REMOTE
-          </button>
-          <span class="count">{repo.remoteBranches.length}</span>
-        </header>
+      {#if hasRemotes}
+        <section class:open={remotesOpen} class:pinned={firstClosed === "remotes"}>
+          <SectionHeader
+            label="Remote"
+            icon={remoteIcon}
+            count={repo.remoteBranches.length}
+            open={remotesOpen}
+            onToggle={() => (remotesOpen = !remotesOpen)}
+            first={firstVisual === "remotes"}
+          />
 
-        {#if remotesOpen}
-          <div class="sec-body">
-            <!--
-              Un nœud par distant, replié avec les mêmes clés que les dossiers de
-              branches : les chemins gardent le préfixe du distant, donc plier
-              « origin/feature » ne plie pas le « feature » de la section LOCAL.
-            -->
-            {#each remotes as group (group.remote)}
-              {@const open = repo.isBranchDirOpen(group.remote)}
-              <button
-                class="remote-node"
-                onclick={() => repo.toggleBranchDir(group.remote)}
-                aria-expanded={open}
-                title={group.remote}
-              >
-                <span class="chev" class:open>▶</span>
-                {@render remoteIcon()}
-                <span class="rname">{group.remote}</span>
-                <span class="rcount">{group.branches.length}</span>
-              </button>
-              {#if open}
-                {#each group.nodes as node (node.type === "dir" ? "d:" + node.path : "b:" + node.branch.name)}
-                  <BranchRow {node} depth={1} />
-                {/each}
-              {/if}
-            {:else}
-              <p class="empty small">Aucune branche distante.</p>
-            {/each}
-          </div>
-        {/if}
-      </section>
+          {#if remotesOpen}
+            <div class="sec-body">
+              <!--
+                Un nœud par distant, replié avec les mêmes clés que les dossiers de
+                branches : les chemins gardent le préfixe du distant, donc plier
+                « origin/feature » ne plie pas le « feature » de la section LOCAL.
+              -->
+              {#each remotes as group (group.remote)}
+                {@const open = repo.isBranchDirOpen(group.remote)}
+                <button
+                  class="remote-node"
+                  onclick={() => repo.toggleBranchDir(group.remote)}
+                  aria-expanded={open}
+                  title={group.remote}
+                >
+                  <Chevron {open} />
+                  {@render remoteIcon()}
+                  <span class="rname">{group.remote}</span>
+                  <span class="rcount">{group.branches.length}</span>
+                </button>
+                {#if open}
+                  {#each group.nodes as node (node.type === "dir" ? "d:" + node.path : "b:" + node.branch.name)}
+                    <BranchRow {node} depth={1} />
+                  {/each}
+                {/if}
+              {/each}
+            </div>
+          {/if}
+        </section>
+      {/if}
 
-      <section class:open={stashesOpen} class:pinned={firstClosed === 2}>
-        <header>
-          <button
-            class="sec-title"
-            onclick={() => (stashesOpen = !stashesOpen)}
-            aria-expanded={stashesOpen}
-          >
-            <span class="chev" class:open={stashesOpen}>▶</span>
-            {@render stashIcon()}
-            STASHES
-          </button>
-          <span class="count">{repo.stashes.length}</span>
-        </header>
+      <section class:open={stashesOpen} class:pinned={firstClosed === "stashes"}>
+        <SectionHeader
+          label="Stashes"
+          icon={stashIcon}
+          count={repo.stashes.length}
+          open={stashesOpen}
+          onToggle={() => (stashesOpen = !stashesOpen)}
+          first={firstVisual === "stashes"}
+        />
 
         {#if stashesOpen}
           <div class="sec-body">
@@ -503,6 +513,14 @@
   </svg>
 {/snippet}
 
+<!-- Écran : la machine, par opposition au nuage du distant. -->
+{#snippet branchIcon()}
+  <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <rect x="2.5" y="3" width="11" height="7.5" rx="1" />
+    <path d="M1 12.5h14" stroke-linecap="round" />
+  </svg>
+{/snippet}
+
 <!-- Nuage : le dépôt distant, par opposition aux branches locales. -->
 {#snippet remoteIcon()}
   <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -657,7 +675,13 @@
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
   }
+  /* Une section est une liste sur laquelle on agit, pas de la prose : y
+     sélectionner du texte gênerait le clic sans rien apporter. Ce qui se copie —
+     le titre et la description d'un commit — vit hors de toute section, et garde
+     donc la sélection par défaut. */
   section {
+    user-select: none;
+    -webkit-user-select: none;
     /* Le corps déborde de quelques pixels de padding quand la fenêtre est trop
        courte pour les en-têtes eux-mêmes ; il est coupé ici plutôt que peint
        par-dessus l'en-tête suivant. */
@@ -700,59 +724,24 @@
   }
   /* Colle le bloc des sections repliées en bas : la marge automatique absorbe
      l'espace libre, lequel n'existe justement que lorsque toutes les sections
-     ouvertes sont gelées sur leur contenu. */
+     ouvertes sont gelées sur leur contenu. Le trait qui les sépare du dessus
+     vient de `SectionHeader`, comme celui de toutes les autres sections. */
   section.pinned {
     margin-top: auto;
-    border-top: 1px solid var(--border);
   }
-  /* L'en-tête n'est plus `sticky` : il vit hors de la zone défilante, qui est
-     désormais le corps de sa propre section. */
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.5rem 0.6rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-  }
-  .sec-title {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    padding: 0;
-  }
-  .chev {
-    display: inline-block;
-    width: 0.7rem;
-    font-size: 0.55rem;
-    color: var(--text-faint);
-    transition: transform 0.1s ease;
-  }
-  .chev.open {
-    transform: rotate(90deg);
-  }
+  /* L'en-tête vit dans `SectionHeader` — y compris son trait de séparation : il
+     est le premier enfant de la section, donc la bordure tombe au bon endroit.
+     Il n'est plus `sticky` non plus, la zone défilante étant le corps de sa
+     propre section. */
   .ic {
     width: 14px;
     height: 14px;
     color: var(--text-dim);
   }
-  .count {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--accent-soft);
-  }
   .sec-body {
     min-height: 0;
     overflow-y: auto;
-    padding: 0.3rem 0.3rem 0.6rem;
+    padding: 0.3rem var(--sec-inset) 0.6rem;
   }
   /* Nœud d'un distant. Calqué sur le `.dir` de BranchRow (scopé là-bas), au
      nuage et au compteur près. */
@@ -763,7 +752,9 @@
     width: 100%;
     background: transparent;
     border: none;
-    padding: 0.25rem 0.5rem;
+    /* Retrait gauche pris à la variable, et non à un `0.5rem` voisin : ses
+       enfants sont des `BranchRow` de profondeur 1, donc calés dessus. */
+    padding: 0.25rem 0.5rem 0.25rem var(--row-inset);
     border-radius: 4px;
     cursor: pointer;
     font-size: 0.82rem;
@@ -772,9 +763,6 @@
   }
   .remote-node:hover {
     background: var(--bg-raised);
-  }
-  .remote-node .chev {
-    flex: none;
   }
   .remote-node .ic {
     flex: none;
