@@ -247,6 +247,31 @@ export interface PullReport {
   outcome: PullOutcome;
 }
 
+/**
+ * Ce qu'une fusion de branche à branche a fait de la cible (glisser-déposer et
+ * menu contextuel de la section LOCAL). Un conflit n'est pas une erreur : le
+ * dépôt est en fusion, les fichiers à résoudre sont dans le working directory.
+ */
+export type MergeOutcome =
+  | { kind: "upToDate" }
+  | { kind: "fastForwarded"; commits: number }
+  | { kind: "merged"; commits: number }
+  | { kind: "conflicted"; files: string[] };
+
+export interface MergeReport {
+  /** Branche fusionnée : celle qu'on a déposée, ou la branche courante. */
+  source: string;
+  /** Branche qui reçoit la fusion : celle sur laquelle on a déposé. */
+  target: string;
+  /**
+   * HEAD a-t-il changé de branche ? Une avance rapide sur une branche inactive
+   * ne déplace qu'une référence ; une vraie fusion, elle, bascule sur la cible
+   * et y reste. Le frontend ne peut pas le deviner.
+   */
+  switched: boolean;
+  outcome: MergeOutcome;
+}
+
 /** Charge utile de `repo://pulled`, jumelle de `FetchEvent`. */
 export interface PullEvent {
   repoId: string;

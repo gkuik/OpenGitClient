@@ -225,6 +225,69 @@ Remote rows behave like local ones: click selects the tip commit — which lands
 
 Reload after a pull is wider than after a fetch: `repoInfo` first (it decides whether the banner shows), then the status (this is where conflicted files appear), then the usual remote-ref reload. It's the only remote operation that writes the worktree and index.
 
+### A branch is merged into the one it is dropped on
+
+Dragging a local branch onto another opens a one-entry menu; right-clicking a
+local branch opens the same one. Both say the same thing: **the row you landed on
+receives the merge** — the dragged branch, or the current one for a right-click.
+That is what a branch dropped on another means, and it is GitKraken's convention.
+It also means the target is *not* necessarily the checked-out branch, which is
+the whole difficulty.
+
+`merge_branches(source, target)` decides on `graph_ahead_behind(source, target)`
+rather than `merge_analysis`, which only ever reasons relative to HEAD. Three
+cases, in order:
+
+- **`ahead == 0`** — the target already contains the source: nothing moves. A
+  branch merged into itself lands here by construction, so there is no self-merge
+  error to invent.
+- **`behind == 0`** — fast-forward. The reference is moved, and **the worktree is
+  checked out only when the target is HEAD**. That is the entire reason for
+  distinguishing the case: merging the current branch into a branch that lags
+  behind it touches neither HEAD nor a single file on disk. `MergeReport.switched`
+  is what tells the frontend whether HEAD moved, because it cannot guess.
+- **otherwise** — a real merge, which **requires the target to be checked out
+  first**: Git does not write into an inactive branch. The checkout comes before
+  any write, so its SAFE strategy refuses on a dirty worktree and the merge is
+  never begun; on conflict we stay on the target, which is where it gets resolved.
+  `checkout_local` is shared with `checkout_branch` for exactly that step.
+
+The conflict path is the pull's, deliberately: `MERGE_HEAD` set, `MergeBanner`,
+`commit()` picking up the second parent, `abort_merge` as the way out — nothing
+new to resolve conflicts with. `AppError::MergeInProgress` refuses a second merge
+over the first, since `MERGE_HEAD` is unique and overwriting it would lose the
+side still to resolve. Nothing is ever forced, and a fast-forward is never
+inflated into a merge commit (`--no-ff` is not offered).
+
+`RepoStore.reloadAfterMerge` runs **on failure too**, and that is not a
+precaution: a real merge switches to the target *before* writing, so HEAD may
+have moved even though the error came back. It reloads repo info (`merging` drives
+the banner, `branch` may have changed), the status (where conflicted files show
+up), the local branches and the graph — but not `refs/remotes/**` nor the
+stashes, which a merge does not touch.
+
+**The drag's transient state lives in `src/lib/branchMerge.svelte.ts`**, a module
+rune — not in `BranchRow`, because the gesture spans two rows (the one held, the
+one hovered) born of a recursion, and not in `RepoStore`, because none of it is
+repository state and none of it survives the button being released. Pointer events
+as in `TabBar`, for the same reasons, plus three of its own:
+
+- **The drop target is found by hit-testing the point** (`elementFromPoint` →
+  `[data-branch]`), never by rectangles measured on `pointerdown`. Unlike the tab
+  strip, this list scrolls, folds and unfolds under the cursor; `data-branch` is
+  the one marker that follows all of that, and only local rows carry it — so a
+  remote branch is neither source nor target. Which is also why the label
+  following the cursor is `pointer-events: none`: it would otherwise be the thing
+  found under the point.
+- **A 4px threshold separates the drag from the click**, which selects the
+  branch's tip commit. Past it, the trailing `click` is swallowed by
+  `consumeClick()` — it targets the row where the gesture *started*, not where it
+  ended. The flag is cleared on every `pointerdown`, so a gesture whose click
+  never fires (the menu's overlay can take the `mouseup`) cannot eat the next one.
+- **Nothing is `preventDefault`ed**, unlike the tab drag: the section already
+  carries `user-select: none`, so there is no text selection to kill, and the
+  row keeps its native focus.
+
 ### The disk is watched, and nothing is fetched for it
 
 An editor saving, a `git checkout` at the terminal, another client: the repository moves under the app's feet, and until now that was only noticed on the next tab activation. `src-tauri/src/watcher.rs` listens to the filesystem and emits `repo://changed`, which `TabsStore` routes to the named tab — the same contract as `repo://fetched`, except nobody asked for it.
@@ -499,8 +562,14 @@ The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all
 
 **Pull is a split button**, GitKraken-style: the button runs the chosen mode, the chevron — placed *inside* the cell against its right edge, not beside it, so the two read as one control and the three toolbar buttons keep the same footprint — opens a radio menu that only *picks* the mode (choosing never fires a network call — a menu click that merged would be a nasty surprise). The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
 
+**A local branch is merged into another** from the sidebar — dragged onto it, or
+right-clicked — fast-forwarding without a checkout when it can, switching to the
+target when it must, and leaving a conflict in the worktree for the same
+resolve-or-abandon path as a pull. Branch *creation*, renaming and deletion are
+still nowhere, and nothing rebases.
+
 The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. The one destructive operation that exists is **Discard all changes**, described above; per-file discard does not, and neither does anything that rewrites history (reset, revert, branch deletion).
+AI features are intentionally absent — don't add UI for features that have no working backend. The one destructive operation that exists is **Discard all changes**, described above; per-file discard does not, and neither does anything that rewrites history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.

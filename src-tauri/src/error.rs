@@ -34,6 +34,9 @@ pub enum AppError {
     #[error("Rien à remiser (aucune modification locale)")]
     NothingToStash,
 
+    #[error("Une fusion est déjà en cours : termine-la ou abandonne-la avant d'en lancer une autre")]
+    MergeInProgress,
+
     #[error("Aucun dépôt distant configuré")]
     NoRemote,
 
@@ -81,6 +84,7 @@ impl AppError {
             AppError::CommitNotFound => "CommitNotFound",
             AppError::StashConflict => "StashConflict",
             AppError::NothingToStash => "NothingToStash",
+            AppError::MergeInProgress => "MergeInProgress",
             AppError::NoRemote => "NoRemote",
             AppError::RemoteAuth => "RemoteAuth",
             AppError::NoCredentials => "NoCredentials",

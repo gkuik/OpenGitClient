@@ -16,8 +16,8 @@ use super::{GitBackend, WatchRoots};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
     FetchReport, FetchedRef, FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind,
-    Identity, PullMode, PullOutcome, PullReport, PushReport, RemoteBranchEntry, RemoteInfo,
-    RepoInfo, RepoStatus, StashEntry, Upstream,
+    Identity, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushReport,
+    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, Upstream,
 };
 use crate::error::AppError;
 
@@ -452,20 +452,7 @@ impl GitBackend for Libgit2Backend {
 
     fn checkout_branch(&self, name: &str) -> Result<(), AppError> {
         let repo = self.repo()?;
-        let refname = format!("refs/heads/{name}");
-
-        // Échoue tôt si la branche n'existe pas.
-        let target = repo.revparse_single(&refname)?;
-
-        // Stratégie SAFE par défaut : libgit2 refuse d'écraser des modifications
-        // locales, on remonte alors une erreur explicite plutôt que de perdre du
-        // travail.
-        let mut opts = CheckoutBuilder::new();
-        repo.checkout_tree(&target, Some(&mut opts))
-            .map_err(map_checkout_error)?;
-
-        repo.set_head(&refname)?;
-        Ok(())
+        checkout_local(&repo, name)
     }
 
     fn checkout_remote_branch(&self, name: &str) -> Result<(), AppError> {
@@ -504,6 +491,120 @@ impl GitBackend for Libgit2Backend {
 
         repo.set_head(&format!("refs/heads/{local_name}"))?;
         Ok(())
+    }
+
+    fn merge_branches(&self, source: &str, target: &str) -> Result<MergeReport, AppError> {
+        let repo = self.repo()?;
+
+        // Une fusion déjà en cours interdit d'en ouvrir une seconde : `MERGE_HEAD`
+        // est unique, et l'écraser perdrait le côté qui restait à résoudre.
+        if repo.state() != RepositoryState::Clean {
+            return Err(AppError::MergeInProgress);
+        }
+
+        let source_oid = repo
+            .find_branch(source, BranchType::Local)?
+            .get()
+            .target()
+            .ok_or(AppError::CommitNotFound)?;
+        let target_oid = repo
+            .find_branch(target, BranchType::Local)?
+            .get()
+            .target()
+            .ok_or(AppError::CommitNotFound)?;
+
+        // Écart mesuré **depuis la source** : `ahead` est ce que la cible
+        // gagnerait, `behind` ce qu'elle a en propre. Les deux suffisent à
+        // décider, sans passer par `merge_analysis`, qui ne raisonne que par
+        // rapport à HEAD — or la cible n'est pas forcément la branche courante.
+        // Une source fusionnée sur elle-même donne (0, 0), donc « déjà à jour ».
+        let (ahead, behind) = repo.graph_ahead_behind(source_oid, target_oid)?;
+
+        let current = repo
+            .head()
+            .ok()
+            .filter(|h| h.is_branch())
+            .and_then(|h| h.shorthand().map(str::to_string));
+        let on_target = current.as_deref() == Some(target);
+
+        let report = |switched, outcome| MergeReport {
+            source: source.to_string(),
+            target: target.to_string(),
+            switched,
+            outcome,
+        };
+
+        if ahead == 0 {
+            return Ok(report(false, MergeOutcome::UpToDate));
+        }
+
+        if behind == 0 {
+            // Avance rapide. Le working directory ne suit que si la cible est la
+            // branche courante ; sinon il n'y a qu'une référence à déplacer, et ni
+            // HEAD ni les fichiers n'ont à bouger — c'est tout l'intérêt de ne pas
+            // basculer pour rien.
+            if on_target {
+                let object = repo.find_object(source_oid, None)?;
+                let mut opts = CheckoutBuilder::new();
+                repo.checkout_tree(&object, Some(&mut opts))
+                    .map_err(map_checkout_error)?;
+            }
+            repo.reference(
+                &format!("refs/heads/{target}"),
+                source_oid,
+                true,
+                &format!("merge {source}: avance rapide"),
+            )?;
+            return Ok(report(false, MergeOutcome::FastForwarded { commits: ahead }));
+        }
+
+        // Vraie divergence : la cible doit devenir la branche courante pour
+        // recevoir la fusion. La bascule vient **avant** toute écriture, et sa
+        // stratégie SAFE refuse d'écraser des modifications locales — la fusion
+        // n'est donc jamais entamée sur un working directory qu'on ne pourrait
+        // pas préparer.
+        let switched = !on_target;
+        if switched {
+            checkout_local(&repo, target)?;
+        }
+
+        // `merge` écrit l'index et le working directory, et pose `MERGE_HEAD` :
+        // à partir d'ici le dépôt est en état de fusion, que le commit ci-dessous
+        // ou `abort_merge` referme.
+        let annotated = repo.find_annotated_commit(source_oid)?;
+        let mut opts = CheckoutBuilder::new();
+        repo.merge(&[&annotated], None, Some(&mut opts))
+            .map_err(map_checkout_error)?;
+
+        let mut index = repo.index()?;
+        if index.has_conflicts() {
+            // On reste sur la cible, en fusion : les conflits sont dans le working
+            // directory, l'utilisateur les résout puis committe (le commit
+            // reprendra `MERGE_HEAD` comme second parent) ou abandonne.
+            return Ok(report(
+                switched,
+                MergeOutcome::Conflicted {
+                    files: conflicted_paths(&index),
+                },
+            ));
+        }
+
+        let tree_oid = index.write_tree()?;
+        let tree = repo.find_tree(tree_oid)?;
+        let signature = repo.signature().map_err(|_| AppError::MissingSignature)?;
+        let ours = repo.head()?.peel_to_commit()?;
+        let theirs = repo.find_commit(source_oid)?;
+        repo.commit(
+            Some("HEAD"),
+            &signature,
+            &signature,
+            &format!("Merge branch '{source}' into {target}"),
+            &tree,
+            &[&ours, &theirs],
+        )?;
+        repo.cleanup_state()?;
+
+        Ok(report(switched, MergeOutcome::Merged { commits: ahead }))
     }
 
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError> {
@@ -1369,6 +1470,25 @@ fn merge_heads(repo: &mut Repository) -> Result<Vec<Oid>, AppError> {
 /// deux côtés, suppression d'un côté) : on prend le premier disponible plutôt
 /// que d'en privilégier un, faute de quoi certains conflits n'auraient pas de
 /// nom à afficher.
+/// Bascule sur une branche **locale** : le working directory suit, puis HEAD.
+///
+/// Partagé par `checkout_branch` et la fusion, qui doit amener la cible sous HEAD
+/// avant d'écrire quoi que ce soit. Stratégie SAFE : libgit2 refuse d'écraser des
+/// modifications locales, et l'erreur remonte explicite plutôt que de perdre du
+/// travail.
+fn checkout_local(repo: &Repository, name: &str) -> Result<(), AppError> {
+    let refname = format!("refs/heads/{name}");
+    // Échoue tôt si la branche n'existe pas.
+    let target = repo.revparse_single(&refname)?;
+
+    let mut opts = CheckoutBuilder::new();
+    repo.checkout_tree(&target, Some(&mut opts))
+        .map_err(map_checkout_error)?;
+
+    repo.set_head(&refname)?;
+    Ok(())
+}
+
 fn conflicted_paths(index: &git2::Index) -> Vec<String> {
     let Ok(conflicts) = index.conflicts() else {
         return Vec::new();
@@ -2843,6 +2963,149 @@ mod tests {
         assert!(matches!(git.fetch(Some("amont")), Err(AppError::NoRemote)));
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
+    }
+
+    // ── Fusion de branche à branche ─────────────────────────────────────────
+
+    /// Crée une branche locale sur le commit de HEAD, sans y basculer — il n'y a
+    /// pas de création de branche dans le backend, et ces tests n'en demandent pas.
+    fn branch_at_head(dir: &Path, name: &str) {
+        let repo = Repository::open(dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch(name, &head, false).unwrap();
+    }
+
+    /// Dépôt d'un commit, avec une branche `vieille` restée dessus et un second
+    /// commit sur la branche courante. La cible est donc en retard d'un commit.
+    fn repo_with_a_lagging_branch() -> (PathBuf, Libgit2Backend, String) {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        branch_at_head(&dir, "vieille");
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+        let current = git.info().unwrap().branch.unwrap();
+        (dir, git, current)
+    }
+
+    #[test]
+    fn merge_fast_forwards_the_target_without_moving_head() {
+        let (dir, git, current) = repo_with_a_lagging_branch();
+        let head_before = git.info().unwrap().head.clone();
+
+        let report = git.merge_branches(&current, "vieille").unwrap();
+        assert!(matches!(
+            report.outcome,
+            MergeOutcome::FastForwarded { commits: 1 }
+        ));
+        // Toute la raison de distinguer ce cas : la cible n'étant pas la branche
+        // courante, il n'y a qu'une référence à déplacer.
+        assert!(!report.switched);
+        assert_eq!(git.info().unwrap().branch.as_deref(), Some(current.as_str()));
+        assert_eq!(git.info().unwrap().head, head_before);
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "2\n");
+
+        // La cible pointe bien sur le commit de la source.
+        let branches = git.local_branches().unwrap();
+        let target = branches.iter().find(|b| b.name == "vieille").unwrap();
+        let source = branches.iter().find(|b| b.name == current).unwrap();
+        assert_eq!(target.oid, source.oid);
+
+        // Et rien à refaire : la cible contient désormais la source.
+        assert!(matches!(
+            git.merge_branches(&current, "vieille").unwrap().outcome,
+            MergeOutcome::UpToDate
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn merge_is_up_to_date_when_the_target_already_contains_the_source() {
+        let (dir, git, current) = repo_with_a_lagging_branch();
+        let head_before = git.info().unwrap().head.clone();
+
+        // Sens inverse : la branche courante contient déjà la vieille.
+        let report = git.merge_branches("vieille", &current).unwrap();
+        assert!(matches!(report.outcome, MergeOutcome::UpToDate));
+        assert!(!report.switched);
+        assert_eq!(git.info().unwrap().head, head_before);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    /// Dépôt divergent : la branche courante et `autre` portent chacune un commit
+    /// que l'autre n'a pas, sur un fichier au choix de l'appelant.
+    fn diverged_repo(other_file: &str) -> (PathBuf, Libgit2Backend, String) {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        branch_at_head(&dir, "autre");
+        git.checkout_branch("autre").unwrap();
+        commit_file(&dir, &git, other_file, "autre\n", "c2 autre");
+        let (dir, git, current) = {
+            // Retour sur la branche de départ, quel que soit son nom.
+            let repo = Repository::open(&dir).unwrap();
+            let default = repo
+                .branches(Some(BranchType::Local))
+                .unwrap()
+                .flatten()
+                .map(|(b, _)| b.name().unwrap().unwrap().to_string())
+                .find(|n| n != "autre")
+                .unwrap();
+            drop(repo);
+            git.checkout_branch(&default).unwrap();
+            (dir, git, default)
+        };
+        commit_file(&dir, &git, "b.txt", "courant\n", "c2 courant");
+        (dir, git, current)
+    }
+
+    #[test]
+    fn merge_switches_to_the_target_and_commits_two_parents() {
+        let (dir, git, current) = diverged_repo("c.txt");
+
+        // La courante est fusionnée **dans** `autre` : c'est le sens du geste.
+        let report = git.merge_branches(&current, "autre").unwrap();
+        assert!(matches!(report.outcome, MergeOutcome::Merged { commits: 1 }));
+        // Une vraie fusion doit passer par la cible : HEAD y est resté.
+        assert!(report.switched);
+        assert_eq!(git.info().unwrap().branch.as_deref(), Some("autre"));
+        assert!(!git.info().unwrap().merging);
+
+        // Les deux côtés sont là, et le commit porte bien deux parents.
+        assert!(dir.join("b.txt").exists() && dir.join("c.txt").exists());
+        let repo = Repository::open(&dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        assert_eq!(head.parent_count(), 2);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn merge_leaves_the_conflicts_on_the_target() {
+        // Les deux côtés touchent `b.txt` : la fusion ne peut pas trancher.
+        let (dir, git, current) = diverged_repo("b.txt");
+
+        let report = git.merge_branches(&current, "autre").unwrap();
+        let files = match report.outcome {
+            MergeOutcome::Conflicted { files } => files,
+            other => panic!("attendu un conflit, obtenu {other:?}"),
+        };
+        assert_eq!(files, ["b.txt"]);
+        // On reste sur la cible, en fusion : c'est là que le conflit se résout.
+        assert!(report.switched);
+        assert_eq!(git.info().unwrap().branch.as_deref(), Some("autre"));
+        assert!(git.info().unwrap().merging);
+
+        // Une seconde fusion par-dessus écraserait `MERGE_HEAD` : refusée.
+        assert!(matches!(
+            git.merge_branches(&current, "autre"),
+            Err(AppError::MergeInProgress)
+        ));
+
+        // Sortie de secours, comme après un pull qui a conflité.
+        git.abort_merge().unwrap();
+        assert!(!git.info().unwrap().merging);
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     /// Le filtre qui décide si un événement du disque atteint l'interface : sans
