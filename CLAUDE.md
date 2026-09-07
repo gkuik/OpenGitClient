@@ -385,6 +385,62 @@ inside itself.
 - Section heights are **not** draggable, unlike the sidebar widths; if that ever
   changes, it belongs on `SidebarResizer`'s model, not on a new one.
 
+### Every section in both columns is `border · [icon] title · content`
+
+`SectionHeader.svelte` is the single component that draws a section's header, in
+`BranchSidebar` (LOCAL / REMOTE / STASHES), `StatusPanel` (non-indexés /
+indexés) and `CommitDetailsPanel` (the commit's file list). The two columns had
+drifted apart on every one of these points — icon on the left only, count folded
+into the label on the right, bold title one side and dim uppercase the other,
+separator line owned by a differently-named class in each file. A new section now
+has no style to reinvent.
+
+- **The separator belongs to the header, not to the section.** The header *is*
+  the section's first child, so a `border-top` there lands exactly where the
+  section starts, and the caller never has to know it exists. `first` removes it
+  where the element above already draws one (`BranchSidebar`'s toolbar). There is
+  **one** line, above: a second one under the title would box the header off from
+  the content it announces.
+- **Everything sits on the bar's axis, which `align-items: center` alone does not
+  give you** — it centres *boxes*, and neither text nor an SVG necessarily fills
+  its own. Two consequences: every SVG in the header is `display: block` (inline,
+  it would sit on a baseline and its box would gain the descender space below,
+  pushing the drawing half a descender up), and the chevron is a **drawn
+  triangle, not the `▶` glyph** the branch rows use — that glyph's ink sits half a
+  pixel high in its line box, and it was the one element off the axis. A path is
+  centred on its `viewBox` by construction, in every font.
+- **Which section is "first" is computed in the component, not in CSS.** The left
+  column's collapsed sections are moved to the bottom by `order`, so a
+  `section + section` rule would put the line on the wrong one. `firstVisual` is
+  the first *open* section — or, if everything is collapsed, the first one at all.
+- **Icons are sized from the wrapper, globally.** A snippet keeps the style scope
+  of the component that *defined* it, not of the one that renders it, so
+  `SectionHeader` reaches its icon through `.ic-slot :global(svg)`. That is what
+  makes every section icon the same size whatever `viewBox` its author chose.
+- **The count sits against the title, actions against the right edge.** The title
+  button carries `flex: 1`, so it also absorbs the empty middle — the collapse
+  target is the whole free width of the header, not just the words.
+- **The count has no type size of its own**, and that is what aligns it: two
+  nearby font sizes give two line-box heights, and centring *boxes* then leaves
+  their baselines a quarter-pixel apart — enough for the number to float above
+  the title. Inheriting the title's size makes the two boxes identical, in every
+  engine. A `align-items: baseline` group would also work, but it leans on the
+  baseline a flex item with `overflow: hidden` exposes, which is exactly the kind
+  of detail WebKit and Chromium have already disagreed on here. Colour and weight
+  are what tell the count from the label.
+- Labels are written in normal case and capitalised by CSS, so a new section
+  cannot get the casing wrong.
+- **A section's text is not selectable** — `user-select: none` on the `<section>`
+  itself, so it covers the header and the body in one declaration and reaches
+  every child component (`BranchRow`, `FileList`) by inheritance. A section is a
+  list you act on: dragging across branch names or file paths would fight the
+  click and copy nothing worth having. It is deliberately **not** a rule about
+  the sidebars: `CommitDetailsPanel`'s `.meta` block sits outside any section
+  precisely so the commit's summary and description stay selectable — they are
+  the one thing in that column anyone copies. The same holds for `SettingsView`,
+  whose `<section>`s are prose and forms, hence the per-panel rule rather than a
+  global `section` selector in `app.css`.
+
 ### Commit descriptions render Markdown — without `{@html}`
 
 `src/lib/markdown.ts` parses a **subset** of Markdown into a block tree that `CommitBody.svelte` renders through ordinary Svelte interpolation. **Never replace this with a Markdown library + `{@html}`**: a commit message is third-party content (anyone can write one in a repo you clone) and the webview has `invoke` access, so that would be a live XSS path. It also keeps the zero-runtime-dependency footprint.

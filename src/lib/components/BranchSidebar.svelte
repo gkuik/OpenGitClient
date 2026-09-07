@@ -4,6 +4,7 @@
   import type { Snippet } from "svelte";
   import type { PullMode } from "../types";
   import BranchRow from "./BranchRow.svelte";
+  import SectionHeader from "./SectionHeader.svelte";
 
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
   // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
@@ -64,7 +65,13 @@
   // la **première** d'entre elles porte la marge automatique qui les y colle —
   // une marge par section repliée se partagerait l'espace libre et les
   // éparpillerait. Cet index suit l'ordre du DOM, qui est aussi le leur.
-  const firstClosed = $derived([localOpen, remotesOpen, stashesOpen].indexOf(false));
+  const openState = $derived([localOpen, remotesOpen, stashesOpen]);
+  const firstClosed = $derived(openState.indexOf(false));
+  // Le trait de séparation se calcule ici et pas en CSS : `order` dissocie
+  // l'ordre du DOM de l'ordre affiché, donc un `section + section` désignerait
+  // la mauvaise. La section en tête de colonne est la première ouverte — ou, si
+  // tout est replié, la première tout court.
+  const firstVisual = $derived(openState.indexOf(true) === -1 ? firstClosed : openState.indexOf(true));
 
   const nodes = $derived(buildBranchTree(repo.branches));
   // Un niveau de plus que LOCAL : le distant, puis son arborescence.
@@ -190,17 +197,14 @@
 
     <div class="sections">
       <section class:open={localOpen} class:pinned={firstClosed === 0}>
-        <header>
-          <button class="sec-title" onclick={() => (localOpen = !localOpen)} aria-expanded={localOpen}>
-            <span class="chev" class:open={localOpen}>▶</span>
-            <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
-              <rect x="2.5" y="3" width="11" height="7.5" rx="1" />
-              <path d="M1 12.5h14" stroke-linecap="round" />
-            </svg>
-            LOCAL
-          </button>
-          <span class="count">{repo.branches.length}</span>
-        </header>
+        <SectionHeader
+          label="Local"
+          icon={branchIcon}
+          count={repo.branches.length}
+          open={localOpen}
+          onToggle={() => (localOpen = !localOpen)}
+          first={firstVisual === 0}
+        />
 
         {#if localOpen}
           <div class="sec-body">
@@ -214,18 +218,14 @@
       </section>
 
       <section class:open={remotesOpen} class:pinned={firstClosed === 1}>
-        <header>
-          <button
-            class="sec-title"
-            onclick={() => (remotesOpen = !remotesOpen)}
-            aria-expanded={remotesOpen}
-          >
-            <span class="chev" class:open={remotesOpen}>▶</span>
-            {@render remoteIcon()}
-            REMOTE
-          </button>
-          <span class="count">{repo.remoteBranches.length}</span>
-        </header>
+        <SectionHeader
+          label="Remote"
+          icon={remoteIcon}
+          count={repo.remoteBranches.length}
+          open={remotesOpen}
+          onToggle={() => (remotesOpen = !remotesOpen)}
+          first={firstVisual === 1}
+        />
 
         {#if remotesOpen}
           <div class="sec-body">
@@ -260,18 +260,14 @@
       </section>
 
       <section class:open={stashesOpen} class:pinned={firstClosed === 2}>
-        <header>
-          <button
-            class="sec-title"
-            onclick={() => (stashesOpen = !stashesOpen)}
-            aria-expanded={stashesOpen}
-          >
-            <span class="chev" class:open={stashesOpen}>▶</span>
-            {@render stashIcon()}
-            STASHES
-          </button>
-          <span class="count">{repo.stashes.length}</span>
-        </header>
+        <SectionHeader
+          label="Stashes"
+          icon={stashIcon}
+          count={repo.stashes.length}
+          open={stashesOpen}
+          onToggle={() => (stashesOpen = !stashesOpen)}
+          first={firstVisual === 2}
+        />
 
         {#if stashesOpen}
           <div class="sec-body">
@@ -503,6 +499,14 @@
   </svg>
 {/snippet}
 
+<!-- Écran : la machine, par opposition au nuage du distant. -->
+{#snippet branchIcon()}
+  <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <rect x="2.5" y="3" width="11" height="7.5" rx="1" />
+    <path d="M1 12.5h14" stroke-linecap="round" />
+  </svg>
+{/snippet}
+
 <!-- Nuage : le dépôt distant, par opposition aux branches locales. -->
 {#snippet remoteIcon()}
   <svg class="ic" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -657,7 +661,13 @@
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
   }
+  /* Une section est une liste sur laquelle on agit, pas de la prose : y
+     sélectionner du texte gênerait le clic sans rien apporter. Ce qui se copie —
+     le titre et la description d'un commit — vit hors de toute section, et garde
+     donc la sélection par défaut. */
   section {
+    user-select: none;
+    -webkit-user-select: none;
     /* Le corps déborde de quelques pixels de padding quand la fenêtre est trop
        courte pour les en-têtes eux-mêmes ; il est coupé ici plutôt que peint
        par-dessus l'en-tête suivant. */
@@ -700,35 +710,15 @@
   }
   /* Colle le bloc des sections repliées en bas : la marge automatique absorbe
      l'espace libre, lequel n'existe justement que lorsque toutes les sections
-     ouvertes sont gelées sur leur contenu. */
+     ouvertes sont gelées sur leur contenu. Le trait qui les sépare du dessus
+     vient de `SectionHeader`, comme celui de toutes les autres sections. */
   section.pinned {
     margin-top: auto;
-    border-top: 1px solid var(--border);
   }
-  /* L'en-tête n'est plus `sticky` : il vit hors de la zone défilante, qui est
-     désormais le corps de sa propre section. */
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    padding: 0.5rem 0.6rem;
-    border-bottom: 1px solid var(--border);
-    background: var(--bg);
-  }
-  .sec-title {
-    display: flex;
-    align-items: center;
-    gap: 0.4rem;
-    background: transparent;
-    border: none;
-    color: var(--text);
-    font-size: 0.78rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    cursor: pointer;
-    padding: 0;
-  }
+  /* L'en-tête vit dans `SectionHeader` — y compris son trait de séparation : il
+     est le premier enfant de la section, donc la bordure tombe au bon endroit.
+     Il n'est plus `sticky` non plus, la zone défilante étant le corps de sa
+     propre section. */
   .chev {
     display: inline-block;
     width: 0.7rem;
@@ -743,11 +733,6 @@
     width: 14px;
     height: 14px;
     color: var(--text-dim);
-  }
-  .count {
-    font-size: 0.75rem;
-    font-weight: 600;
-    color: var(--accent-soft);
   }
   .sec-body {
     min-height: 0;

@@ -1,6 +1,7 @@
 <script lang="ts">
   import { repo } from "../stores/repo.svelte";
   import FileList from "./FileList.svelte";
+  import SectionHeader from "./SectionHeader.svelte";
 
   // Sections repliables (état local à la sidebar).
   let unstagedOpen = $state(true);
@@ -113,23 +114,19 @@
 
     <!--
       Les deux sections se partagent la hauteur disponible et défilent
-      indépendamment ; une bordure sépare nettement « non indexés » d'« indexés ».
+      indépendamment ; le trait qui sépare « non indexés » d'« indexés » vient de
+      leur en-tête commun, comme dans la colonne de gauche.
     -->
     <div class="sections">
       <section class:collapsed={!unstagedOpen}>
-        <header>
-          <button class="sec-title" onclick={() => (unstagedOpen = !unstagedOpen)}>
-            <span class="chev" class:open={unstagedOpen}>▶</span>
-            Non indexés ({unstagedCount})
-          </button>
-          <button
-            class="sec-action stage"
-            onclick={() => repo.stageAll()}
-            disabled={unstagedCount === 0 || repo.busy}
-          >
-            Tout indexer
-          </button>
-        </header>
+        <SectionHeader
+          label="Non indexés"
+          icon={pencilIcon}
+          count={unstagedCount}
+          open={unstagedOpen}
+          onToggle={() => (unstagedOpen = !unstagedOpen)}
+          actions={stageAction}
+        />
         {#if unstagedOpen}
           <div class="sec-body">
             {#if repo.viewMode === "tree" && unstagedCount > 0}
@@ -142,20 +139,15 @@
         {/if}
       </section>
 
-      <section class="staged" class:collapsed={!stagedOpen}>
-        <header>
-          <button class="sec-title" onclick={() => (stagedOpen = !stagedOpen)}>
-            <span class="chev" class:open={stagedOpen}>▶</span>
-            Indexés ({stagedCount})
-          </button>
-          <button
-            class="sec-action unstage"
-            onclick={() => repo.unstageAll()}
-            disabled={stagedCount === 0 || repo.busy}
-          >
-            Tout retirer
-          </button>
-        </header>
+      <section class:collapsed={!stagedOpen}>
+        <SectionHeader
+          label="Indexés"
+          icon={checkIcon}
+          count={stagedCount}
+          open={stagedOpen}
+          onToggle={() => (stagedOpen = !stagedOpen)}
+          actions={unstageAction}
+        />
         {#if stagedOpen}
           <div class="sec-body">
             <FileList entries={repo.stagedEntries} staged={true} />
@@ -165,6 +157,42 @@
     </div>
   {/if}
 </div>
+
+<!-- Crayon : ce qui est encore en cours d'écriture, comme le ✎ de la ligne WIP. -->
+{#snippet pencilIcon()}
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M11.2 2.6a1.6 1.6 0 0 1 2.2 2.2L6.1 12.2l-3 .8.8-3z" />
+    <path d="M10.2 3.6l2.2 2.2" stroke-linecap="round" />
+  </svg>
+{/snippet}
+
+<!-- Case cochée : ce qui est retenu pour le prochain commit. -->
+{#snippet checkIcon()}
+  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <rect x="2.5" y="2.5" width="11" height="11" rx="2" />
+    <path d="M5.4 8.2 7.2 10l3.4-3.8" stroke-linecap="round" />
+  </svg>
+{/snippet}
+
+{#snippet stageAction()}
+  <button
+    class="sec-action stage"
+    onclick={() => repo.stageAll()}
+    disabled={unstagedCount === 0 || repo.busy}
+  >
+    Tout indexer
+  </button>
+{/snippet}
+
+{#snippet unstageAction()}
+  <button
+    class="sec-action unstage"
+    onclick={() => repo.unstageAll()}
+    disabled={stagedCount === 0 || repo.busy}
+  >
+    Tout retirer
+  </button>
+{/snippet}
 
 <style>
   .panel {
@@ -345,55 +373,29 @@
     flex: 1;
     min-height: 0;
   }
+  /* Une section est une liste sur laquelle on agit, pas de la prose : y
+     sélectionner du texte gênerait le clic sans rien apporter. Ce qui se copie —
+     le titre et la description d'un commit — vit hors de toute section, et garde
+     donc la sélection par défaut. */
   section {
     display: flex;
     flex-direction: column;
     flex: 1;
     min-height: 0;
+    user-select: none;
+    -webkit-user-select: none;
   }
   /* Repliée : la section ne garde que la hauteur de son en-tête. */
   section.collapsed {
     flex: none;
   }
-  /* Bordure de séparation entre « non indexés » et « indexés ». */
-  section.staged {
-    border-top: 1px solid var(--border);
-  }
-  header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 0.5rem;
-    flex: none;
-    padding: 0.4rem 0.6rem;
-    border-bottom: 1px solid var(--border);
-  }
+  /* En-tête et trait de séparation : voir `SectionHeader`, commun aux deux
+     colonnes latérales. */
   .sec-body {
     flex: 1;
     min-height: 0;
     overflow-y: auto;
-    padding: 0.3rem 0.4rem 0.5rem;
-  }
-  .sec-title {
-    display: flex;
-    align-items: center;
-    gap: 0.35rem;
-    background: transparent;
-    border: none;
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    text-transform: uppercase;
-    letter-spacing: 0.04em;
-    cursor: pointer;
-    padding: 0.1rem;
-  }
-  .chev {
-    display: inline-block;
-    font-size: 0.55rem;
-    transition: transform 0.1s ease;
-  }
-  .chev.open {
-    transform: rotate(90deg);
+    padding: 0.3rem 0.3rem 0.6rem;
   }
   .sec-action {
     background: transparent;
