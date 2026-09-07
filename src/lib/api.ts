@@ -15,6 +15,7 @@ import type {
   Profile,
   PullEvent,
   PullMode,
+  PullRequestEvent,
   PushEvent,
   RemoteBranchEntry,
   RemoteInfo,
@@ -229,6 +230,27 @@ export const api = {
   /** Retire un stash sans l'appliquer (irréversible). */
   stashDrop: (repoId: string, index: number) =>
     call<void>("stash_drop", { repoId, index }),
+
+  // ── Pull requests ────────────────────────────────────────────────────────
+  /**
+   * Charge les pull requests du dépôt. Même contrat que `fetchRemote` : réponse
+   * immédiate, résultat par `onPullRequests`. À une différence près — l'appel ne
+   * prend pas la réservation réseau du dépôt, puisqu'il n'écrit aucune
+   * référence : Pull, Push et Fetch restent disponibles pendant ce temps.
+   *
+   * Une erreur levée ici signale un échec de lancement (onglet fermé, aucun
+   * distant configuré) : aucun événement ne suivra.
+   */
+  loadPullRequests: (repoId: string, includeClosed: boolean) =>
+    call<void>("load_pull_requests", { repoId, includeClosed }),
+  onPullRequests: (handler: (event: PullRequestEvent) => void): Promise<UnlistenFn> =>
+    listen<PullRequestEvent>("repo://pull-requests", (e) => handler(e.payload)),
+  /**
+   * Ouvre la page web d'une pull request dans le navigateur du système. Le
+   * backend refuse tout ce qui n'est pas la page d'une forge reconnue : c'est
+   * la seule chose que l'application ouvre à l'extérieur.
+   */
+  openPullRequest: (url: string) => call<void>("open_pull_request", { url }),
 
   // ── Graph ────────────────────────────────────────────────────────────────
   /** Page d'historique du graph. Recharger depuis `skip = 0` après toute mutation. */

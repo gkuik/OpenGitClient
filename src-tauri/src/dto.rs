@@ -530,6 +530,14 @@ pub struct RemoteInfo {
     /// stocké s'applique : en SSH l'authentification passe par une clé, et
     /// proposer d'y saisir un mot de passe n'aurait aucun effet.
     pub uses_http: bool,
+    /// Forge reconnue derrière ce distant, s'il y en a une.
+    ///
+    /// Elle dit deux choses au frontend : que la section PULL REQUESTS a
+    /// quelque chose à afficher, et qu'un jeton vaut la peine d'être enregistré
+    /// pour cet hôte **même en SSH** — l'API en réclame un là où un fetch se
+    /// contente d'une clé. Sans ce champ, un dépôt cloné en SSH n'apparaîtrait
+    /// pas dans la liste des Réglages, filtrée sur `uses_http`.
+    pub forge: Option<crate::forge::ForgeKind>,
 }
 
 /// Profil d'auteur : une identité Git réutilisable d'un dépôt à l'autre.
@@ -556,4 +564,69 @@ pub struct Identity {
     /// Définie dans le dépôt lui-même plutôt qu'héritée de la config globale.
     /// C'est ce qui distingue « profil choisi » de « valeur par défaut ».
     pub is_local: bool,
+}
+
+// ── Pull requests ───────────────────────────────────────────────────────────
+
+/// Une pull request, telle que la section de la barre latérale l'affiche.
+///
+/// Les trois drapeaux `mine` / `assigned` / `reviewing` sont **des faits, pas des
+/// groupes** : ils disent le rapport entre la PR et l'utilisateur du jeton, et
+/// c'est le frontend qui en tire les trois listes de la section — de la même
+/// façon qu'il tire les couloirs du graph d'une simple liste de commits. Une
+/// même PR peut porter deux de ces drapeaux, et n'en porter aucun : elle est
+/// alors dans le dépôt sans être dans aucun des trois groupes.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestEntry {
+    pub number: u64,
+    pub title: String,
+    /// Auteur, tel que la forge le nomme. Chaîne vide si le compte a disparu.
+    pub author: String,
+    /// Branche d'où vient la PR — celle qu'un clic essaie de retrouver en local.
+    pub source_branch: String,
+    /// Branche qui recevrait la fusion.
+    pub target_branch: String,
+    pub draft: bool,
+    /// Fermée (fusionnée ou abandonnée). Toujours faux tant que le filtre
+    /// « fermées » du menu n'est pas coché : elles ne sont pas demandées.
+    pub closed: bool,
+    /// Fermée **par une fusion**, ce que `closed` seul ne dit pas.
+    pub merged: bool,
+    /// Page web de la PR : c'est elle qu'ouvre le menu contextuel.
+    pub url: String,
+    /// Dernière mise à jour, en ISO 8601 tel que la forge la renvoie.
+    pub updated_at: String,
+    /// Ouverte par l'utilisateur du jeton.
+    pub mine: bool,
+    /// Assignée à l'utilisateur du jeton.
+    pub assigned: bool,
+    /// Sa revue est demandée et pas encore rendue.
+    pub reviewing: bool,
+}
+
+/// Réponse d'un chargement de pull requests.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestReport {
+    /// Hôte interrogé — la clé du jeton, que le message d'erreur nomme.
+    pub host: String,
+    /// Dépôt tel que la forge le nomme (`owner/repo`).
+    pub repo: String,
+    /// Identité du jeton : c'est par rapport à elle que « mes » PR sont miennes.
+    pub viewer: String,
+    pub pull_requests: Vec<PullRequestEntry>,
+}
+
+/// Charge utile de l'événement `repo://pull-requests`, jumelle de [`FetchEvent`].
+///
+/// Comme le fetch, l'appel part sur un thread dédié — mais pour une autre raison
+/// que la sienne : il ne touche à aucune référence, il ne prend donc **pas** la
+/// réservation réseau du dépôt et ne gèle ni Pull, ni Push, ni Fetch.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PullRequestEvent {
+    pub repo_id: String,
+    pub report: Option<PullRequestReport>,
+    pub error: Option<AppError>,
 }

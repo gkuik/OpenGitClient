@@ -299,6 +299,83 @@ as in `TabBar`, for the same reasons, plus three of its own:
   carries `user-select: none`, so there is no text selection to kill, and the
   row keeps its native focus.
 
+### Pull requests come from a forge, and nothing else here does
+
+A pull request is not a Git object: it lives in a forge's REST API, not in
+`refs/**`. `src-tauri/src/forge/` is therefore to that API what `git/` is to
+libgit2 — **the extension point**: `ForgeBackend` (one method, `pull_requests`),
+`github.rs` as its first implementation, `detect()` recognising the forge from a
+remote URL. A second forge is a second impl and one arm in `detect`, with nothing
+to change in the commands or the frontend.
+
+`detect` knows **github.com and any GitHub Enterprise instance whose name says
+so** — `github.psa-cloud.com`, `github-eu.acme.fr`. The two differ only by their
+API root (`api.github.com` versus `https://<host>/api/v3`), which is why
+`ForgeRemote` carries an `api` field and `ForgeKind` has no Enterprise variant.
+
+**The hostname is the only clue we accept to follow.** Nothing in the protocol
+distinguishes a GitHub instance from any other domain before you've called it, and
+probing at random would mean offering a host's token to a server that may not be a
+forge at all. The trade-off is deliberate: an instance named otherwise (`ghe.…`,
+`code.…`) is not recognised and gets no section — better than a section stuck on an
+error for hosts that never had pull requests.
+
+- **`ureq`, not `reqwest`.** The whole backend is blocking — commands hold a
+  `Mutex`, network work goes to a dedicated thread — so an async runtime would be
+  pure weight for one HTTP call. Its TLS is what raised the crate's
+  `rust-version` from 1.77 to 1.85; nothing else in the project needs that.
+- **Two requests per load, not four.** GitKraken's three groups would each be one
+  search query, on a much tighter quota (30/min), for a result one listing already
+  contains: `GET /user` for the token's identity, then the repository's PRs. The
+  backend reports **facts** (`mine` / `assigned` / `reviewing`) and the frontend
+  builds the groups — the same split as the graph, whose lanes are laid out from a
+  plain list of commits.
+- **The thread takes no network reservation**, unlike fetch and push. Those two
+  fight over `refs/remotes/**`; reading an API writes nothing at all, so Pull,
+  Push and Fetch stay live while PRs load. The result comes back as
+  `repo://pull-requests`, routed by `repoId` like the others.
+- **The token is the one already stored** — `credentials.rs`, one entry per host,
+  what Settings calls a « jeton d'accès ». It is read at request time and only
+  ever fills an `Authorization` header, the same one-way trip as the HTTPS secret
+  handed to libgit2. Hence `RemoteInfo.forge`: a repository cloned over **SSH**
+  needs no token to fetch but does to read its PRs, and without that flag its host
+  would never appear in Settings (the list is filtered on `uses_http`) — the token
+  would be impossible to enter.
+
+**Nothing polls.** The watcher knows nothing about PRs — they never touch the
+disk — and interrogating the API on a timer would burn the token's quota for a
+column nobody is necessarily looking at. Loads happen on tab open, after a fetch
+or a push (`reloadRemoteRefs`: someone just asked for news of the remote), on the
+section's ↻, and when the « fermées » filter changes — that one alone goes back to
+the network, drafts being already in the payload.
+
+Two things the failure path decides, and they are not the same decision:
+
+- **`prError`, not the global banner.** Nothing is broken elsewhere; the section
+  displays its own message, and one that says what to do — a link into Settings
+  for a missing or refused token, a retry for the rest.
+- **`prSupported` hides the section for exactly two errors**: no remote at all,
+  and a host whose PRs we can't read. Those ask nothing of anyone. Every other
+  failure keeps the section in place, because there *are* pull requests behind it
+  — we just can't reach them.
+
+The section carries a fourth group, « Autres », that GitKraken doesn't have. It
+appears only when non-empty, and it exists because the header counts what was
+loaded: without it, a colleague's PR that concerns us in no way would be counted
+and invisible, and the count would lie.
+
+**Opening a PR in the browser is the only thing the app opens outside itself**, and
+the boundary is in Rust, not in the capabilities. `tauri-plugin-opener` is a
+dependency but is **not registered**: the webview therefore has no « open this
+URL » command at all, only ours, which passes `forge::is_openable` first — https,
+and a host recognised by the same rule as `detect`. Adding `opener:allow-open-url` to the capabilities would
+hand the whole webview what one menu entry needs.
+
+Everything here is **read-only**: no PR is created, merged, closed or reviewed
+from the application, and a click on one only selects its source branch's tip in
+the graph — the local branch if it exists, the remote one otherwise, and a message
+saying to fetch when neither does.
+
 ### The disk is watched, and nothing is fetched for it
 
 An editor saving, a `git checkout` at the terminal, another client: the repository moves under the app's feet, and until now that was only noticed on the next tab activation. `src-tauri/src/watcher.rs` listens to the filesystem and emits `repo://changed`, which `TabsStore` routes to the named tab — the same contract as `repo://fetched`, except nobody asked for it.
@@ -462,7 +539,7 @@ inside itself.
 ### Every section in both columns is `border · [icon] title · content`
 
 `SectionHeader.svelte` is the single component that draws a section's header, in
-`BranchSidebar` (LOCAL / REMOTE / STASHES), `StatusPanel` (non-indexés /
+`BranchSidebar` (LOCAL / REMOTE / PULL REQUESTS / STASHES), `StatusPanel` (non-indexés /
 indexés) and `CommitDetailsPanel` (the commit's file list). The two columns had
 drifted apart on every one of these points — icon on the left only, count folded
 into the label on the right, bold title one side and dim uppercase the other,
@@ -555,11 +632,11 @@ These caused real breakage; don't undo them.
 - **`html, body` carry `overflow: hidden` + `overscroll-behavior: none`** (`app.css`). This is a desktop app: only inner panels scroll. `overscroll-behavior` specifically kills WKWebView's elastic bounce, which otherwise drags the whole UI.
 - **Each side column has its own width variable** — `--sidebar-l-w` / `--sidebar-r-w` (`app.css`), which `App.svelte` uses for the left and right grid tracks and `layout.svelte.ts` rewrites. Change the variables, not the grid.
 - **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above.
-- Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`.
+- Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` + `core:window:allow-start-dragging` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`. **`tauri-plugin-opener` is deliberately not registered**: it is called from Rust, so the webview gains no URL-opening command and the capability file stays as it is (see the pull requests section).
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Autres » group that only shows when it has something in it), searchable, filterable on drafts and closed PRs, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
@@ -567,7 +644,7 @@ first fetch that brings one — **walked** by the graph, whose ref badges show t
 
 The **Settings screen** (gear, far right of the tab bar) holds *Apparence*, *Taille du texte*, *Profils*, then *Jetons d'accès*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. It takes over the whole body — over `WelcomeScreen` as well as over an open repository — while the tab bar stays reachable; `TabsStore.settingsOpen` drives it, for the same reason `hasTabs` drives `WelcomeScreen`. It lists one row per host found among the **open** tabs, which is why opening a repository closes Settings: the list is built once on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts).
 
-**Only HTTP(S) remotes appear there**, and `RemoteInfo.uses_http` is what decides. An SSH remote has a host too, but a token would never be used for it — listing it invites a pointless entry. The same flag stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
+**Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
 The left sidebar's toolbar holds Pull / Push / Fetch, all three working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters.
 

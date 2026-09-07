@@ -16,8 +16,9 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
-    MergeMode, MergeReport, Profile, PullEvent, PullMode, PushEvent, RecentRepo, RemoteBranchEntry, RemoteInfo,
-    RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry, ThemeMode,
+    MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, RecentRepo,
+    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
+    ThemeMode,
 };
 use crate::error::AppError;
 use crate::state::AppState;
@@ -691,4 +692,74 @@ pub fn commit_file_diff(
     lock(&state)?
         .backend(&repo_id)?
         .commit_file_diff(&oid, &path)
+}
+
+// ── Pull requests ───────────────────────────────────────────────────────────
+
+/// Nom de l'événement portant la liste des pull requests (voir `src/lib/api.ts`).
+const PR_EVENT: &str = "repo://pull-requests";
+
+/// Charge les pull requests du dépôt **en tâche de fond**, comme fetch et push,
+/// et pour la même raison : c'est un appel réseau, et le corps d'une commande
+/// tient le `Mutex` de l'état.
+///
+/// Deux différences avec eux, toutes deux voulues :
+///
+/// - **aucune réservation réseau n'est prise.** Un fetch et un push se disputent
+///   `refs/remotes/**` ; lire une API n'écrit rien du tout sur le disque, donc
+///   rien ne justifierait de griser les trois boutons de la barre pendant ce
+///   temps. C'est le frontend qui évite de relancer deux fois de suite.
+/// - **l'URL du distant est lue tout de suite**, sous le verrou, avant de partir
+///   sur le thread : c'est elle qui nomme la forge et le dépôt. Un dépôt sans
+///   distant échoue donc immédiatement, en retour de commande, et la section
+///   n'a pas d'événement à attendre.
+#[tauri::command]
+pub fn load_pull_requests(
+    repo_id: String,
+    include_closed: bool,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let url = {
+        let guard = lock(&state)?;
+        guard.backend(&repo_id)?.remote_info(None)?.url
+    };
+
+    std::thread::spawn(move || {
+        let outcome = crate::forge::detect(&url)
+            .ok_or(AppError::ForgeUnsupported)
+            .and_then(|remote| crate::forge::open(&remote))
+            .and_then(|forge| forge.pull_requests(include_closed));
+
+        let (report, error) = match outcome {
+            Ok(report) => (Some(report), None),
+            Err(e) => (None, Some(e)),
+        };
+        let _ = app.emit(
+            PR_EVENT,
+            PullRequestEvent {
+                repo_id,
+                report,
+                error,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+/// Ouvre la page web d'une pull request dans le navigateur du système.
+///
+/// C'est la seule chose que l'application ouvre à l'extérieur, et le filtre est
+/// ici plutôt que dans les capacités : le plugin `opener` n'est **pas**
+/// enregistré, donc le webview n'a aucune commande « ouvre cette URL » à sa
+/// disposition — il ne peut demander que ce que celle-ci accepte, à savoir la
+/// page d'une forge reconnue.
+#[tauri::command]
+pub fn open_pull_request(url: String) -> Result<(), AppError> {
+    if !crate::forge::is_openable(&url) {
+        return Err(AppError::Io(format!("Adresse refusée : {url}")));
+    }
+    tauri_plugin_opener::open_url(url, None::<&str>)
+        .map_err(|e| AppError::Io(e.to_string()))
 }

@@ -105,9 +105,11 @@
     for (const tab of tabs.repoTabs) {
       try {
         const remote = await api.getRemoteInfo(tab.repoId);
-        // Un distant SSH n'a que faire d'un jeton : le lister inviterait à en
-        // saisir un qui ne servirait jamais.
-        if (!remote.host || !remote.usesHttp) continue;
+        // Un distant SSH n'a que faire d'un jeton pour ses fetch : le lister
+        // inviterait à en saisir un qui ne servirait jamais. **Sauf** s'il y a
+        // une forge derrière : son API, elle, en réclame un — c'est le jeton
+        // que lit la section PULL REQUESTS, transport Git ou pas.
+        if (!remote.host || !(remote.usesHttp || remote.forge)) continue;
         const row = found.get(remote.host) ?? {
           host: remote.host,
           repos: [],
@@ -157,6 +159,13 @@
       secret = "";
       editing = null;
       await refresh(host);
+      // Le jeton qu'on vient d'enregistrer est peut-être celui qui manquait à
+      // une section PULL REQUESTS : elle a affiché son message et n'a aucune
+      // raison de le redemander toute seule. Seuls les onglets en échec sont
+      // relancés — les autres n'ont rien à revoir.
+      for (const tab of tabs.repoTabs) {
+        if (tab.prError) void tab.loadPullRequests();
+      }
     } catch (e) {
       error = e as AppError;
     } finally {
@@ -331,6 +340,9 @@
         <strong>Il n'est jamais réaffiché</strong> : le modifier consiste à en
         saisir un nouveau. Les dépôts en SSH ne sont pas listés : ils
         s'authentifient par une clé, via l'agent ou depuis <code>~/.ssh</code>.
+        Un hôte GitHub fait exception, même cloné en SSH : son jeton ne sert pas
+        au transport mais à lire les pull requests, et il lui faut la portée
+        <code>repo</code>.
       </p>
 
       {#if error}
@@ -341,7 +353,7 @@
         <p class="muted">Chargement…</p>
       {:else if rows.length === 0}
         <p class="muted">
-          Aucun dépôt distant en HTTPS parmi les onglets ouverts. Ajoute un hôte
+          Aucun hôte à paramétrer parmi les onglets ouverts. Ajoute un hôte
           ci-dessous pour préparer un jeton à l'avance.
         </p>
       {/if}

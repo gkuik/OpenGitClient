@@ -4,7 +4,9 @@ version = "0.1.0"
 description = "GitLite — client Git desktop léger"
 authors = ["GitLite"]
 edition = "2021"
-rust-version = "1.77"
+# Relevé de 1.77 avec l'arrivée d'`ureq` : c'est la version minimale de son
+# implémentation TLS. Rien d'autre dans le projet n'en demande autant.
+rust-version = "1.85"
 
 [lib]
 # `_lib` pour éviter tout conflit de nom sur Windows ; réutilisable en mobile plus tard.
@@ -23,6 +25,18 @@ git2 = "0.19"
 thiserror = "1"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
+
+# Client HTTP de la seule fonctionnalité qui ne parle pas Git : les pull
+# requests, qui vivent dans l'API d'une forge et non dans `refs/**`. Bloquant
+# comme le reste du backend (les commandes tiennent un `Mutex`, le réseau part
+# sur un thread dédié), sans runtime asynchrone à embarquer — c'est ce qui a
+# fait écarter `reqwest`, dont le tokio pèse plus que toute la fonctionnalité.
+ureq = { version = "3.2", default-features = false, features = ["rustls", "json", "gzip"] }
+
+# Ouverture d'une PR dans le navigateur. Appelé depuis Rust uniquement : le
+# plugin n'est pas enregistré, donc aucune commande « ouvre cette URL » n'est
+# exposée au webview — c'est notre commande qui filtre ce qui peut s'ouvrir.
+tauri-plugin-opener = "2"
 
 # Trousseau système, pour que l'app stocke ses propres identifiants sans lancer
 # de processus externe. Liaison au framework Security : rien n'est embarqué.

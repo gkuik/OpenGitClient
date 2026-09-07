@@ -1013,6 +1013,9 @@ impl GitBackend for Libgit2Backend {
         Ok(RemoteInfo {
             has_credentials: host.as_deref().map(crate::credentials::has).unwrap_or(false),
             uses_http: url.starts_with("http://") || url.starts_with("https://"),
+            // Reconnue sur l'URL, donc valable en SSH comme en HTTPS : c'est
+            // l'API de la forge qui réclame un jeton, pas le transport Git.
+            forge: crate::forge::detect(&url).map(|f| f.kind),
             name,
             url,
             host,

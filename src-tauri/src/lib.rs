@@ -4,6 +4,7 @@ mod commands;
 mod credentials;
 mod dto;
 mod error;
+mod forge;
 mod git;
 mod state;
 mod watcher;
@@ -80,6 +81,8 @@ pub fn run() {
             commands::commit_graph,
             commands::commit_details,
             commands::commit_file_diff,
+            commands::load_pull_requests,
+            commands::open_pull_request,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage de l'application Tauri");

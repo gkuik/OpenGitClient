@@ -3,8 +3,9 @@
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
   import type { Snippet } from "svelte";
-  import type { MergeMode, PullMode } from "../types";
+  import type { MergeMode, PullMode, PullRequestEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
+  import PullRequestSection from "./PullRequestSection.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
 
@@ -61,6 +62,7 @@
   // <section> autonome sur ce même modèle.
   let localOpen = $state(true);
   let remotesOpen = $state(true);
+  let prOpen = $state(true);
   let stashesOpen = $state(true);
 
   // REMOTE disparaît quand il n'y a rien à y mettre : un dépôt sans distant n'a
@@ -68,12 +70,19 @@
   // fetch qui ramène une référence.
   const hasRemotes = $derived(repo.remoteBranches.length > 0);
 
+  // PULL REQUESTS disparaît pour les deux seuls échecs qui n'attendent rien de
+  // personne : aucun distant, ou un hôte dont on ne sait pas lire les PR. Un
+  // jeton manquant, lui, laisse la section en place — elle a un message et un
+  // chemin à proposer (voir `RepoStore.prSupported`).
+  const hasPullRequests = $derived(repo.prSupported);
+
   // Les sections **rendues**, dans l'ordre du DOM. Les deux repères ci-dessous
   // se lisent dessus plutôt que sur des indices figés : avec un indice, une
   // section masquée continuerait de compter et les deux tomberaient à côté.
   const shown = $derived([
     { id: "local", open: localOpen },
     ...(hasRemotes ? [{ id: "remotes", open: remotesOpen }] : []),
+    ...(hasPullRequests ? [{ id: "pulls", open: prOpen }] : []),
     { id: "stashes", open: stashesOpen },
   ]);
 
@@ -173,6 +182,28 @@
   );
   const busyHint = "Une opération est en cours, ou une fusion reste à terminer";
 
+  // ── Menu contextuel d'une pull request ──────────────────────────────────────
+  // Rendu ici comme les deux autres menus de la colonne : le geste part d'une
+  // ligne de la section, mais le menu appartient à la colonne — une seule
+  // instance ouverte à la fois, positionnée en coordonnées fenêtre.
+  let prMenu = $state<{ x: number; y: number; pr: PullRequestEntry } | null>(null);
+  const PR_MENU_W = 236;
+  const PR_MENU_H = 96;
+
+  function openPrMenu(pr: PullRequestEntry, x: number, y: number) {
+    prMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - PR_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - PR_MENU_H - 8)),
+      pr,
+    };
+  }
+
+  function openPrInBrowser() {
+    const pr = prMenu?.pr;
+    prMenu = null;
+    if (pr) void repo.openPullRequest(pr);
+  }
+
   async function runMerge(mode: MergeMode) {
     const request = branchMerge.request;
     branchMerge.close();
@@ -187,6 +218,7 @@
     if (e.key !== "Escape") return;
     close();
     pullMenu = null;
+    prMenu = null;
     branchMerge.close();
   }}
 />
@@ -306,6 +338,21 @@
             </div>
           {/if}
         </section>
+      {/if}
+
+      <!-- La `<section>` est portée par le composant : elle est donc fille
+           directe de `.sections`, au même titre que les trois autres, et c'est
+           lui qui reprend à son compte les règles de répartition (part de
+           hauteur, renvoi en bas quand elle est repliée) — les règles d'ici
+           sont scopées et ne l'atteindraient pas. -->
+      {#if hasPullRequests}
+        <PullRequestSection
+          open={prOpen}
+          onToggle={() => (prOpen = !prOpen)}
+          first={firstVisual === "pulls"}
+          pinned={firstClosed === "pulls"}
+          onMenu={openPrMenu}
+        />
       {/if}
 
       <section class:open={stashesOpen} class:pinned={firstClosed === "stashes"}>
@@ -499,6 +546,32 @@
   </div>
 {/if}
 
+<!-- Menu d'une pull request. Une seule entrée : la PR s'ouvre sur la forge.
+     Rien ne se fusionne ni ne se ferme d'ici — l'application lit les PR, elle
+     ne les pilote pas. -->
+{#if prMenu}
+  <button
+    class="ctx-overlay"
+    aria-label="Fermer le menu"
+    onclick={() => (prMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      prMenu = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu pr-menu"
+    style="left: {prMenu.x}px; top: {prMenu.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">#{prMenu.pr.number} · {prMenu.pr.title}</p>
+    <button class="ctx-item" role="menuitem" onclick={openPrInBrowser}>
+      {@render externalIcon()}
+      <span>Ouvrir sur GitHub</span>
+    </button>
+  </div>
+{/if}
+
 <!--
   Un bouton de la barre d'actions : icône au-dessus, libellé en dessous.
   Ajouter une commande se réduit à un `{@render action(...)}` de plus.
@@ -637,6 +710,15 @@
     <path d="M4 5v6" />
     <path d="M5.6 4.4A6 6 0 0 0 10.3 7.6" />
     <path d="M5.6 11.6A6 6 0 0 1 10.3 8.4" />
+  </svg>
+{/snippet}
+
+<!-- Flèche sortant d'un cadre : la page part hors de l'application. -->
+{#snippet externalIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M7 3.5H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V9" />
+    <path d="M9.5 2.5h4v4" />
+    <path d="M13.5 2.5 7.5 8.5" />
   </svg>
 {/snippet}
 
@@ -1031,6 +1113,20 @@
     box-shadow: 0 4px 12px var(--shadow-color);
     pointer-events: none;
   }
+  /* Menu d'une PR : le titre en en-tête peut être long, il se replie. */
+  .pr-menu {
+    min-width: 236px;
+    max-width: 300px;
+  }
+  .pr-menu .ctx-head {
+    max-width: 260px;
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+
   /* Menu du bouton Pull : en-tête explicatif + entrées radio. */
   .pull-menu {
     min-width: 268px;

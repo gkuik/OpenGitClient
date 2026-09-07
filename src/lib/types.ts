@@ -337,7 +337,17 @@ export interface RemoteInfo {
    * aucun effet.
    */
   usesHttp: boolean;
+  /**
+   * Forge reconnue derrière ce distant (`null` si aucune). Elle dit deux
+   * choses : que la section PULL REQUESTS a de quoi s'afficher, et qu'un jeton
+   * vaut d'être enregistré pour cet hôte **même en SSH** — c'est l'API qui en
+   * réclame un, pas le transport Git.
+   */
+  forge: ForgeKind | null;
 }
+
+/** Forge reconnue par le backend. Une seule pour l'instant. */
+export type ForgeKind = "gitHub";
 
 /** Profil d'auteur, réutilisable d'un dépôt à l'autre. */
 export interface Profile {
@@ -363,4 +373,54 @@ export interface Identity {
 export interface AppError {
   kind: string;
   message: string;
+}
+
+// ── Pull requests ───────────────────────────────────────────────────────────
+
+/**
+ * Une pull request telle que la section de la barre latérale l'affiche.
+ *
+ * `mine` / `assigned` / `reviewing` sont **des faits, pas des groupes** : le
+ * backend dit le rapport entre la PR et l'utilisateur du jeton, et c'est ici
+ * qu'on en tire les trois listes — comme les couloirs du graph se déduisent
+ * d'une simple liste de commits. Une PR peut porter deux de ces drapeaux, ou
+ * aucun.
+ */
+export interface PullRequestEntry {
+  number: number;
+  title: string;
+  /** Auteur tel que la forge le nomme ; vide si le compte a disparu. */
+  author: string;
+  /** Branche d'où vient la PR — celle qu'un clic essaie de retrouver en local. */
+  sourceBranch: string;
+  targetBranch: string;
+  draft: boolean;
+  /** Fermée (fusionnée ou abandonnée). */
+  closed: boolean;
+  /** Fermée **par une fusion**, ce que `closed` seul ne dit pas. */
+  merged: boolean;
+  /** Page web de la PR : ce qu'ouvre le menu contextuel. */
+  url: string;
+  /** Dernière mise à jour, ISO 8601 tel que la forge la renvoie. */
+  updatedAt: string;
+  mine: boolean;
+  assigned: boolean;
+  reviewing: boolean;
+}
+
+export interface PullRequestReport {
+  /** Hôte interrogé — la clé du jeton, que les messages nomment. */
+  host: string;
+  /** Dépôt tel que la forge le nomme (`owner/repo`). */
+  repo: string;
+  /** Identité du jeton : c'est par rapport à elle que « mes » PR sont miennes. */
+  viewer: string;
+  pullRequests: PullRequestEntry[];
+}
+
+/** Charge utile de `repo://pull-requests`, jumelle de `FetchEvent`. */
+export interface PullRequestEvent {
+  repoId: string;
+  report: PullRequestReport | null;
+  error: AppError | null;
 }

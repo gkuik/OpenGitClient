@@ -17,6 +17,9 @@ import type {
   PullEvent,
   PullMode,
   PullReport,
+  PullRequestEntry,
+  PullRequestEvent,
+  PullRequestReport,
   PushEvent,
   RecentRepo,
   RemoteBranchEntry,
@@ -244,6 +247,32 @@ export class RepoStore {
   stashSummary = $state("");
   stashBody = $state("");
 
+  // ── Pull requests ───────────────────────────────────────────────────────────
+  // Elles ne viennent pas du dépôt mais de l'API d'une forge : rien ici n'est
+  // relu du disque, et rien n'est rechargé tout seul — voir `loadPullRequests`.
+  pullRequests = $state<PullRequestEntry[]>([]);
+  /** Dépôt et identité auxquels la liste se rapporte ; `null` avant le premier
+   * chargement réussi. */
+  prReport = $state<PullRequestReport | null>(null);
+  prLoading = $state(false);
+  /** Un chargement s'est terminé, avec ou sans succès. */
+  prLoaded = $state(false);
+  /**
+   * Dernière erreur de chargement. Elle vit ici et **pas** dans `error` : la
+   * section a de quoi l'afficher chez elle, avec ce qu'il faut faire (saisir un
+   * jeton), là où le bandeau global ferait écran au reste de l'application pour
+   * une fonctionnalité qui n'a rien empêché.
+   */
+  prError = $state<AppError | null>(null);
+  /** Filtre de la barre de recherche de la section. */
+  prQuery = $state("");
+  /** Filtres du menu en entonnoir. Les brouillons se cachent sur place ; les
+   * fermées, elles, doivent être redemandées à la forge. */
+  prIncludeClosed = $state(false);
+  prIncludeDrafts = $state(true);
+  /** Groupes repliés (les trois sont dépliés par défaut, comme les dossiers). */
+  private collapsedPrGroups = new SvelteSet<string>();
+
   // Préférences d'affichage de la liste de fichiers.
   viewMode = $state<ViewMode>("tree");
   sortAsc = $state(true);
@@ -314,6 +343,49 @@ export class RepoStore {
     return countStatuses(this.changedPaths.values());
   }
 
+  /**
+   * La section PULL REQUESTS a-t-elle lieu d'exister pour ce dépôt ?
+   *
+   * Deux échecs seulement la font disparaître, et ce sont les deux qui ne
+   * demandent rien à personne : pas de distant du tout, ou un hôte dont on ne
+   * sait pas lire les PR. Tout le reste — jeton absent, jeton refusé, réseau
+   * coupé — laisse la section en place avec son message : il y a bien des PR,
+   * c'est nous qui n'y arrivons pas.
+   */
+  get prSupported(): boolean {
+    const kind = this.prError?.kind;
+    return kind !== "ForgeUnsupported" && kind !== "NoRemote";
+  }
+
+  /**
+   * Pull requests après les filtres de la section : les brouillons si on les
+   * veut, puis la recherche. Elle porte sur ce qui est visible d'une ligne —
+   * numéro, titre, auteur, branche source — de sorte que ce qu'on lit est bien
+   * ce sur quoi on cherche.
+   */
+  get prFiltered(): PullRequestEntry[] {
+    const q = this.prQuery.trim().toLowerCase();
+    return this.pullRequests.filter((pr) => {
+      if (!this.prIncludeDrafts && pr.draft) return false;
+      if (q.length === 0) return true;
+      return (
+        `#${pr.number}`.includes(q) ||
+        pr.title.toLowerCase().includes(q) ||
+        pr.author.toLowerCase().includes(q) ||
+        pr.sourceBranch.toLowerCase().includes(q)
+      );
+    });
+  }
+
+  isPrGroupOpen(id: string): boolean {
+    return !this.collapsedPrGroups.has(id);
+  }
+
+  togglePrGroup(id: string) {
+    if (this.collapsedPrGroups.has(id)) this.collapsedPrGroups.delete(id);
+    else this.collapsedPrGroups.add(id);
+  }
+
   // ── Préférences d'affichage ─────────────────────────────────────────────────
 
   setViewMode(mode: ViewMode) {
@@ -362,6 +434,9 @@ export class RepoStore {
       await this.loadIdentity();
       await this.loadGraph();
       this.loaded = true;
+      // Sans `await` : la forge est au bout du réseau, et l'onglet n'a pas à
+      // l'attendre pour être utilisable.
+      void this.loadPullRequests();
     } catch (e) {
       this.error = e as AppError;
     } finally {
@@ -1022,6 +1097,95 @@ export class RepoStore {
     await this.loadRemoteBranches();
     await this.loadBranches();
     await this.loadGraph();
+    // Une PR a pu être ouverte ou fusionnée entre-temps. C'est le seul moment
+    // où on la redemande sans que personne ne l'ait cliqué : quelqu'un vient
+    // justement de demander des nouvelles du distant.
+    void this.loadPullRequests();
+  }
+
+  // ── Pull requests ───────────────────────────────────────────────────────────
+
+  /**
+   * Charge les pull requests de la forge. Comme le fetch, le résultat revient
+   * par un événement (`repo://pull-requests`) : l'appel réseau tourne sur un
+   * thread du backend.
+   *
+   * **Rien ne l'appelle en boucle** : ouverture de l'onglet, fetch ou push
+   * terminé, bouton ↻ de la section, changement du filtre « fermées ». Aucun
+   * sondage — une PR n'apparaît pas sur le disque, donc le surveillant de
+   * fichiers n'a rien à en dire, et interroger l'API à intervalle régulier
+   * grillerait le quota du jeton pour une colonne que personne ne regarde
+   * forcément.
+   */
+  async loadPullRequests() {
+    if (this.prLoading || !this.repoInfo) return;
+    this.prLoading = true;
+    this.prError = null;
+    try {
+      await api.loadPullRequests(this.repoId, this.prIncludeClosed);
+    } catch (e) {
+      // Échec au *lancement* (aucun distant configuré, onglet fermé) : aucun
+      // événement ne suivra, c'est donc ici qu'il faut relâcher l'état.
+      this.prLoading = false;
+      this.prLoaded = true;
+      this.prError = e as AppError;
+    }
+  }
+
+  /** Résultat d'un chargement de pull requests, reçu par événement. */
+  onPullRequests(event: PullRequestEvent) {
+    this.prLoading = false;
+    this.prLoaded = true;
+    if (event.error) {
+      this.prError = event.error;
+      this.pullRequests = [];
+      return;
+    }
+    if (!event.report) return;
+    this.prReport = event.report;
+    this.pullRequests = event.report.pullRequests;
+  }
+
+  /**
+   * Bascule le filtre « fermées et fusionnées ». Il est le seul des deux à
+   * repasser par le réseau : les brouillons sont déjà dans la réponse, alors
+   * qu'une PR fermée n'a même pas été demandée.
+   */
+  async togglePrClosed() {
+    this.prIncludeClosed = !this.prIncludeClosed;
+    await this.loadPullRequests();
+  }
+
+  togglePrDrafts() {
+    this.prIncludeDrafts = !this.prIncludeDrafts;
+  }
+
+  /**
+   * Clic sur une pull request : sélectionne la tête de sa branche source dans
+   * le graph — la branche locale si elle existe, sinon celle du distant.
+   *
+   * C'est tout ce qu'un clic fait : rien n'est basculé, rien n'est fusionné.
+   * Une PR ouverte depuis une machine qu'on n'a pas fetchée n'a aucune
+   * référence ici ; le dire vaut mieux que de ne rien faire du tout.
+   */
+  selectPullRequest(pr: PullRequestEntry) {
+    const local = this.branches.find((b) => b.name === pr.sourceBranch);
+    const remote =
+      local ?? this.remoteBranches.find((b) => b.name.endsWith(`/${pr.sourceBranch}`));
+    if (remote?.oid) {
+      void this.selectCommit(remote.oid);
+      return;
+    }
+    this.setOpStatus(`${pr.sourceBranch} : branche absente en local, fais un Fetch`);
+  }
+
+  /** Ouvre la page web de la PR dans le navigateur du système. */
+  async openPullRequest(pr: PullRequestEntry) {
+    try {
+      await api.openPullRequest(pr.url);
+    } catch (e) {
+      this.error = e as AppError;
+    }
   }
 
   /**
@@ -1385,6 +1549,13 @@ class TabsStore {
       })
       .catch(() => {
         /* idem pour le pull */
+      });
+    api
+      .onPullRequests((event) => {
+        this.repoTabs.find((t) => t.repoId === event.repoId)?.onPullRequests(event);
+      })
+      .catch(() => {
+        /* sans abonnement, la section reste sur « Chargement… » */
       });
     // Changements du disque : personne ne les a demandés, et ils peuvent viser
     // un onglet caché. Seul l'onglet affiché se rafraîchit tout de suite ; les
