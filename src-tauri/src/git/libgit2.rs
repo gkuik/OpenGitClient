@@ -987,7 +987,7 @@ impl GitBackend for Libgit2Backend {
         Ok(repo.remotes()?.iter().flatten().map(str::to_string).collect())
     }
 
-    fn pull(&self, mode: PullMode) -> Result<PullReport, AppError> {
+    fn pull(&self, branch: Option<&str>, mode: PullMode) -> Result<PullReport, AppError> {
         let repo = self.repo()?;
 
         // « Fetch All » n'intègre rien : il s'arrête après avoir interrogé tous
@@ -1010,19 +1010,33 @@ impl GitBackend for Libgit2Backend {
             return Ok(PullReport {
                 remotes,
                 updated,
+                branch: None,
+                switched: false,
                 outcome: PullOutcome::FetchedOnly,
             });
         }
 
-        // Les deux autres modes intègrent : il faut une branche courante.
-        let head = repo.head().map_err(|_| AppError::DetachedHead)?;
-        let branch_name = head
-            .shorthand()
-            .filter(|_| head.is_branch())
-            .ok_or(AppError::DetachedHead)?
-            .to_string();
+        // Les deux autres modes intègrent. Sans branche nommée, c'est la
+        // courante — et il en faut une.
+        let head_name = repo.head().ok().and_then(|h| {
+            h.shorthand()
+                .filter(|_| h.is_branch())
+                .map(str::to_string)
+        });
+        let branch_name = match branch {
+            Some(name) => name.to_string(),
+            None => head_name.clone().ok_or(AppError::DetachedHead)?,
+        };
+        let is_head = head_name.as_deref() == Some(branch_name.as_str());
 
-        let remote_name = resolve_remote(&repo, None)?;
+        // Le distant de *cette* branche, pas celui de HEAD : on tire ce qu'elle
+        // suit. Sans amont configuré, la résolution habituelle (`origin`, ou le
+        // premier déclaré) — et l'absence d'amont remontera juste après.
+        let remote_name = repo
+            .branch_upstream_remote(&format!("refs/heads/{branch_name}"))
+            .ok()
+            .and_then(|b| b.as_str().map(str::to_string))
+            .map_or_else(|| resolve_remote(&repo, None), Ok)?;
         let updated = fetch_one(&repo, &remote_name)?;
 
         // L'amont est relu **après** le fetch : c'est tout l'intérêt de l'ordre.
@@ -1036,12 +1050,59 @@ impl GitBackend for Libgit2Backend {
         let target = upstream.get().target().ok_or(AppError::NoUpstream)?;
 
         let (ahead, behind) = repo.graph_ahead_behind(local, target)?;
+
+        // Une branche non courante : `merge_analysis` ne raisonne que par
+        // rapport à HEAD, l'écart suffit ici. À jour ou en simple retard, la
+        // référence bouge seule et le disque n'est pas touché. Divergente, il
+        // faut une fusion, donc être dessus : on bascule (SAFE, qui refuse sur
+        // un working directory sale) et on continue comme pour HEAD.
+        let mut switched = false;
+        if !is_head {
+            if behind == 0 {
+                return Ok(PullReport {
+                    remotes: vec![remote_name],
+                    updated,
+                    branch: Some(branch_name),
+                    switched: false,
+                    outcome: PullOutcome::UpToDate,
+                });
+            }
+            if ahead == 0 {
+                repo.reference(
+                    &format!("refs/heads/{branch_name}"),
+                    target,
+                    true,
+                    &format!("pull: avance rapide vers {upstream_name}"),
+                )?;
+                return Ok(PullReport {
+                    remotes: vec![remote_name],
+                    updated,
+                    branch: Some(branch_name),
+                    switched: false,
+                    outcome: PullOutcome::FastForwarded { commits: behind },
+                });
+            }
+            if mode == PullMode::FastForwardOnly {
+                return Ok(PullReport {
+                    remotes: vec![remote_name],
+                    updated,
+                    branch: Some(branch_name),
+                    switched: false,
+                    outcome: PullOutcome::Diverged { ahead, behind },
+                });
+            }
+            checkout_local(&repo, &branch_name)?;
+            switched = true;
+        }
+
         let annotated = repo.find_annotated_commit(target)?;
         let (analysis, _preference) = repo.merge_analysis(&[&annotated])?;
 
         let report = |outcome| PullReport {
             remotes: vec![remote_name.clone()],
             updated: updated.clone(),
+            branch: Some(branch_name.clone()),
+            switched,
             outcome,
         };
 
@@ -2644,12 +2705,78 @@ mod tests {
         git.commit(msg, None, false).unwrap();
     }
 
+    /// Comme `repo_tracking_remote`, mais HEAD est sur une seconde branche
+    /// locale `work`, née du même commit : la branche de suivi n'est pas la
+    /// courante, ce qui est le cas du pull depuis le menu d'une autre branche.
+    fn repo_on_a_side_branch() -> (PathBuf, PathBuf, Libgit2Backend, Libgit2Backend, String) {
+        let (origin_dir, local_dir, origin, local, branch) = repo_tracking_remote();
+        let repo = Repository::open(&local_dir).unwrap();
+        let head = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("work", &head, false).unwrap();
+        local.checkout_branch("work").unwrap();
+        assert_eq!(local.info().unwrap().branch.as_deref(), Some("work"));
+        (origin_dir, local_dir, origin, local, branch)
+    }
+
+    #[test]
+    fn pull_of_another_branch_fast_forwards_its_ref_without_touching_the_worktree() {
+        let (origin_dir, local_dir, origin, local, branch) = repo_on_a_side_branch();
+        commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2");
+
+        let report = local.pull(Some(&branch), PullMode::FastForwardOrMerge).unwrap();
+        assert_eq!(report.branch.as_deref(), Some(branch.as_str()));
+        assert!(!report.switched);
+        assert!(matches!(report.outcome, PullOutcome::FastForwarded { commits: 1 }));
+
+        // La référence a bougé, HEAD non, et le disque non plus.
+        let repo = Repository::open(&local_dir).unwrap();
+        let tip = repo.find_reference(&format!("refs/heads/{branch}")).unwrap().target().unwrap();
+        assert_eq!(tip.to_string(), origin.info().unwrap().head.unwrap());
+        assert_eq!(local.info().unwrap().branch.as_deref(), Some("work"));
+        assert_eq!(fs::read_to_string(local_dir.join("a.txt")).unwrap(), "1\n");
+
+        // Rien à faire la fois d'après.
+        let report = local.pull(Some(&branch), PullMode::FastForwardOrMerge).unwrap();
+        assert!(matches!(report.outcome, PullOutcome::UpToDate));
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn pull_of_a_diverged_branch_switches_to_it_only_when_a_merge_is_wanted() {
+        let (origin_dir, local_dir, origin, local, branch) = repo_on_a_side_branch();
+        commit_file(&origin_dir, &origin, "b.txt", "distant\n", "c2 distant");
+        // La branche de suivi avance localement aussi, depuis `work` puis retour.
+        local.checkout_branch(&branch).unwrap();
+        commit_file(&local_dir, &local, "c.txt", "local\n", "c2 local");
+        local.checkout_branch("work").unwrap();
+
+        // Avance rapide seulement : on constate la divergence sans bouger.
+        let report = local.pull(Some(&branch), PullMode::FastForwardOnly).unwrap();
+        assert!(matches!(report.outcome, PullOutcome::Diverged { ahead: 1, behind: 1 }));
+        assert!(!report.switched);
+        assert_eq!(local.info().unwrap().branch.as_deref(), Some("work"));
+
+        // Fusion voulue : on bascule sur la branche, qui reçoit le commit.
+        let report = local.pull(Some(&branch), PullMode::FastForwardOrMerge).unwrap();
+        assert!(report.switched);
+        assert!(matches!(report.outcome, PullOutcome::Merged { commits: 1 }));
+        let info = local.info().unwrap();
+        assert_eq!(info.branch.as_deref(), Some(branch.as_str()));
+        assert!(!info.merging);
+        assert_eq!(fs::read_to_string(local_dir.join("b.txt")).unwrap(), "distant\n");
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
     #[test]
     fn pull_fast_forwards_when_the_local_has_not_moved() {
         let (origin_dir, local_dir, origin, local, _) = repo_tracking_remote();
         commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2");
 
-        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        let report = local.pull(None, PullMode::FastForwardOrMerge).unwrap();
         assert_eq!(report.remotes, ["origin"]);
         assert!(matches!(
             report.outcome,
@@ -2664,7 +2791,7 @@ mod tests {
 
         // Sans mouvement en face, un second pull ne fait rien.
         assert!(matches!(
-            local.pull(PullMode::FastForwardOrMerge).unwrap().outcome,
+            local.pull(None, PullMode::FastForwardOrMerge).unwrap().outcome,
             PullOutcome::UpToDate
         ));
 
@@ -2679,7 +2806,7 @@ mod tests {
         commit_file(&local_dir, &local, "b.txt", "local\n", "c2 local");
         let before = local.info().unwrap().head;
 
-        let report = local.pull(PullMode::FastForwardOnly).unwrap();
+        let report = local.pull(None, PullMode::FastForwardOnly).unwrap();
         assert!(
             matches!(
                 report.outcome,
@@ -2708,7 +2835,7 @@ mod tests {
         commit_file(&origin_dir, &origin, "a.txt", "2\n", "c2 distant");
         commit_file(&local_dir, &local, "b.txt", "local\n", "c2 local");
 
-        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        let report = local.pull(None, PullMode::FastForwardOrMerge).unwrap();
         assert!(
             matches!(report.outcome, PullOutcome::Merged { commits: 1 }),
             "{:?}",
@@ -2735,7 +2862,7 @@ mod tests {
         commit_file(&origin_dir, &origin, "a.txt", "distant\n", "c2 distant");
         commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
 
-        let report = local.pull(PullMode::FastForwardOrMerge).unwrap();
+        let report = local.pull(None, PullMode::FastForwardOrMerge).unwrap();
         match report.outcome {
             PullOutcome::Conflicted { files } => assert_eq!(files, ["a.txt"]),
             other => panic!("conflit attendu, obtenu {other:?}"),
@@ -2764,7 +2891,7 @@ mod tests {
         commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
         let before = local.info().unwrap().head;
 
-        local.pull(PullMode::FastForwardOrMerge).unwrap();
+        local.pull(None, PullMode::FastForwardOrMerge).unwrap();
         assert!(local.info().unwrap().merging);
 
         local.abort_merge().unwrap();
@@ -2955,7 +3082,7 @@ mod tests {
         commit_file(&local_dir, &local, "a.txt", "local\n", "c2 local");
         let before = local.info().unwrap().head;
 
-        local.pull(PullMode::FastForwardOrMerge).unwrap();
+        local.pull(None, PullMode::FastForwardOrMerge).unwrap();
         assert!(local.info().unwrap().merging);
 
         // Abandonner les changements abandonne aussi la fusion : sans cela, le

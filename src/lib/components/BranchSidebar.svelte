@@ -134,18 +134,19 @@
   );
   const busyHint = $derived(t("branches.merge.busy"));
 
-  // Pull, depuis le menu d'une branche. Il ne concerne que la branche courante
-  // — le backend ne tire que dans HEAD — et reprend le mode du bouton Pull,
-  // sauf « Fetch every remote », qui n'est pas un pull : l'entrée dit Pull,
-  // elle en fait un.
+  // Pull, depuis le menu d'une branche — la courante ou une autre : une
+  // branche non courante avance sans être checkoutée, et le pull ne bascule
+  // dessus que si une fusion s'impose. Il reprend le mode du bouton Pull, sauf
+  // « Fetch every remote », qui n'est pas un pull : l'entrée dit Pull, elle en
+  // fait un.
   const pullEntryMode = $derived<PullMode>(
     tabs.pullMode === "fetchAll" ? "fastForwardOrMerge" : tabs.pullMode,
   );
   const canPull = $derived(!repo.busyRemote && !!repo.repoInfo);
 
-  async function runPull() {
+  async function runPull(branch: string) {
     branchMerge.close();
-    await repo.pull(pullEntryMode);
+    await repo.pull(pullEntryMode, branch);
   }
 
   // ── Menu contextuel d'une pull request ──────────────────────────────────────
@@ -388,18 +389,18 @@
   >
     {#if !request.fromDrop}
       {@const isHead = repo.repoInfo?.branch === request.target}
-      <!-- Le pull ne vaut que pour la branche courante : sur une autre, l'entrée
-           reste là mais grisée, et dit quoi faire — la basculer d'abord. -->
+      <!-- Sur une autre branche que la courante, l'infobulle dit ce qui change :
+           la référence avance sans checkout, et on ne bascule qu'en cas de fusion. -->
       <button
         class="ctx-item"
         role="menuitem"
-        disabled={!isHead || !canPull}
-        title={!isHead
-          ? t("branches.pull.other")
-          : canPull
+        disabled={!canPull}
+        title={!canPull
+          ? t("branches.pull.busy")
+          : isHead
             ? t(`toolbar.pull.${pullEntryMode}.hint`)
-            : t("branches.pull.busy")}
-        onclick={runPull}
+            : t("branches.pull.other.hint")}
+        onclick={() => runPull(request.target)}
       >
         {@render pullIcon()}
         <span>{t(`toolbar.pull.${pullEntryMode}`)}</span>

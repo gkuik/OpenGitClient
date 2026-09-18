@@ -283,7 +283,7 @@ Remote rows behave like local ones: click selects the tip commit — which lands
 
 **`abort_merge` is not a convenience.** The app has no per-hunk conflict UI, so without it a conflicted pull would strand the user inside the application. It force-checks-out HEAD — the one place `force` is right, since that's exactly what abandoning means — and clears the merge state. `RepoInfo.merging` exists to surface it: `MergeBanner` sits above both right-column views, because a merge concerns the repository, not whatever is being looked at.
 
-Reload after a pull is wider than after a fetch: `repoInfo` first (it decides whether the banner shows), then the status (this is where conflicted files appear), then the usual remote-ref reload. It's the only remote operation that writes the worktree and index.
+Reload after a pull is wider than after a fetch: `repoInfo` first (it decides whether the banner shows, and `branch` may have changed if the pull switched), then the status (this is where conflicted files appear), then the usual remote-ref reload — which also reloads the local branches and the graph, so a non-current branch fast-forwarded in place shows up moved. It's the only remote operation that writes the worktree and index.
 
 ### A branch is merged into the one it is dropped on
 
@@ -332,14 +332,23 @@ inflated into a merge commit (`--no-ff` is not offered).
 
 **The right-click menu is the branch's menu, the drop menu is a merge gesture** —
 `MergeRequest.fromDrop` tells them apart. Right-click adds a **Pull** entry above
-the merge entries: it runs `repo.pull()` with the Pull button's mode (except
-*Fetch every remote*, which is not a pull and falls back to fast-forward-or-merge),
-and is enabled **only on the current branch**, since the backend only ever pulls
-into HEAD — on another branch it stays, greyed, and its tooltip says to check the
-branch out first. That is also why right-clicking the *current* branch now opens
-the menu at all (it used to be refused as a self-merge): it shows Pull alone, the
-merge entries being dropped when source and target coincide. A drop keeps the
-early return and never shows Pull.
+the merge entries: it runs `repo.pull(mode, branch)` on the clicked branch with
+the Pull button's mode (except *Fetch every remote*, which is not a pull and
+falls back to fast-forward-or-merge). Right-clicking the *current* branch opens
+the menu too (it used to be refused as a self-merge): Pull alone, the merge
+entries being dropped when source and target coincide. A drop keeps the early
+return and never shows Pull.
+
+**Pulling a branch that is not checked out** is `pull(Some(branch), mode)`, and
+it borrows `merge_branches`' rule rather than the HEAD path's: the branch's own
+upstream remote is fetched, then `graph_ahead_behind` decides — up to date,
+nothing; behind only, **the ref is moved and nothing on disk is touched**
+(`git fetch origin b:b`); diverged, `FastForwardOnly` reports `Diverged`, and
+the merge mode **checks the branch out first** (SAFE, so a dirty worktree
+refuses before anything is written) and then runs the ordinary merge path.
+`PullReport.branch` and `PullReport.switched` are what let the report say where
+the commits went and whether HEAD moved — the frontend cannot guess either. The
+credentials retry remembers the branch along with the mode (`pullBranch`).
 
 `RepoStore.reloadAfterMerge` runs **on failure too**, and that is not a
 precaution: a real merge switches to the target *before* writing, so HEAD may

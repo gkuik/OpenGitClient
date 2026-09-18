@@ -233,11 +233,18 @@ pub trait GitBackend: Send {
 
     /// Récupère puis intègre, selon le mode choisi (`git pull`).
     ///
+    /// `branch` est la branche locale à tirer ; absente, c'est la courante.
+    /// Une branche **non courante** avance sans rien toucher sur le disque —
+    /// sa référence est simplement déplacée sur l'amont quand c'est une avance
+    /// rapide, comme `git fetch origin b:b`. Quand une vraie fusion s'impose,
+    /// on bascule dessus d'abord — la règle de [`GitBackend::merge_branches`] :
+    /// Git n'écrit pas dans une branche inactive. `PullReport.switched` le dit.
+    ///
     /// **Bloquante sur le réseau**, comme [`GitBackend::fetch`] : même thread
     /// dédié côté commande. C'est aussi la seule opération distante qui écrit
     /// dans le working directory — d'où la stratégie SAFE, qui refuse plutôt
     /// que d'écraser des modifications locales.
-    fn pull(&self, mode: PullMode) -> Result<PullReport, AppError>;
+    fn pull(&self, branch: Option<&str>, mode: PullMode) -> Result<PullReport, AppError>;
 
     /// Abandonne une fusion en cours : les fichiers reviennent à HEAD et l'état
     /// de fusion est effacé. Sans elle, un conflit n'aurait aucune issue depuis

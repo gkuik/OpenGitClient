@@ -440,6 +440,12 @@ pub struct PullReport {
     pub remotes: Vec<String>,
     /// Références distantes déplacées par le fetch qui précède l'intégration.
     pub updated: Vec<FetchedRef>,
+    /// Branche tirée. Absente en `FetchAll`, qui n'intègre rien.
+    pub branch: Option<String>,
+    /// Vrai si le pull a basculé sur la branche tirée : une branche non
+    /// courante qui ne pouvait pas avancer rapidement a dû être checkoutée
+    /// pour recevoir la fusion. Le frontend ne peut pas le deviner.
+    pub switched: bool,
     pub outcome: PullOutcome,
 }
 

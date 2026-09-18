@@ -170,7 +170,13 @@ export const api = {
    * réponse immédiate, résultat par `onPulled`. C'est la seule opération
    * distante qui écrit dans le working directory.
    */
-  pull: (repoId: string, mode: PullMode) => call<void>("pull", { repoId, mode }),
+  /**
+   * Récupère puis intègre. `branch` nomme une branche locale à tirer à la place
+   * de la courante : sa référence avance seule quand c'est une avance rapide,
+   * et le pull bascule dessus quand une fusion s'impose.
+   */
+  pull: (repoId: string, mode: PullMode, branch?: string) =>
+    call<void>("pull", { repoId, mode, branch: branch ?? null }),
   onPulled: (handler: (event: PullEvent) => void): Promise<UnlistenFn> =>
     listen<PullEvent>("repo://pulled", (e) => handler(e.payload)),
   /**

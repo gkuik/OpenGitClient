@@ -253,6 +253,13 @@ export interface PullReport {
   /** Distants interrogés — un seul, sauf en « Fetch All ». */
   remotes: string[];
   updated: FetchedRef[];
+  /** Branche tirée ; absente en « Fetch All », qui n'intègre rien. */
+  branch: string | null;
+  /**
+   * Le pull a basculé sur la branche tirée : une branche non courante qui ne
+   * pouvait pas avancer rapidement a dû être checkoutée pour la fusion.
+   */
+  switched: boolean;
   outcome: PullOutcome;
 }
 

@@ -70,6 +70,9 @@ const CHANGE_RETRY_MS = 400;
 function pullStatus(report: PullReport): string {
   const where = report.remotes.join(", ");
   const o = report.outcome;
+  // Une branche tirée sans être la courante est nommée : le compte rendu doit
+  // dire *où* les commits sont allés, puisque ce n'est pas sous les pieds.
+  const branch = report.branch ?? "";
   switch (o.kind) {
     case "fetchedOnly": {
       const refs = report.updated.length;
@@ -80,9 +83,13 @@ function pullStatus(report: PullReport): string {
     case "upToDate":
       return t("op.fetch.upToDate", { where });
     case "fastForwarded":
-      return t("op.pull.fastForwarded", { where, n: o.commits });
+      return report.switched || !report.branch
+        ? t("op.pull.fastForwarded", { where, n: o.commits })
+        : t("op.pull.fastForwarded.branch", { where, branch, n: o.commits });
     case "merged":
-      return t("op.pull.merged", { where, n: o.commits });
+      return report.switched
+        ? t("op.pull.merged.switched", { where, branch, n: o.commits })
+        : t("op.pull.merged", { where, n: o.commits });
     case "conflicted":
       return t("op.pull.conflicted", { n: o.files.length });
     case "diverged":
@@ -949,14 +956,15 @@ export class RepoStore {
    * Récupère puis intègre, selon le mode passé (celui du bouton Pull). Comme
    * fetch et push : le résultat revient par `repo://pulled`.
    */
-  async pull(mode: PullMode) {
+  async pull(mode: PullMode, branch?: string) {
     if (this.busyRemote || !this.repoInfo) return;
     this.pullMode = mode;
+    this.pullBranch = branch;
     this.pulling = true;
     this.error = null;
     this.setOpStatus(null);
     try {
-      await api.pull(this.repoId, mode);
+      await api.pull(this.repoId, mode, branch);
     } catch (e) {
       this.pulling = false;
       this.error = e as AppError;
@@ -964,11 +972,12 @@ export class RepoStore {
   }
 
   /**
-   * Mode du dernier pull lancé, mémorisé pour pouvoir le relancer après une
-   * saisie d'identifiants — le mode choisi entre-temps n'aurait pas de raison
-   * de s'appliquer à une opération déjà décidée.
+   * Mode et branche du dernier pull lancé, mémorisés pour pouvoir le relancer
+   * après une saisie d'identifiants — le mode choisi entre-temps n'aurait pas
+   * de raison de s'appliquer à une opération déjà décidée.
    */
   private pullMode: PullMode = "fastForwardOrMerge";
+  private pullBranch: string | undefined;
 
   /** Résultat d'un pull, reçu par événement. */
   onPulled(event: PullEvent) {
@@ -1293,7 +1302,7 @@ export class RepoStore {
       await (prompt.op === "push"
         ? this.push()
         : prompt.op === "pull"
-          ? this.pull(this.pullMode)
+          ? this.pull(this.pullMode, this.pullBranch)
           : this.fetch());
     } catch (e) {
       this.error = e as AppError;

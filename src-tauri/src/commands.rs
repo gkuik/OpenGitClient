@@ -315,6 +315,7 @@ const PULL_EVENT: &str = "repo://pulled";
 #[tauri::command]
 pub fn pull(
     repo_id: String,
+    branch: Option<String>,
     mode: PullMode,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
@@ -330,7 +331,7 @@ pub fn pull(
     let path = PathBuf::from(&repo_id);
     std::thread::spawn(move || {
         let outcome =
-            crate::git::open_repository(&path).and_then(|backend| backend.pull(mode));
+            crate::git::open_repository(&path).and_then(|backend| backend.pull(branch.as_deref(), mode));
 
         if let Some(state) = app.try_state::<Mutex<AppState>>() {
             if let Ok(mut guard) = state.lock() {

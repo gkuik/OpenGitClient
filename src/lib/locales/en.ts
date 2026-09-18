@@ -196,8 +196,9 @@ export const en = {
   "branches.merge.noFastForward.hint":
     "Always a merge commit, even where a fast-forward would do — the merge stays visible in the history",
   "branches.merge.busy": "An operation is running, or a merge is still to be finished",
-  // Pull, dans le même menu : seule la branche courante peut être tirée.
-  "branches.pull.other": "Only the current branch can be pulled: double-click this one to check it out first",
+  // Pull, dans le même menu, pour n'importe quelle branche locale.
+  "branches.pull.other.hint":
+    "Moves this branch forward without checking it out; switches to it only if a merge is needed",
   "branches.pull.busy": "A remote operation is already running",
 
   // ── Colonne de gauche : stashes ───────────────────────────────────────────
@@ -303,9 +304,17 @@ export const en = {
     one: "{where}: {n} commit fetched (fast-forward)",
     other: "{where}: {n} commits fetched (fast-forward)",
   },
+  "op.pull.fastForwarded.branch": {
+    one: "{where}: {branch} fast-forwarded by {n} commit, without checking it out",
+    other: "{where}: {branch} fast-forwarded by {n} commits, without checking it out",
+  },
   "op.pull.merged": {
     one: "{where}: {n} commit merged",
     other: "{where}: {n} commits merged",
+  },
+  "op.pull.merged.switched": {
+    one: "{where}: switched to {branch}, {n} commit merged",
+    other: "{where}: switched to {branch}, {n} commits merged",
   },
   "op.pull.conflicted": {
     one: "Merge conflict: {n} file to resolve",
