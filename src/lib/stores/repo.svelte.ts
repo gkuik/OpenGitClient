@@ -1318,6 +1318,27 @@ export class RepoStore {
   }
 
   /**
+   * Abandonne les changements d'un seul fichier — le `discardAll` d'un chemin,
+   * depuis le menu contextuel de sa ligne, seul endroit d'où l'action part.
+   * **Irréversible**, confirmé dans le menu même.
+   *
+   * Prend l'entrée et non le chemin : un renommage indexé est *deux* chemins,
+   * l'ancien (dans HEAD, à restaurer) et le nouveau (absent de HEAD, à
+   * supprimer). Le backend ne connaît que des chemins ; c'est ici que la ligne
+   * « R » redevient un seul geste, dans un seul `run()`, donc un seul refresh.
+   *
+   * Rien de plus à recharger que le status : aucune fusion n'est refermée par
+   * un fichier, `repoInfo` n'a donc pas bougé. Si ce fichier était celui du
+   * diff, `resyncSelection` referme la vue en constatant sa disparition.
+   */
+  async discardFile(entry: FileEntry) {
+    await this.run(async () => {
+      await api.discardFile(this.repoId, entry.path);
+      if (entry.oldPath) await api.discardFile(this.repoId, entry.oldPath);
+    });
+  }
+
+  /**
    * Committe le brouillon (`commitSummary` / `commitBody`) et vide celui-ci en
    * cas de succès. Renvoie `false` sans rien tenter si le résumé est vide ou si
    * rien n'est indexé — les deux cas que le bouton grise déjà.

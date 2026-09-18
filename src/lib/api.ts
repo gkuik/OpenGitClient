@@ -93,6 +93,12 @@ export const api = {
    * `false`.
    */
   discardAll: (repoId: string) => call<RepoInfo>("discard_all", { repoId }),
+  /**
+   * Abandonne les changements d'un seul fichier : retour à HEAD s'il y est,
+   * suppression sinon. Irréversible ; la confirmation est l'affaire du menu.
+   */
+  discardFile: (repoId: string, path: string) =>
+    call<void>("discard_file", { repoId, path }),
   commit: (repoId: string, summary: string, body: string | null, amend: boolean) =>
     call<CommitResult>("commit", { repoId, summary, body, amend }),
 

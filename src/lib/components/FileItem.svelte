@@ -3,6 +3,7 @@
   import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { STATUS_BADGES } from "../badges";
+  import { fileMenu } from "../fileMenu.svelte";
 
   let {
     entry,
@@ -26,6 +27,26 @@
   function selectFile() {
     repo.select(entry.path, staged);
   }
+
+  // Le clic droit sélectionne la ligne d'abord, comme le clic gauche : le menu
+  // porte sur le fichier qu'on regarde, et le diff au centre montre ce que
+  // l'entrée « Discard » va effacer. Le menu lui-même est rendu une fois pour
+  // la colonne, dans `StatusPanel` — d'où le module `fileMenu`.
+  function openMenu(e: MouseEvent) {
+    e.preventDefault();
+    selectFile();
+    fileMenu.ask(entry, staged, e.clientX, e.clientY);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key === "Enter") selectFile();
+    else if (e.key === "ContextMenu") {
+      e.preventDefault();
+      selectFile();
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      fileMenu.ask(entry, staged, r.left, r.bottom);
+    }
+  }
 </script>
 
 <div
@@ -35,7 +56,8 @@
   tabindex="0"
   style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
   onclick={selectFile}
-  onkeydown={(e) => (e.key === "Enter" ? selectFile() : undefined)}
+  oncontextmenu={openMenu}
+  onkeydown={onKey}
 >
   <span class="badge {badge.cls}">{badge.label}</span>
   <span

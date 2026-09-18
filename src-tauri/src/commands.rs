@@ -161,6 +161,20 @@ pub fn discard_all(
     backend.info()
 }
 
+/// Abandonne les changements d'un seul fichier (irréversible). Comme
+/// `discard_all`, la confirmation est l'affaire de l'interface.
+///
+/// Ne renvoie rien, contrairement à `discard_all` : un fichier ne referme pas
+/// la fusion en cours, donc `merging` n'a pas pu changer.
+#[tauri::command]
+pub fn discard_file(
+    repo_id: String,
+    path: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.backend(&repo_id)?.discard_file(&path)
+}
+
 #[tauri::command]
 pub fn commit(
     repo_id: String,

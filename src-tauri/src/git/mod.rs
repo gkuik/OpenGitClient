@@ -72,6 +72,21 @@ pub trait GitBackend: Send {
     /// disparition des conflits et le commit suivant naîtrait avec deux parents.
     fn discard_all(&self) -> Result<(), AppError>;
 
+    /// Abandonne les changements d'**un seul** fichier, index et working
+    /// directory compris — la version par fichier de [`GitBackend::discard_all`],
+    /// avec la même règle : HEAD décide.
+    ///
+    /// Un chemin présent dans HEAD y revient (`git checkout HEAD -- <path>`,
+    /// forcé : la stratégie SAFE refuserait d'écraser précisément ce qu'on veut
+    /// effacer). Un chemin absent de HEAD est un fichier neuf, indexé ou non :
+    /// il est retiré de l'index s'il y était, puis supprimé du disque, et les
+    /// dossiers qu'il vide partent avec lui. Un chemin qui n'existe nulle part
+    /// n'est pas une erreur : il n'y a rien à abandonner.
+    ///
+    /// Irréversible, comme `discard_all`, mais **sans** refermer une fusion en
+    /// cours : abandonner un fichier ne dit rien des autres conflits.
+    fn discard_file(&self, path: &str) -> Result<(), AppError>;
+
     /// Crée un commit à partir de l'index courant.
     /// Si `amend` est vrai, remplace le dernier commit (message + arbre) au lieu
     /// d'en créer un nouveau.

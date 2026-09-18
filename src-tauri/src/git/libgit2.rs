@@ -295,6 +295,44 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
+    fn discard_file(&self, path: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let rel = Path::new(path);
+
+        // HEAD décide : le fichier y est, il y revient ; il n'y est pas, c'est
+        // un fichier neuf qui n'a nulle part où revenir. Un HEAD non né n'a
+        // pas d'arbre, et tout est alors « neuf ».
+        let in_head = repo
+            .head()
+            .ok()
+            .and_then(|h| h.peel_to_tree().ok())
+            .is_some_and(|tree| tree.get_path(rel).is_ok());
+
+        if in_head {
+            // `git checkout HEAD -- <path>` : index et disque. Forcé, parce que
+            // la stratégie SAFE refuse d'écraser des modifications locales — et
+            // c'est exactement ce qu'on lui demande ici.
+            let mut opts = CheckoutBuilder::new();
+            opts.force().path(path);
+            repo.checkout_head(Some(&mut opts))?;
+            return Ok(());
+        }
+
+        // Fichier neuf : hors de l'index s'il y était, puis hors du disque.
+        let mut index = repo.index()?;
+        if index.get_path(rel, 0).is_some() {
+            index.remove_path(rel)?;
+            index.write()?;
+        }
+        // Un dépôt nu n'a pas de disque à nettoyer.
+        if let Some(workdir) = repo.workdir() {
+            let abs = workdir.join(rel);
+            remove_untracked(&abs)?;
+            prune_empty_dirs(workdir, abs.parent());
+        }
+        Ok(())
+    }
+
     fn commit(
         &self,
         summary: &str,
@@ -2744,6 +2782,84 @@ mod tests {
             fs::read_to_string(dir.join("build/out.bin")).unwrap(),
             "ignoré\n"
         );
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_file_reverts_a_tracked_file_and_leaves_the_others_alone() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "origine\n").unwrap();
+        fs::write(dir.join("b.txt"), "origine\n").unwrap();
+        git.stage_all().unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // `a.txt` est modifié deux fois : une version indexée, une autre sur le
+        // disque. Le discard doit effacer les deux, pas seulement l'une.
+        fs::write(dir.join("a.txt"), "indexé\n").unwrap();
+        git.stage("a.txt").unwrap();
+        fs::write(dir.join("a.txt"), "modifié\n").unwrap();
+        fs::write(dir.join("b.txt"), "modifié aussi\n").unwrap();
+
+        git.discard_file("a.txt").unwrap();
+
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "origine\n");
+        let st = git.status().unwrap();
+        assert!(st.staged.is_empty());
+        // Le voisin n'a pas bougé : le discard est bien limité au chemin.
+        assert_eq!(st.unstaged.len(), 1);
+        assert_eq!(st.unstaged[0].path, "b.txt");
+        assert_eq!(fs::read_to_string(dir.join("b.txt")).unwrap(), "modifié aussi\n");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_file_deletes_a_new_file_indexed_or_not() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join(".gitignore"), "build/\n").unwrap();
+        git.stage_all().unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // Un neuf déjà indexé, un non suivi au fond d'un dossier, et un ignoré
+        // dans ce même dossier, qui doit survivre avec son dossier.
+        fs::write(dir.join("b.txt"), "indexé\n").unwrap();
+        git.stage("b.txt").unwrap();
+        fs::create_dir_all(dir.join("neuf/build")).unwrap();
+        fs::write(dir.join("neuf/c.txt"), "neuf\n").unwrap();
+        fs::write(dir.join("neuf/build/out.bin"), "ignoré\n").unwrap();
+
+        git.discard_file("b.txt").unwrap();
+        assert!(!dir.join("b.txt").exists());
+        assert!(git.status().unwrap().staged.is_empty());
+
+        git.discard_file("neuf/c.txt").unwrap();
+        assert!(!dir.join("neuf/c.txt").exists());
+        // Le dossier n'est pas vide — il garde l'ignoré — donc il reste.
+        assert_eq!(
+            fs::read_to_string(dir.join("neuf/build/out.bin")).unwrap(),
+            "ignoré\n"
+        );
+        assert!(git.status().unwrap().untracked.is_empty());
+
+        // Un chemin qui n'existe nulle part : rien à abandonner, pas d'erreur.
+        git.discard_file("nulle-part.txt").unwrap();
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_file_on_an_unborn_head_deletes_the_file() {
+        let (dir, git) = temp_repo();
+        // Aucun commit : même indexé, le fichier n'a nulle part où revenir.
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+
+        git.discard_file("a.txt").unwrap();
+
+        assert!(!dir.join("a.txt").exists());
+        let st = git.status().unwrap();
+        assert!(st.staged.is_empty() && st.untracked.is_empty());
 
         fs::remove_dir_all(&dir).ok();
     }

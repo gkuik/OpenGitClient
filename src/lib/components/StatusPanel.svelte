@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
+  import { fileMenu } from "../fileMenu.svelte";
   import FileList from "./FileList.svelte";
   import SectionHeader from "./SectionHeader.svelte";
 
@@ -28,11 +29,62 @@
     confirming = false;
     await repo.discardAll();
   }
+
+  // ── Menu contextuel d'un fichier ────────────────────────────────────────────
+  // La demande vient d'une ligne (`FileItem`, via le module `fileMenu`) ; le
+  // menu est rendu ici, une fois pour la colonne, comme celui des stashes dans
+  // la colonne de gauche. Une seule entrée, irréversible, donc armée par un
+  // premier clic et exécutée par le second — le patron de la suppression d'un
+  // stash, faute de capacité de confirmation déclarée.
+  let confirmDiscard = $state(false);
+  const FILE_MENU_W = 272;
+  const FILE_MENU_H = 96;
+
+  /** Position du menu, ramenée dans la fenêtre. */
+  const fileMenuPos = $derived(
+    fileMenu.request
+      ? {
+          x: Math.max(8, Math.min(fileMenu.request.x, window.innerWidth - FILE_MENU_W - 8)),
+          y: Math.max(8, Math.min(fileMenu.request.y, window.innerHeight - FILE_MENU_H - 8)),
+        }
+      : null,
+  );
+
+  // Un fichier neuf — non suivi, ou ajouté à l'index — n'existe que sur le
+  // disque : l'abandonner, c'est le supprimer. L'en-tête du menu le dit avant
+  // le clic, parce que ce n'est pas le même prix qu'un retour à HEAD.
+  const fileIsNew = $derived(
+    fileMenu.request?.entry.status === "untracked" ||
+      fileMenu.request?.entry.status === "added",
+  );
+
+  // Réarme à chaque ouverture : un clic droit sur une autre ligne ne doit pas
+  // hériter de la confirmation donnée pour la précédente.
+  $effect(() => {
+    if (fileMenu.request) confirmDiscard = false;
+  });
+
+  function closeFileMenu() {
+    fileMenu.close();
+    confirmDiscard = false;
+  }
+
+  async function discardFile() {
+    const entry = fileMenu.request?.entry;
+    if (!confirmDiscard) {
+      confirmDiscard = true;
+      return;
+    }
+    closeFileMenu();
+    if (entry) await repo.discardFile(entry);
+  }
 </script>
 
 <svelte:window
   onkeydown={(e) => {
-    if (e.key === "Escape") confirming = false;
+    if (e.key !== "Escape") return;
+    confirming = false;
+    closeFileMenu();
   }}
 />
 
@@ -181,6 +233,54 @@
   >
     {t("status.unstageAll")}
   </button>
+{/snippet}
+
+<!--
+  Menu contextuel d'un fichier : superposition qui ferme + menu positionné, la
+  mécanique des menus de la colonne de gauche. L'en-tête nomme le fichier et
+  annonce ce que l'entrée coûtera ; l'entrée est en couleur de danger et se
+  confirme sur place.
+-->
+{#if fileMenu.request && fileMenuPos}
+  {@const entry = fileMenu.request.entry}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={closeFileMenu}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      closeFileMenu();
+    }}
+  ></button>
+  <div
+    class="ctx-menu file-menu"
+    style="left: {fileMenuPos.x}px; top: {fileMenuPos.y}px"
+    role="menu"
+  >
+    <div class="ctx-head">
+      <code class="file-name" title={entry.path}>{entry.path}</code>
+      <span class="file-cost">{fileIsNew ? t("status.file.menu.new") : t("status.file.menu.tracked")}</span>
+    </div>
+    <button
+      class="ctx-item danger"
+      role="menuitem"
+      onclick={discardFile}
+      disabled={repo.busy}
+    >
+      {@render discardIcon()}
+      <span>
+        {confirmDiscard ? t("status.file.menu.discard.confirm") : t("status.file.menu.discard")}
+      </span>
+    </button>
+  </div>
+{/if}
+
+<!-- Flèche de retour : le fichier revient d'où il vient, comme le ↺ du bouton « Discard all ». -->
+{#snippet discardIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M3.2 6.2A5 5 0 1 1 3 9.5" />
+    <path d="M3 3v3.2h3.2" />
+  </svg>
 {/snippet}
 
 <style>
@@ -414,6 +514,40 @@
   .sec-action:disabled {
     opacity: 0.4;
     cursor: default;
+  }
+  /* Ce qui distingue ce menu-là : sa largeur, son en-tête à deux lignes et
+     son icône (la carrosserie commune est dans app.css). */
+  .file-menu {
+    width: 272px;
+  }
+  .file-menu .ctx-head {
+    display: flex;
+    flex-direction: column;
+    gap: 0.2rem;
+    max-width: none;
+  }
+  .file-name {
+    font-family: var(--mono);
+    font-size: 0.72rem;
+    color: var(--text);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .file-cost {
+    white-space: normal;
+  }
+  .ctx-item.danger {
+    color: var(--danger);
+  }
+  .ctx-item.danger:hover:not(:disabled) {
+    background: var(--danger-bg);
+  }
+  .ctx-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    display: block;
   }
   .empty {
     color: var(--text-dim);
