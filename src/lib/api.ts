@@ -145,10 +145,24 @@ export const api = {
    *
    * `mode` n'est forcé que sur demande explicite de l'utilisateur, entrée par
    * entrée dans le menu du bouton : il n'est ni persisté ni mémorisé d'un appel
-   * à l'autre.
+   * à l'autre. `remote` et `target` viennent de la barre d'upstream, au premier
+   * push d'une branche : absents, le backend résout le distant et reprend le
+   * nom local.
    */
-  pushBranch: (repoId: string, mode: PushMode = "normal", remote?: string) =>
-    call<void>("push_branch", { repoId, mode, remote: remote ?? null }),
+  pushBranch: (
+    repoId: string,
+    mode: PushMode = "normal",
+    remote?: string,
+    target?: string,
+  ) =>
+    call<void>("push_branch", {
+      repoId,
+      mode,
+      remote: remote ?? null,
+      target: target ?? null,
+    }),
+  /** Noms des distants déclarés — le choix de la barre d'upstream. Aucun réseau. */
+  listRemotes: (repoId: string) => call<string[]>("list_remotes", { repoId }),
   onPushed: (handler: (event: PushEvent) => void): Promise<UnlistenFn> =>
     listen<PushEvent>("repo://pushed", (e) => handler(e.payload)),
   /**

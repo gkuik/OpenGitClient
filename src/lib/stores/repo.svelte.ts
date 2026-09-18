@@ -166,6 +166,16 @@ export class RepoStore {
   pushing = $state(false);
   pulling = $state(false);
   /**
+   * Question posée avant le premier push d'une branche — GitKraken : « What
+   * remote/branch should X push to and pull from? ». Non nul = la barre est
+   * affichée, au-dessus des trois colonnes, et rien n'a encore été envoyé. Le
+   * mode retenu est celui du geste qui a ouvert la barre (un force sans
+   * upstream n'a guère de sens, mais il n'est pas perdu en route).
+   */
+  upstreamPrompt = $state<{ branch: string; remotes: string[]; mode: PushMode } | null>(
+    null,
+  );
+  /**
    * Compte rendu de la dernière opération, affiché brièvement sous la barre
    * d'actions : fetch, push, pull et fusion de branches. Une seule ligne pour
    * tous, parce qu'on ne lit jamais que le résultat du dernier geste — et parce
@@ -887,11 +897,51 @@ export class RepoStore {
    */
   async push(mode: PushMode = "normal") {
     if (this.busyRemote || !this.repoInfo) return;
+
+    // Premier push d'une branche : rien n'est envoyé avant que la barre
+    // d'upstream ait eu sa réponse — vers quel distant, sous quel nom. C'est
+    // le suivi qui se décide là (push *et* pull), pas seulement la cible d'un
+    // envoi, d'où la question plutôt qu'un choix silencieux. Sans distant du
+    // tout, la barre n'aurait rien à proposer : le push part et rapporte
+    // `NoRemote`, comme avant.
+    const head = this.branches.find((b) => b.isHead);
+    if (head && head.upstream === null && this.upstreamPrompt === null) {
+      let remotes: string[] = [];
+      try {
+        remotes = await api.listRemotes(this.repoId);
+      } catch {
+        /* le push dira ce qui manque */
+      }
+      if (remotes.length > 0) {
+        this.upstreamPrompt = { branch: head.name, remotes, mode };
+        return;
+      }
+    }
+    await this.runPush(mode);
+  }
+
+  /**
+   * Réponse de la barre d'upstream : ce distant, ce nom-là. La barre se ferme
+   * avant l'envoi, et le mode choisi au moment du clic sur Push est repris.
+   */
+  async confirmUpstream(remote: string, target: string) {
+    const prompt = this.upstreamPrompt;
+    if (!prompt) return;
+    this.upstreamPrompt = null;
+    await this.runPush(prompt.mode, remote, target.trim());
+  }
+
+  cancelUpstream() {
+    this.upstreamPrompt = null;
+  }
+
+  private async runPush(mode: PushMode, remote?: string, target?: string) {
+    if (this.busyRemote || !this.repoInfo) return;
     this.pushing = true;
     this.error = null;
     this.setOpStatus(null);
     try {
-      await api.pushBranch(this.repoId, mode);
+      await api.pushBranch(this.repoId, mode, remote, target);
     } catch (e) {
       this.pushing = false;
       this.error = e as AppError;
@@ -1081,15 +1131,19 @@ export class RepoStore {
     }
     if (!event.report) return;
 
-    const { remote, branch, upstreamSet, forced } = event.report;
+    const { remote, branch, target, upstreamSet, forced } = event.report;
     // Une réécriture ne se raconte pas comme une publication : c'est le seul
-    // geste de l'application qui puisse retirer des commits d'un serveur.
+    // geste de l'application qui puisse retirer des commits d'un serveur. Et
+    // une branche publiée sous un autre nom dit lequel — c'est le seul cas où
+    // « publiée » ne suffit pas à dire où.
     this.setOpStatus(
       forced
         ? t("op.push.forced", { remote, branch })
-        : upstreamSet
-          ? t("op.push.published.upstream", { remote, branch })
-          : t("op.push.published", { remote, branch }),
+        : target !== branch
+          ? t("op.push.published.as", { remote, branch, target })
+          : upstreamSet
+            ? t("op.push.published.upstream", { remote, branch })
+            : t("op.push.published", { remote, branch }),
     );
 
     // Le push a fait avancer `refs/remotes/**` (libgit2 met les tips à jour) :

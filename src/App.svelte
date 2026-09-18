@@ -6,6 +6,7 @@
   import NewTabView from "./lib/components/NewTabView.svelte";
   import SettingsView from "./lib/components/SettingsView.svelte";
   import RepoBar from "./lib/components/RepoBar.svelte";
+  import UpstreamPrompt from "./lib/components/UpstreamPrompt.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
@@ -46,6 +47,11 @@
            concernent le dépôt entier : elles ont quitté la colonne des branches,
            qui n'en portait qu'à titre de voisinage. -->
       <RepoBar />
+
+      <!-- Avant le premier push d'une branche : vers quel distant, sous quel
+           nom. Sur toute la largeur, comme chez GitKraken — la question
+           concerne le dépôt, pas une colonne. Ne rend rien sans demande. -->
+      <UpstreamPrompt />
 
       <div class="body">
         <BranchSidebar />
@@ -95,7 +101,8 @@
   /* La barre du dépôt puis les trois colonnes, qui prennent tout le reste. */
   .repo {
     display: grid;
-    grid-template-rows: auto 1fr;
+    /* Barre du dépôt, barre d'upstream (vide le plus souvent), les colonnes. */
+    grid-template-rows: auto auto 1fr;
     min-height: 0;
     overflow: hidden;
   }

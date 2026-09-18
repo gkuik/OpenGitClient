@@ -281,6 +281,10 @@ pub struct PushReport {
     pub remote: String,
     /// Branche poussée — toujours la branche courante.
     pub branch: String,
+    /// Nom de la branche sur le distant. Égal à `branch` sauf si la barre
+    /// d'upstream en a demandé un autre au premier push ; le compte rendu le
+    /// dit alors, parce que « publiée » ne suffit plus à dire où.
+    pub target: String,
     /// Vrai si le suivi vient d'être posé, c'est-à-dire au premier push de la
     /// branche (`push -u`).
     pub upstream_set: bool,

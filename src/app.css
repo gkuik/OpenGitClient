@@ -39,6 +39,7 @@
   --warn-bg: rgba(250, 204, 21, 0.12);
   --warn-border: rgba(251, 191, 36, 0.45);
   --info: #60a5fa;
+  --info-bg: rgba(96, 165, 250, 0.12);
   /* Fichier non suivi : gris neutre, ni erreur ni succès. */
   --neutral: #a3a3a3;
 
@@ -143,6 +144,7 @@
   --warn-bg: rgba(245, 158, 11, 0.16);
   --warn-border: rgba(180, 83, 9, 0.4);
   --info: #2563eb;
+  --info-bg: rgba(37, 99, 235, 0.1);
   --neutral: #6b7280;
 
   --diff-add-bg: rgba(22, 163, 74, 0.1);

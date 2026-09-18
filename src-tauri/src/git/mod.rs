@@ -210,7 +210,26 @@ pub trait GitBackend: Send {
     /// **Bloquante sur le réseau**, comme [`GitBackend::fetch`] : mêmes
     /// contraintes, elle ne doit jamais être appelée depuis le corps d'une
     /// commande Tauri (voir `commands::push_branch`).
-    fn push(&self, remote: Option<&str>, mode: PushMode) -> Result<PushReport, AppError>;
+    ///
+    /// `target` est le nom de la branche **sur le distant**, quand il diffère
+    /// du nom local : c'est ce que la barre d'upstream demande au premier push
+    /// (GitKraken : « What remote/branch should X push to and pull from? »).
+    /// Absent, la branche est publiée sous son propre nom. Le suivi posé après
+    /// coup pointe sur `<remote>/<target>`.
+    fn push(
+        &self,
+        remote: Option<&str>,
+        target: Option<&str>,
+        mode: PushMode,
+    ) -> Result<PushReport, AppError>;
+
+    /// Noms des dépôts distants déclarés, dans l'ordre de la configuration.
+    ///
+    /// Lecture pure de `.git/config` — aucun réseau. C'est ce qu'offre le
+    /// sélecteur de la barre d'upstream : `remote_info` ne résout qu'un seul
+    /// distant, celui qu'un fetch prendrait, alors que la question posée est
+    /// justement lequel choisir.
+    fn remotes(&self) -> Result<Vec<String>, AppError>;
 
     /// Récupère puis intègre, selon le mode choisi (`git pull`).
     ///

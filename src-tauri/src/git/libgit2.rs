@@ -823,7 +823,12 @@ impl GitBackend for Libgit2Backend {
     }
 
 
-    fn push(&self, remote: Option<&str>, mode: PushMode) -> Result<PushReport, AppError> {
+    fn push(
+        &self,
+        remote: Option<&str>,
+        target: Option<&str>,
+        mode: PushMode,
+    ) -> Result<PushReport, AppError> {
         let repo = self.repo()?;
 
         // Il faut une branche : un HEAD détaché n'a rien à publier.
@@ -836,6 +841,14 @@ impl GitBackend for Libgit2Backend {
 
         let name = resolve_remote(&repo, remote)?;
         let mut remote = repo.find_remote(&name).map_err(|_| AppError::NoRemote)?;
+        // Nom de la branche côté distant : celui demandé, sinon le nom local.
+        // Il sert trois fois — refspec, bail, suivi — et doit être le même
+        // aux trois endroits.
+        let target = target
+            .map(str::trim)
+            .filter(|t| !t.is_empty())
+            .unwrap_or(&branch_name)
+            .to_string();
 
         // Lu **avant** le push : c'est ce qui distingue un premier push (à qui on
         // pose le suivi) d'un push ordinaire.
@@ -887,7 +900,7 @@ impl GitBackend for Libgit2Backend {
             // Une branche distante absente donne un `dst` nul, et notre attente
             // vaut alors nul aussi : créer la branche n'écrase rien.
             let expected = repo
-                .find_reference(&format!("refs/remotes/{name}/{branch_name}"))
+                .find_reference(&format!("refs/remotes/{name}/{target}"))
                 .ok()
                 .and_then(|r| r.target())
                 .unwrap_or_else(Oid::zero);
@@ -918,7 +931,7 @@ impl GitBackend for Libgit2Backend {
         // entrée dans le menu du bouton — jamais par défaut, et jamais retenu.
         let forced = mode != PushMode::Normal;
         let lead = if forced { "+" } else { "" };
-        let refspec = format!("{lead}refs/heads/{branch_name}:refs/heads/{branch_name}");
+        let refspec = format!("{lead}refs/heads/{branch_name}:refs/heads/{target}");
         let result = remote.push(&[refspec.as_str()], Some(&mut options));
         // Ne pas laisser de connexion ouverte derrière soi, succès ou non.
         let _ = remote.disconnect();
@@ -955,7 +968,7 @@ impl GitBackend for Libgit2Backend {
         if !had_upstream {
             if let Ok(mut branch) = repo.find_branch(&branch_name, BranchType::Local) {
                 upstream_set = branch
-                    .set_upstream(Some(&format!("{name}/{branch_name}")))
+                    .set_upstream(Some(&format!("{name}/{target}")))
                     .is_ok();
             }
         }
@@ -963,9 +976,15 @@ impl GitBackend for Libgit2Backend {
         Ok(PushReport {
             remote: name,
             branch: branch_name,
+            target,
             upstream_set,
             forced,
         })
+    }
+
+    fn remotes(&self) -> Result<Vec<String>, AppError> {
+        let repo = self.repo()?;
+        Ok(repo.remotes()?.iter().flatten().map(str::to_string).collect())
     }
 
     fn pull(&self, mode: PullMode) -> Result<PullReport, AppError> {
@@ -2956,6 +2975,59 @@ mod tests {
     }
 
     #[test]
+    fn push_can_publish_under_another_name_and_tracks_that_name() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        fs::write(local_dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        let branch = git.info().unwrap().branch.unwrap();
+
+        // Ce que la barre d'upstream demande au premier push : ce distant, ce
+        // nom-là. Le suivi doit pointer sur le nom choisi, pas sur le local.
+        let report = git
+            .push(Some("origin"), Some("feature/published"), PushMode::Normal)
+            .unwrap();
+        assert_eq!(report.branch, branch);
+        assert_eq!(report.target, "feature/published");
+        assert!(report.upstream_set);
+
+        let origin = Repository::open(&origin_dir).unwrap();
+        assert!(origin.find_reference("refs/heads/feature/published").is_ok());
+        assert!(origin.find_reference(&format!("refs/heads/{branch}")).is_err());
+        let upstream = git
+            .local_branches()
+            .unwrap()
+            .into_iter()
+            .find(|b| b.name == branch)
+            .and_then(|b| b.upstream)
+            .map(|u| u.name)
+            .unwrap();
+        assert_eq!(upstream, "origin/feature/published");
+
+        // Le push suivant, sans rien préciser, suit ce suivi-là.
+        fs::write(local_dir.join("a.txt"), "2\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c2", None, false).unwrap();
+        let report = git.push(None, None, PushMode::Normal).unwrap();
+        assert!(!report.upstream_set);
+        assert_eq!(report.target, branch, "sans demande, le nom local est repris");
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn remotes_lists_the_declared_remotes_without_touching_the_network() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        assert_eq!(git.remotes().unwrap(), vec!["origin".to_string()]);
+        let (dir, lone) = temp_repo();
+        assert!(lone.remotes().unwrap().is_empty());
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn push_publishes_the_branch_and_sets_its_upstream_once() {
         let (origin_dir, local_dir, git) = repo_with_bare_remote();
         fs::write(local_dir.join("a.txt"), "1\n").unwrap();
@@ -2964,7 +3036,7 @@ mod tests {
         let branch = git.info().unwrap().branch.unwrap();
 
         // Premier push : la branche n'a pas d'amont, il est posé au passage.
-        let report = git.push(None, PushMode::Normal).unwrap();
+        let report = git.push(None, None, PushMode::Normal).unwrap();
         assert_eq!(report.remote, "origin");
         assert_eq!(report.branch, branch);
         assert!(report.upstream_set, "le premier push pose le suivi");
@@ -2993,7 +3065,7 @@ mod tests {
         git.commit("c2", None, false).unwrap();
         assert_eq!(gap(&git).ahead, 1);
 
-        let report = git.push(None, PushMode::Normal).unwrap();
+        let report = git.push(None, None, PushMode::Normal).unwrap();
         assert!(!report.upstream_set);
         assert_eq!(gap(&git).ahead, 0);
 
@@ -3037,7 +3109,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         git.commit("c1", None, false).unwrap();
         let branch = git.info().unwrap().branch.unwrap();
-        git.push(None, PushMode::Normal).unwrap();
+        git.push(None, None, PushMode::Normal).unwrap();
 
         // Le distant part de son côté, et le local du sien : un push ordinaire
         // est refusé (c'est le test voisin), le force passe outre.
@@ -3046,7 +3118,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         let local_tip = git.commit("c2 local", None, false).unwrap();
 
-        let report = git.push(None, PushMode::Force).unwrap();
+        let report = git.push(None, None, PushMode::Force).unwrap();
         assert!(report.forced, "le compte rendu doit dire que c'est une réécriture");
 
         // La branche distante porte notre commit, et plus le sien.
@@ -3065,7 +3137,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         git.commit("c1", None, false).unwrap();
         let branch = git.info().unwrap().branch.unwrap();
-        git.push(None, PushMode::Normal).unwrap();
+        git.push(None, None, PushMode::Normal).unwrap();
 
         // Le distant bouge sans que nous fetchions : notre référence de suivi
         // parle encore de c1, le serveur non. C'est le cas que le bail existe
@@ -3075,7 +3147,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         git.commit("c2 local", None, false).unwrap();
 
-        let err = git.push(None, PushMode::ForceWithLease).unwrap_err();
+        let err = git.push(None, None, PushMode::ForceWithLease).unwrap_err();
         match &err {
             AppError::PushLeaseStale(actual) => {
                 assert!(
@@ -3100,7 +3172,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         git.commit("c1", None, false).unwrap();
         let branch = git.info().unwrap().branch.unwrap();
-        git.push(None, PushMode::Normal).unwrap();
+        git.push(None, None, PushMode::Normal).unwrap();
         let pushed = remote_tip(&origin_dir, &branch);
 
         // Personne n'a touché au distant ; c'est notre historique qu'on réécrit —
@@ -3108,7 +3180,7 @@ mod tests {
         let amended = git.commit("c1 corrigé", None, true).unwrap();
         assert_ne!(amended.oid, pushed.to_string());
 
-        let report = git.push(None, PushMode::ForceWithLease).unwrap();
+        let report = git.push(None, None, PushMode::ForceWithLease).unwrap();
         assert!(report.forced);
         assert_eq!(remote_tip(&origin_dir, &branch).to_string(), amended.oid);
 
@@ -3123,7 +3195,7 @@ mod tests {
         git.stage("a.txt").unwrap();
         git.commit("c1", None, false).unwrap();
         let branch = git.info().unwrap().branch.unwrap();
-        git.push(None, PushMode::Normal).unwrap();
+        git.push(None, None, PushMode::Normal).unwrap();
 
         // Quelqu'un d'autre a poussé entre-temps : le distant a un commit que le
         // local n'a pas.
@@ -3145,7 +3217,7 @@ mod tests {
         fs::write(local_dir.join("a.txt"), "2\n").unwrap();
         git.stage("a.txt").unwrap();
         git.commit("c2 local", None, false).unwrap();
-        let err = git.push(None, PushMode::Normal).unwrap_err();
+        let err = git.push(None, None, PushMode::Normal).unwrap_err();
         assert!(
             matches!(err, AppError::PushRejected(_)),
             "un rejet doit être explicite, pas une erreur générique : {err:?}"

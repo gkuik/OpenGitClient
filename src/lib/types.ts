@@ -303,6 +303,11 @@ export interface PushReport {
   remote: string;
   /** Branche poussée — toujours la branche courante. */
   branch: string;
+  /**
+   * Nom de la branche sur le distant. Égal à `branch` sauf si la barre
+   * d'upstream en a demandé un autre au premier push.
+   */
+  target: string;
   /** Le suivi vient d'être posé (premier push de la branche). */
   upstreamSet: boolean;
   /**

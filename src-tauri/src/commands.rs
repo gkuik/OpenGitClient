@@ -488,6 +488,7 @@ const PUSH_EVENT: &str = "repo://pushed";
 pub fn push_branch(
     repo_id: String,
     remote: Option<String>,
+    target: Option<String>,
     mode: PushMode,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
@@ -503,7 +504,7 @@ pub fn push_branch(
     let path = PathBuf::from(&repo_id);
     std::thread::spawn(move || {
         let outcome = crate::git::open_repository(&path)
-            .and_then(|backend| backend.push(remote.as_deref(), mode));
+            .and_then(|backend| backend.push(remote.as_deref(), target.as_deref(), mode));
 
         if let Some(state) = app.try_state::<Mutex<AppState>>() {
             if let Ok(mut guard) = state.lock() {
@@ -526,6 +527,16 @@ pub fn push_branch(
     });
 
     Ok(())
+}
+
+/// Noms des dépôts distants déclarés — le choix qu'offre la barre d'upstream
+/// avant le premier push d'une branche. Aucun réseau.
+#[tauri::command]
+pub fn list_remotes(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<String>, AppError> {
+    lock(&state)?.backend(&repo_id)?.remotes()
 }
 
 /// Dépôt distant qu'un fetch interrogerait, avec l'hôte auquel rattacher des

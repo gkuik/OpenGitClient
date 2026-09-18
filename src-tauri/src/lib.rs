@@ -65,6 +65,7 @@ pub fn run() {
             commands::get_sidebar_widths,
             commands::set_sidebar_widths,
             commands::get_remote_info,
+            commands::list_remotes,
             commands::set_credentials,
             commands::forget_credentials,
             commands::has_credentials,

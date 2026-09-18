@@ -160,6 +160,13 @@ export const en = {
   "toolbar.push.force.hint":
     "Rewrites the remote branch whatever it now holds — commits pushed by someone else are lost, with no way back",
   "toolbar.push.force.confirm": "Confirm: force push",
+  // Barre d'upstream, avant le premier push d'une branche. La question est
+  // celle de GitKraken, mot pour mot : elle dit « push to *and pull from* »
+  // parce que c'est le suivi qui se décide, pas seulement la cible d'un envoi.
+  "push.upstream.question": "What remote/branch should \"{branch}\" push to and pull from?",
+  "push.upstream.remote": "Remote",
+  "push.upstream.name": "Name of the branch on the remote",
+  "push.upstream.submit": "Submit",
   "toolbar.fetch": "Fetch",
   "toolbar.fetch.hint": "Fetch the refs of the remote",
   "toolbar.status.fetching": "Fetching…",
@@ -307,6 +314,7 @@ export const en = {
   "op.push.published": "{remote}: {branch} published",
   "op.push.forced": "{remote}: {branch} rewritten (force push)",
   "op.push.published.upstream": "{remote}: {branch} published, upstream set",
+  "op.push.published.as": "{remote}: {branch} published as {target}, upstream set",
   "op.merge.upToDate": "{target} already contains {source}",
   "op.merge.fastForwarded": {
     one: "{source} → {target}: {n} commit (fast-forward)",
