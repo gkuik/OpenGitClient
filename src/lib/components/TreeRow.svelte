@@ -1,6 +1,7 @@
 <script lang="ts">
-  import type { TreeNode } from "../tree";
+  import { collectEntries, type TreeNode } from "../tree";
   import { repo } from "../stores/repo.svelte";
+  import { fileMenu } from "../fileMenu.svelte";
   import FileItem from "./FileItem.svelte";
   import TreeRow from "./TreeRow.svelte"; // récursion (auto-import Svelte 5)
   import Chevron from "./Chevron.svelte";
@@ -10,6 +11,21 @@
     staged,
     depth = 0,
   }: { node: TreeNode; staged: boolean; depth?: number } = $props();
+
+  // Le menu d'un dossier porte sur les fichiers que sa ligne compte — ceux de
+  // cette section, sous-dossiers compris. Rien n'est sélectionné : un dossier
+  // n'a pas de diff à montrer, et le pli reste tel qu'il est.
+  function openMenu(e: MouseEvent) {
+    e.preventDefault();
+    fileMenu.ask(collectEntries(node), staged, e.clientX, e.clientY);
+  }
+
+  function onKey(e: KeyboardEvent) {
+    if (e.key !== "ContextMenu") return;
+    e.preventDefault();
+    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+    fileMenu.ask(collectEntries(node), staged, r.left, r.bottom);
+  }
 </script>
 
 {#if node.type === "file"}
@@ -20,6 +36,8 @@
     class="dir"
     style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     onclick={() => repo.toggleDir(node.path)}
+    oncontextmenu={openMenu}
+    onkeydown={onKey}
     aria-expanded={open}
   >
     <Chevron {open} />

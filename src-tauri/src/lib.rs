@@ -44,7 +44,7 @@ pub fn run() {
             commands::stage_all,
             commands::unstage_all,
             commands::discard_all,
-            commands::discard_file,
+            commands::discard_paths,
             commands::commit,
             commands::list_recent,
             commands::list_branches,

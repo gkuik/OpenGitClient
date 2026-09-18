@@ -94,11 +94,13 @@ export const api = {
    */
   discardAll: (repoId: string) => call<RepoInfo>("discard_all", { repoId }),
   /**
-   * Abandonne les changements d'un seul fichier : retour à HEAD s'il y est,
-   * suppression sinon. Irréversible ; la confirmation est l'affaire du menu.
+   * Abandonne les changements des chemins donnés — un fichier, ou tous ceux
+   * d'un dossier — en un seul appel : retour à HEAD pour ceux qui y sont,
+   * suppression pour les autres. Irréversible ; la confirmation est l'affaire
+   * du menu.
    */
-  discardFile: (repoId: string, path: string) =>
-    call<void>("discard_file", { repoId, path }),
+  discardPaths: (repoId: string, paths: string[]) =>
+    call<void>("discard_paths", { repoId, paths }),
   commit: (repoId: string, summary: string, body: string | null, amend: boolean) =>
     call<CommitResult>("commit", { repoId, summary, body, amend }),
 

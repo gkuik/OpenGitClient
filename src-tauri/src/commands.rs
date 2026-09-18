@@ -161,18 +161,19 @@ pub fn discard_all(
     backend.info()
 }
 
-/// Abandonne les changements d'un seul fichier (irréversible). Comme
-/// `discard_all`, la confirmation est l'affaire de l'interface.
+/// Abandonne les changements des chemins donnés (irréversible) — un fichier,
+/// ou tous ceux d'un dossier de l'arbre. Comme `discard_all`, la confirmation
+/// est l'affaire de l'interface.
 ///
-/// Ne renvoie rien, contrairement à `discard_all` : un fichier ne referme pas
-/// la fusion en cours, donc `merging` n'a pas pu changer.
+/// Ne renvoie rien, contrairement à `discard_all` : des chemins ne referment
+/// pas la fusion en cours, donc `merging` n'a pas pu changer.
 #[tauri::command]
-pub fn discard_file(
+pub fn discard_paths(
     repo_id: String,
-    path: String,
+    paths: Vec<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
-    lock(&state)?.backend(&repo_id)?.discard_file(&path)
+    lock(&state)?.backend(&repo_id)?.discard_paths(&paths)
 }
 
 #[tauri::command]

@@ -295,40 +295,52 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
-    fn discard_file(&self, path: &str) -> Result<(), AppError> {
+    fn discard_paths(&self, paths: &[String]) -> Result<(), AppError> {
         let repo = self.repo()?;
-        let rel = Path::new(path);
 
-        // HEAD décide : le fichier y est, il y revient ; il n'y est pas, c'est
-        // un fichier neuf qui n'a nulle part où revenir. Un HEAD non né n'a
-        // pas d'arbre, et tout est alors « neuf ».
-        let in_head = repo
-            .head()
-            .ok()
-            .and_then(|h| h.peel_to_tree().ok())
-            .is_some_and(|tree| tree.get_path(rel).is_ok());
+        // HEAD décide : un chemin qui y est y revient ; un chemin qui n'y est
+        // pas est un fichier neuf, qui n'a nulle part où revenir. Un HEAD non
+        // né n'a pas d'arbre, et tout est alors « neuf ».
+        let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+        let (tracked, new): (Vec<&String>, Vec<&String>) = paths.iter().partition(|p| {
+            head_tree
+                .as_ref()
+                .is_some_and(|tree| tree.get_path(Path::new(p)).is_ok())
+        });
 
-        if in_head {
-            // `git checkout HEAD -- <path>` : index et disque. Forcé, parce que
-            // la stratégie SAFE refuse d'écraser des modifications locales — et
-            // c'est exactement ce qu'on lui demande ici.
+        // `git checkout HEAD -- <paths>` : index et disque, en un seul passage.
+        // Forcé, parce que la stratégie SAFE refuse d'écraser des modifications
+        // locales — et c'est exactement ce qu'on lui demande ici.
+        if !tracked.is_empty() {
             let mut opts = CheckoutBuilder::new();
-            opts.force().path(path);
+            opts.force();
+            for p in &tracked {
+                opts.path(p.as_str());
+            }
             repo.checkout_head(Some(&mut opts))?;
-            return Ok(());
         }
 
-        // Fichier neuf : hors de l'index s'il y était, puis hors du disque.
-        let mut index = repo.index()?;
-        if index.get_path(rel, 0).is_some() {
-            index.remove_path(rel)?;
-            index.write()?;
-        }
-        // Un dépôt nu n'a pas de disque à nettoyer.
-        if let Some(workdir) = repo.workdir() {
-            let abs = workdir.join(rel);
-            remove_untracked(&abs)?;
-            prune_empty_dirs(workdir, abs.parent());
+        // Fichiers neufs : hors de l'index s'ils y étaient — une seule écriture
+        // — puis hors du disque. Un dépôt nu n'a pas de disque à nettoyer.
+        if !new.is_empty() {
+            let mut index = repo.index()?;
+            let mut dirty = false;
+            for p in &new {
+                if index.get_path(Path::new(p), 0).is_some() {
+                    index.remove_path(Path::new(p))?;
+                    dirty = true;
+                }
+            }
+            if dirty {
+                index.write()?;
+            }
+            if let Some(workdir) = repo.workdir() {
+                for p in &new {
+                    let abs = workdir.join(p);
+                    remove_untracked(&abs)?;
+                    prune_empty_dirs(workdir, abs.parent());
+                }
+            }
         }
         Ok(())
     }
@@ -2787,7 +2799,7 @@ mod tests {
     }
 
     #[test]
-    fn discard_file_reverts_a_tracked_file_and_leaves_the_others_alone() {
+    fn discard_paths_reverts_a_tracked_file_and_leaves_the_others_alone() {
         let (dir, git) = temp_repo();
         fs::write(dir.join("a.txt"), "origine\n").unwrap();
         fs::write(dir.join("b.txt"), "origine\n").unwrap();
@@ -2801,7 +2813,7 @@ mod tests {
         fs::write(dir.join("a.txt"), "modifié\n").unwrap();
         fs::write(dir.join("b.txt"), "modifié aussi\n").unwrap();
 
-        git.discard_file("a.txt").unwrap();
+        git.discard_paths(&["a.txt".to_string()]).unwrap();
 
         assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "origine\n");
         let st = git.status().unwrap();
@@ -2815,7 +2827,7 @@ mod tests {
     }
 
     #[test]
-    fn discard_file_deletes_a_new_file_indexed_or_not() {
+    fn discard_paths_deletes_a_new_file_indexed_or_not() {
         let (dir, git) = temp_repo();
         fs::write(dir.join(".gitignore"), "build/\n").unwrap();
         git.stage_all().unwrap();
@@ -2829,11 +2841,11 @@ mod tests {
         fs::write(dir.join("neuf/c.txt"), "neuf\n").unwrap();
         fs::write(dir.join("neuf/build/out.bin"), "ignoré\n").unwrap();
 
-        git.discard_file("b.txt").unwrap();
+        git.discard_paths(&["b.txt".to_string()]).unwrap();
         assert!(!dir.join("b.txt").exists());
         assert!(git.status().unwrap().staged.is_empty());
 
-        git.discard_file("neuf/c.txt").unwrap();
+        git.discard_paths(&["neuf/c.txt".to_string()]).unwrap();
         assert!(!dir.join("neuf/c.txt").exists());
         // Le dossier n'est pas vide — il garde l'ignoré — donc il reste.
         assert_eq!(
@@ -2843,19 +2855,54 @@ mod tests {
         assert!(git.status().unwrap().untracked.is_empty());
 
         // Un chemin qui n'existe nulle part : rien à abandonner, pas d'erreur.
-        git.discard_file("nulle-part.txt").unwrap();
+        git.discard_paths(&["nulle-part.txt".to_string()]).unwrap();
 
         fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
-    fn discard_file_on_an_unborn_head_deletes_the_file() {
+    fn discard_paths_takes_a_directory_worth_of_files_in_one_go() {
+        let (dir, git) = temp_repo();
+        fs::create_dir_all(dir.join("src")).unwrap();
+        fs::write(dir.join("src/a.txt"), "origine\n").unwrap();
+        fs::write(dir.join("autre.txt"), "origine\n").unwrap();
+        git.stage_all().unwrap();
+        git.commit("initial", None, false).unwrap();
+
+        // Sous `src` : un suivi modifié, un neuf indexé, un non suivi. À côté :
+        // un suivi modifié qui ne fait pas partie du lot.
+        fs::write(dir.join("src/a.txt"), "modifié\n").unwrap();
+        fs::write(dir.join("src/b.txt"), "indexé\n").unwrap();
+        git.stage("src/b.txt").unwrap();
+        fs::write(dir.join("src/c.txt"), "neuf\n").unwrap();
+        fs::write(dir.join("autre.txt"), "modifié\n").unwrap();
+
+        git.discard_paths(&[
+            "src/a.txt".to_string(),
+            "src/b.txt".to_string(),
+            "src/c.txt".to_string(),
+        ])
+        .unwrap();
+
+        assert_eq!(fs::read_to_string(dir.join("src/a.txt")).unwrap(), "origine\n");
+        assert!(!dir.join("src/b.txt").exists());
+        assert!(!dir.join("src/c.txt").exists());
+        let st = git.status().unwrap();
+        assert!(st.staged.is_empty() && st.untracked.is_empty());
+        assert_eq!(st.unstaged.len(), 1);
+        assert_eq!(st.unstaged[0].path, "autre.txt");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn discard_paths_on_an_unborn_head_deletes_the_file() {
         let (dir, git) = temp_repo();
         // Aucun commit : même indexé, le fichier n'a nulle part où revenir.
         fs::write(dir.join("a.txt"), "1\n").unwrap();
         git.stage("a.txt").unwrap();
 
-        git.discard_file("a.txt").unwrap();
+        git.discard_paths(&["a.txt".to_string()]).unwrap();
 
         assert!(!dir.join("a.txt").exists());
         let st = git.status().unwrap();

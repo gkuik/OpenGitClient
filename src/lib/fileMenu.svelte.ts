@@ -1,5 +1,6 @@
 /**
- * Menu contextuel d'un fichier du working directory — la demande, pas le menu.
+ * Menu contextuel d'un fichier ou d'un dossier du working directory — la
+ * demande, pas le menu.
  *
  * **L'état vit dans un module, pas dans un composant**, pour la raison qui a
  * sorti la fusion de branches de `BranchRow` : les lignes de fichiers naissent
@@ -14,7 +15,11 @@ import type { FileEntry } from "./types";
 
 /** Menu demandé sur une ligne : non nul = le menu est ouvert. */
 export interface FileMenuRequest {
-  entry: FileEntry;
+  /**
+   * Ce sur quoi le menu porte : un fichier, ou tous ceux d'un dossier de
+   * l'arbre — ceux que sa ligne compte, donc ceux de sa section.
+   */
+  entries: FileEntry[];
   /** Section d'origine de la ligne, ce qui distingue deux entrées d'un même chemin. */
   staged: boolean;
   /** Où ouvrir le menu, en coordonnées fenêtre. */
@@ -25,8 +30,9 @@ export interface FileMenuRequest {
 class FileMenu {
   request = $state<FileMenuRequest | null>(null);
 
-  ask(entry: FileEntry, staged: boolean, x: number, y: number) {
-    this.request = { entry, staged, x, y };
+  ask(entries: FileEntry[], staged: boolean, x: number, y: number) {
+    if (entries.length === 0) return;
+    this.request = { entries, staged, x, y };
   }
 
   close() {

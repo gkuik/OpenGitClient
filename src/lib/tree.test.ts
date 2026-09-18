@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildRemoteTree } from "./tree";
-import type { RemoteBranchEntry } from "./types";
+import { buildRemoteTree, buildTree, collectEntries } from "./tree";
+import type { FileEntry, RemoteBranchEntry } from "./types";
 
 function branch(name: string, remote: string): RemoteBranchEntry {
   return { name, remote, oid: "0".repeat(40) };
@@ -40,5 +40,21 @@ describe("buildRemoteTree", () => {
 
     expect(group.remote).toBe("mon/distant");
     expect(group.nodes.map((n) => n.name)).toEqual(["main"]);
+  });
+});
+
+describe("collectEntries", () => {
+  const file = (path: string): FileEntry => ({ path, oldPath: null, status: "modified" });
+
+  it("descend les sous-dossiers et rend les fichiers dans l'ordre de l'arbre", () => {
+    const tree = buildTree([file("src/b.ts"), file("src/lib/a.ts"), file("autre.md")]);
+    const src = tree.find((n) => n.type === "dir" && n.path === "src")!;
+    expect(collectEntries(src).map((e) => e.path)).toEqual(["src/lib/a.ts", "src/b.ts"]);
+  });
+
+  it("ne sort pas du nœud donné", () => {
+    const tree = buildTree([file("src/a.ts"), file("autre.md")]);
+    const leaf = tree.find((n) => n.type === "file")!;
+    expect(collectEntries(leaf).map((e) => e.path)).toEqual(["autre.md"]);
   });
 });

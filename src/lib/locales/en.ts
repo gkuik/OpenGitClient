@@ -87,7 +87,7 @@ export const en = {
   "status.unstageAll": "Unstage all",
   "status.file.stage": "Stage",
   "status.file.unstage": "Unstage",
-  // Menu contextuel d'une ligne, une seule entrée.
+  // Menu contextuel d'une ligne — fichier ou dossier, une seule entrée.
   "status.file.menu.discard": "Discard changes",
   "status.file.menu.discard.confirm": "Confirm: discard changes",
 

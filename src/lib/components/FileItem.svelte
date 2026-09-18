@@ -35,7 +35,7 @@
   function openMenu(e: MouseEvent) {
     e.preventDefault();
     selectFile();
-    fileMenu.ask(entry, staged, e.clientX, e.clientY);
+    fileMenu.ask([entry], staged, e.clientX, e.clientY);
   }
 
   function onKey(e: KeyboardEvent) {
@@ -44,7 +44,7 @@
       e.preventDefault();
       selectFile();
       const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-      fileMenu.ask(entry, staged, r.left, r.bottom);
+      fileMenu.ask([entry], staged, r.left, r.bottom);
     }
   }
 </script>

@@ -30,13 +30,13 @@
     await repo.discardAll();
   }
 
-  // ── Menu contextuel d'un fichier ────────────────────────────────────────────
-  // La demande vient d'une ligne (`FileItem`, via le module `fileMenu`) ; le
-  // menu est rendu ici, une fois pour la colonne, comme celui des stashes dans
-  // la colonne de gauche. Une seule entrée, irréversible, donc armée par un
-  // premier clic et exécutée par le second — le patron de la suppression d'un
-  // stash, faute de capacité de confirmation déclarée. Rien au-dessus de
-  // l'entrée : le menu s'ouvre sur la ligne qu'il concerne.
+  // ── Menu contextuel d'un fichier ou d'un dossier ────────────────────────────
+  // La demande vient d'une ligne (`FileItem` ou `TreeRow`, via le module
+  // `fileMenu`) ; le menu est rendu ici, une fois pour la colonne, comme celui
+  // des stashes dans la colonne de gauche. Une seule entrée, irréversible, donc
+  // armée par un premier clic et exécutée par le second — le patron de la
+  // suppression d'un stash, faute de capacité de confirmation déclarée. Rien
+  // au-dessus de l'entrée : le menu s'ouvre sur la ligne qu'il concerne.
   let confirmDiscard = $state(false);
   const FILE_MENU_W = 200;
   const FILE_MENU_H = 40;
@@ -62,14 +62,14 @@
     confirmDiscard = false;
   }
 
-  async function discardFile() {
-    const entry = fileMenu.request?.entry;
+  async function discardFiles() {
+    const entries = fileMenu.request?.entries;
     if (!confirmDiscard) {
       confirmDiscard = true;
       return;
     }
     closeFileMenu();
-    if (entry) await repo.discardFile(entry);
+    if (entries) await repo.discardFiles(entries);
   }
 </script>
 
@@ -229,9 +229,9 @@
 {/snippet}
 
 <!--
-  Menu contextuel d'un fichier : superposition qui ferme + menu positionné, la
-  mécanique des menus de la colonne de gauche. Une entrée en couleur de danger,
-  qui se confirme sur place.
+  Menu contextuel d'un fichier ou d'un dossier : superposition qui ferme + menu
+  positionné, la mécanique des menus de la colonne de gauche. Une entrée en
+  couleur de danger, qui se confirme sur place.
 -->
 {#if fileMenu.request && fileMenuPos}
   <button
@@ -251,7 +251,7 @@
     <button
       class="ctx-item danger"
       role="menuitem"
-      onclick={discardFile}
+      onclick={discardFiles}
       disabled={repo.busy}
     >
       {@render discardIcon()}

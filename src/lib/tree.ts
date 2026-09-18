@@ -65,6 +65,18 @@ function sortNodes(nodes: TreeNode[], asc: boolean) {
 }
 
 /** Transforme une liste plate de fichiers en arborescence de dossiers. */
+/**
+ * Les fichiers d'un nœud, dossiers descendus, dans l'ordre de l'arbre.
+ *
+ * C'est ce sur quoi porte le menu contextuel d'un dossier : les fichiers que
+ * sa ligne compte, et eux seuls — donc ceux de *sa* section, un dossier de
+ * « Unstaged » ne connaissant pas les fichiers indexés du même nom.
+ */
+export function collectEntries(node: TreeNode): FileEntry[] {
+  if (node.type === "file") return [node.entry];
+  return node.children.flatMap(collectEntries);
+}
+
 export function buildTree(entries: FileEntry[], asc = true): TreeNode[] {
   const root: TreeDirNode = {
     type: "dir",

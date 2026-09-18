@@ -1318,24 +1318,25 @@ export class RepoStore {
   }
 
   /**
-   * Abandonne les changements d'un seul fichier — le `discardAll` d'un chemin,
-   * depuis le menu contextuel de sa ligne, seul endroit d'où l'action part.
-   * **Irréversible**, confirmé dans le menu même.
+   * Abandonne les changements d'un fichier, ou de tous ceux d'un dossier de
+   * l'arbre — le `discardAll` d'une liste de chemins, depuis le menu contextuel
+   * de la ligne, seul endroit d'où l'action part. **Irréversible**, confirmé
+   * dans le menu même.
    *
-   * Prend l'entrée et non le chemin : un renommage indexé est *deux* chemins,
-   * l'ancien (dans HEAD, à restaurer) et le nouveau (absent de HEAD, à
+   * Prend les entrées et non les chemins : un renommage indexé est *deux*
+   * chemins, l'ancien (dans HEAD, à restaurer) et le nouveau (absent de HEAD, à
    * supprimer). Le backend ne connaît que des chemins ; c'est ici que la ligne
-   * « R » redevient un seul geste, dans un seul `run()`, donc un seul refresh.
+   * « R » redevient un seul geste. Un seul appel pour tout le lot, donc un
+   * seul refresh.
    *
    * Rien de plus à recharger que le status : aucune fusion n'est refermée par
-   * un fichier, `repoInfo` n'a donc pas bougé. Si ce fichier était celui du
-   * diff, `resyncSelection` referme la vue en constatant sa disparition.
+   * un fichier, `repoInfo` n'a donc pas bougé. Si le fichier du diff est du
+   * lot, `resyncSelection` referme la vue en constatant sa disparition.
    */
-  async discardFile(entry: FileEntry) {
-    await this.run(async () => {
-      await api.discardFile(this.repoId, entry.path);
-      if (entry.oldPath) await api.discardFile(this.repoId, entry.oldPath);
-    });
+  async discardFiles(entries: FileEntry[]) {
+    const paths = entries.flatMap((e) => (e.oldPath ? [e.path, e.oldPath] : [e.path]));
+    if (paths.length === 0) return;
+    await this.run(() => api.discardPaths(this.repoId, paths));
   }
 
   /**
