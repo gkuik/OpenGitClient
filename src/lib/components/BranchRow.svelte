@@ -189,9 +189,18 @@
   .branch.current:hover {
     background: var(--ok-bg-hover);
   }
-  /* Branche dont la tête est le commit affiché à droite. */
-  .branch.selected {
-    box-shadow: inset 2px 0 0 var(--accent);
+  /* Branche dont la tête est le commit affiché à droite : fond accent sur
+     toute la ligne, comme un fichier sélectionné — et une autre couleur que le
+     vert de la branche courante, qui garde sa coche et sa graisse quand les
+     deux états se cumulent. (Un liseré `inset` à gauche a été essayé : courbé
+     par le rayon de la ligne, il se lisait comme un crochet.) */
+  .branch.selected,
+  .branch.selected:hover {
+    background: var(--accent-bg);
+    color: var(--accent-soft);
+  }
+  .branch.selected .ic {
+    color: var(--accent);
   }
   /* Branche tenue par le curseur : c'est l'étiquette qui suit le pointeur qui
      la représente, la ligne s'efface pour le dire. */
