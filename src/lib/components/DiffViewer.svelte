@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
+  import Cross from "./Cross.svelte";
   import { repo } from "../stores/repo.svelte";
 
   function sign(kind: string): string {
@@ -35,7 +36,7 @@
         title={t("diff.close")}
         aria-label={t("diff.close")}
       >
-        ×
+        <Cross />
       </button>
     </div>
 
@@ -114,6 +115,12 @@
     cursor: pointer;
     line-height: 1;
     font-size: 1rem;
+    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte,
+       et son remplissage par défaut — l'une des causes du décalage — est ôté. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
   .close:hover {
     border-color: var(--accent);

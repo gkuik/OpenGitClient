@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
+  import Cross from "./Cross.svelte";
 
   // Cette barre remplace l'ancienne topbar (logo + bouton « Ouvrir un dépôt ») :
   // elle ne contient que les onglets et le « + » qui en ouvre un nouveau.
@@ -246,7 +247,7 @@
           aria-label={t("tabbar.closeTab")}
           onclick={(e) => onClose(e, tab.id)}
         >
-          ×
+          <Cross />
         </button>
       </div>
     {/each}
@@ -433,6 +434,10 @@
     line-height: 1;
     cursor: pointer;
     opacity: 0;
+    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
   /* Révélée au survol, au focus clavier, ou sur l'onglet courant. */
   .tab:hover .close,

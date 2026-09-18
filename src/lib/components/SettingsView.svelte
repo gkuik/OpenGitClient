@@ -5,6 +5,7 @@
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
+  import Cross from "./Cross.svelte";
   import RichText from "./RichText.svelte";
   import type { AppError, Profile, ThemeMode } from "../types";
 
@@ -221,7 +222,7 @@
         aria-label={t("action.close")}
         onclick={() => tabs.closeSettings()}
       >
-        ×
+        <Cross />
       </button>
     </header>
 
@@ -514,6 +515,12 @@
     font-size: 1rem;
     line-height: 1;
     cursor: pointer;
+    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte,
+       et son remplissage par défaut — l'une des causes du décalage — est ôté. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
   .close:hover {
     color: var(--text);

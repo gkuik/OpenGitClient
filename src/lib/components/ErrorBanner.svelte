@@ -1,6 +1,7 @@
 <script lang="ts">
   import { errorMessage, t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
+  import Cross from "./Cross.svelte";
 
   // Deux sources : l'échec d'ouverture d'un dépôt (qui n'appartient à aucun
   // onglet, et reste le seul affichable quand il n'y en a aucun) et l'erreur de
@@ -17,7 +18,7 @@
   <div class="error" role="alert">
     <span class="kind">{error.kind}</span>
     <span class="msg">{errorMessage(error)}</span>
-    <button class="close" onclick={dismiss} aria-label={t("action.close")}>×</button>
+    <button class="close" onclick={dismiss} aria-label={t("action.close")}><Cross /></button>
   </div>
 {/if}
 
@@ -55,5 +56,9 @@
     line-height: 1;
     cursor: pointer;
     padding: 0 0.15rem;
+    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
   }
 </style>

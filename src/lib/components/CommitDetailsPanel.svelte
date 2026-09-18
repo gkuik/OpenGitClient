@@ -4,6 +4,7 @@
   import { STATUS_BADGES } from "../badges";
   import CommitBody from "./CommitBody.svelte";
   import SectionHeader from "./SectionHeader.svelte";
+  import Cross from "./Cross.svelte";
 
   // Occupe la colonne de droite à la place des changements en cours tant qu'un
   // commit est sélectionné. Sa liste de fichiers reste visible pendant
@@ -42,7 +43,7 @@
       title={t("commitDetails.close")}
       aria-label={t("commitDetails.close")}
     >
-      ×
+      <Cross />
     </button>
   </div>
 
@@ -163,6 +164,12 @@
     cursor: pointer;
     line-height: 1;
     font-size: 1rem;
+    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte,
+       et son remplissage par défaut — l'une des causes du décalage — est ôté. */
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
   }
   .close:hover {
     border-color: var(--accent);
