@@ -46,14 +46,15 @@
       <!-- Nom du dépôt · Pull / Push / Fetch · compte rendu. Ces trois actions
            concernent le dépôt entier : elles ont quitté la colonne des branches,
            qui n'en portait qu'à titre de voisinage. -->
-      <!-- Avant le premier push d'une branche : vers quel distant, sous quel
-           nom. Tout en haut du dépôt, au-dessus même de sa barre, comme chez
-           GitKraken — la question concerne le dépôt, pas une colonne, et elle
-           précède le geste dont la barre porte le bouton. Ne rend rien sans
-           demande. -->
-      <UpstreamPrompt />
-
-      <RepoBar />
+      <div class="top">
+        <RepoBar />
+        <!-- Avant le premier push d'une branche : vers quel distant, sous quel
+             nom. **Par-dessus** la barre du dépôt, comme chez GitKraken : la
+             question remplace le temps d'une réponse les boutons dont elle
+             suspend le geste, et rien ne bouge en dessous. Ne rend rien sans
+             demande. -->
+        <UpstreamPrompt />
+      </div>
 
       <div class="body">
         <BranchSidebar />
@@ -103,17 +104,17 @@
   /* La barre du dépôt puis les trois colonnes, qui prennent tout le reste. */
   .repo {
     display: grid;
-    /* Barre d'upstream (vide le plus souvent), barre du dépôt, les colonnes. */
-    grid-template-rows: auto auto 1fr;
+    grid-template-rows: auto 1fr;
     min-height: 0;
     overflow: hidden;
   }
+  /* Repère de la barre d'upstream, qui se pose en absolu par-dessus la barre
+     du dépôt : la hauteur de la rangée reste celle de cette barre, avec ou
+     sans question, et rien ne saute en dessous. */
+  .top {
+    position: relative;
+  }
   .body {
-    /* Placée d'office sur la rangée souple : sans cela, quand la barre
-       d'upstream ne rend rien, les colonnes remontent dans sa rangée `auto`,
-       prennent la hauteur de leur contenu et laissent le `1fr` vide en dessous
-       — l'application ne remplissait plus que la moitié de la fenêtre. */
-    grid-row: 3;
     display: grid;
     /* Branches à gauche · graph/diff au centre · statut + commit à droite. Les
        deux largeurs sont réglables séparément à la souris ; leur variable est

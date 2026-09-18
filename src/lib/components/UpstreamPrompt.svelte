@@ -6,10 +6,13 @@
     Barre d'upstream, GitKraken mot pour mot : « What remote/branch should
     "test2" push to and pull from? » · distant · / · nom · Submit · Cancel.
 
-    Elle s'affiche avant le **premier** push d'une branche, tout en haut du
-    dépôt, au-dessus de sa barre Pull / Push / Fetch — sur toute la largeur,
-    comme chez GitKraken, parce que la question concerne le dépôt et non ce
-    qu'on regarde, et qu'elle précède le geste dont cette barre porte le bouton. Rien n'est
+    Elle s'affiche avant le **premier** push d'une branche, **par-dessus** la
+    barre Pull / Push / Fetch, qu'elle recouvre entièrement le temps d'une
+    réponse — comme chez GitKraken. La question concerne le dépôt et non ce
+    qu'on regarde, et elle suspend précisément le geste dont cette barre porte
+    le bouton : le montrer en même temps inviterait à cliquer deux fois. Posée
+    en absolu sur le repère `.top` d'`App.svelte`, elle ne change la hauteur de
+    rien et les colonnes ne bougent pas. Rien n'est
     envoyé tant qu'elle est ouverte : c'est le suivi qui se décide ici, *push
     et pull*, et un choix silencieux aurait pu pointer la branche sur un distant
     qu'on ne voulait pas.
@@ -100,16 +103,22 @@
 {/if}
 
 <style>
-  /* Une ligne, centrée dans la largeur de la fenêtre, sur un fond teinté qui
-     la distingue de la barre du dépôt juste en dessous. */
+  /* Une ligne, centrée dans la largeur de la fenêtre, qui recouvre la barre du
+     dépôt : le fond est opaque (le teinté vient par-dessus) pour que les
+     boutons ne transparaissent pas. */
   .upstream {
+    position: absolute;
+    inset: 0;
+    z-index: 2;
     display: flex;
     align-items: center;
     justify-content: center;
     gap: 0.5rem;
-    padding: 0.45rem 0.7rem;
+    padding: 0 0.7rem;
     border-bottom: 1px solid var(--border);
-    background: var(--info-bg);
+    background:
+      linear-gradient(var(--info-bg), var(--info-bg)),
+      var(--bg);
     font-size: 0.82rem;
     white-space: nowrap;
   }
