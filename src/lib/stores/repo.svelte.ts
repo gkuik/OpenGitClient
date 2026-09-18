@@ -275,8 +275,6 @@ export class RepoStore {
    * une fonctionnalité qui n'a rien empêché.
    */
   prError = $state<AppError | null>(null);
-  /** Filtre de la barre de recherche de la section. */
-  prQuery = $state("");
   /** Filtres du menu en entonnoir. Les brouillons se cachent sur place ; les
    * fermées, elles, doivent être redemandées à la forge. */
   prIncludeClosed = $state(false);
@@ -369,23 +367,12 @@ export class RepoStore {
   }
 
   /**
-   * Pull requests après les filtres de la section : les brouillons si on les
-   * veut, puis la recherche. Elle porte sur ce qui est visible d'une ligne —
-   * numéro, titre, auteur, branche source — de sorte que ce qu'on lit est bien
-   * ce sur quoi on cherche.
+   * Pull requests après le filtre de l'entonnoir : les brouillons si on les
+   * veut. Les fermées ne se filtrent pas ici — elles sont dans la charge utile
+   * ou n'y sont pas, selon ce qui a été demandé à la forge.
    */
   get prFiltered(): PullRequestEntry[] {
-    const q = this.prQuery.trim().toLowerCase();
-    return this.pullRequests.filter((pr) => {
-      if (!this.prIncludeDrafts && pr.draft) return false;
-      if (q.length === 0) return true;
-      return (
-        `#${pr.number}`.includes(q) ||
-        pr.title.toLowerCase().includes(q) ||
-        pr.author.toLowerCase().includes(q) ||
-        pr.sourceBranch.toLowerCase().includes(q)
-      );
-    });
+    return this.pullRequests.filter((pr) => this.prIncludeDrafts || !pr.draft);
   }
 
   isPrGroupOpen(id: string): boolean {

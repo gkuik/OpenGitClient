@@ -212,7 +212,6 @@ export const en = {
   "pr.group.assigned": "Assigned to me",
   "pr.group.review": "Awaiting my review",
   "pr.group.others": "Others",
-  "pr.search": "Search a pull request",
   "pr.filter": "Filter the pull requests",
   "pr.filter.head": "What this section shows",
   "pr.filter.drafts": "Drafts",
@@ -221,7 +220,6 @@ export const en = {
   "pr.filter.closed.hint":
     "Closed pull requests are not requested by default: ticking this starts a new load",
   "pr.empty": "No pull request.",
-  "pr.noMatch": "No pull request matches.",
   "pr.settings": "Open the settings to enter a token",
   "pr.reload": "Reload the pull requests",
   "pr.reload.repo": "Reload the pull requests of {repo}",

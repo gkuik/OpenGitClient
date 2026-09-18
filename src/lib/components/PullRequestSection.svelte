@@ -131,27 +131,6 @@
 
   {#if open}
     <div class="sec-body">
-      <!-- Barre de recherche + entonnoir, comme dans GitKraken. Les deux
-           filtrent, mais pas au même prix : la recherche trie ce qui est déjà
-           là, l'entonnoir peut redemander la liste à la forge. -->
-      <div class="search">
-        <input
-          type="search"
-          placeholder={t("pr.search")}
-          value={repo.prQuery}
-          oninput={(e) => (repo.prQuery = e.currentTarget.value)}
-        />
-        <button
-          class="funnel"
-          class:on={filterMenu !== null}
-          title={t("pr.filter")}
-          aria-label={t("pr.filter")}
-          onclick={openFilterMenu}
-        >
-          {@render funnelIcon()}
-        </button>
-      </div>
-
       {#if repo.prLoading && !repo.prLoaded}
         <p class="note">{t("common.loading")}</p>
       {:else if repo.prError}
@@ -166,9 +145,7 @@
           <button class="link" onclick={() => repo.loadPullRequests()}>{t("action.retry")}</button>
         {/if}
       {:else if total === 0}
-        <p class="note">
-          {repo.prQuery.trim().length > 0 ? t("pr.noMatch") : t("pr.empty")}
-        </p>
+        <p class="note">{t("pr.empty")}</p>
       {:else}
         {#each groups as group (group.id)}
           {@const groupOpen = repo.isPrGroupOpen(group.id)}
@@ -282,9 +259,25 @@
 {/if}
 
 <!-- Bouton de rechargement, dans l'en-tête : rien ne rapatrie les PR tout seul. -->
+<!-- L'entonnoir et le rechargement, contre le bord droit de l'en-tête. Les
+     deux touchent la liste, mais pas au même prix : l'entonnoir cache les
+     brouillons sur place et ne redemande la liste à la forge que pour les
+     fermées ; le ↻ la redemande toujours. -->
 {#snippet headerActions()}
   <button
-    class="reload"
+    class="hdr funnel"
+    class:on={filterMenu !== null}
+    title={t("pr.filter")}
+    aria-label={t("pr.filter")}
+    onclick={(e) => {
+      e.stopPropagation();
+      openFilterMenu(e);
+    }}
+  >
+    {@render funnelIcon()}
+  </button>
+  <button
+    class="hdr reload"
     title={repo.prReport
       ? t("pr.reload.repo", { repo: repo.prReport.repo })
       : t("pr.reload")}
@@ -349,7 +342,7 @@
     overflow-y: auto;
     padding: 0.3rem var(--sec-inset) 0.6rem;
   }
-  .reload {
+  .hdr {
     display: flex;
     align-items: center;
     justify-content: center;
@@ -362,72 +355,21 @@
     color: var(--text-dim);
     cursor: pointer;
   }
-  .reload svg {
+  .hdr svg {
     display: block;
     width: 13px;
     height: 13px;
   }
-  .reload:hover:not(:disabled) {
+  .hdr:hover:not(:disabled) {
     background: var(--bg-raised);
     color: var(--text);
   }
-  .reload:disabled {
+  .hdr:disabled {
     color: var(--text-faint);
     cursor: default;
   }
-  /* Barre de recherche : le champ prend la largeur, l'entonnoir reste carré
-     contre le bord — c'est la disposition de la capture. */
-  .search {
-    display: flex;
-    align-items: center;
-    gap: 0.3rem;
-    padding: 0.15rem var(--row-inset) 0.35rem;
-  }
-  /* La section entière est `user-select: none` (c'est une liste sur laquelle on
-     agit) : le champ doit reprendre la sélection pour son propre texte, sans
-     quoi on ne peut plus corriger sa recherche au double-clic. */
-  .search input {
-    flex: 1;
-    min-width: 0;
-    user-select: text;
-    -webkit-user-select: text;
-    padding: 0.3rem 0.45rem;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: 4px;
-    color: var(--text);
-    font-size: 0.78rem;
-  }
-  .search input::placeholder {
-    color: var(--text-faint);
-  }
-  .search input:focus {
-    outline: none;
-    border-color: var(--accent);
-  }
-  .funnel {
-    flex: none;
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.7rem;
-    height: 1.7rem;
-    padding: 0;
-    background: transparent;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-  .funnel svg {
-    display: block;
-    width: 14px;
-    height: 14px;
-  }
-  .funnel:hover,
   .funnel.on {
     background: var(--bg-raised);
-    border-color: var(--border);
     color: var(--text);
   }
   /* Ligne de groupe, calquée sur le nœud de distant de la section REMOTE. */
