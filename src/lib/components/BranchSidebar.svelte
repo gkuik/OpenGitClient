@@ -1,9 +1,9 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
-  import { repo } from "../stores/repo.svelte";
+  import { repo, tabs } from "../stores/repo.svelte";
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
-  import type { MergeMode, PullRequestEntry } from "../types";
+  import type { MergeMode, PullMode, PullRequestEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import RichText from "./RichText.svelte";
   import PullRequestSection from "./PullRequestSection.svelte";
@@ -115,7 +115,7 @@
   // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
   // ici, une fois pour la colonne, comme celui des stashes.
   const MERGE_MENU_W = 300;
-  const MERGE_MENU_H = 156;
+  const MERGE_MENU_H = 200;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const mergeMenuPos = $derived(
@@ -133,6 +133,20 @@
     !repo.mergingBranches && !repo.checkingOut && !repo.busy && !repo.merging,
   );
   const busyHint = $derived(t("branches.merge.busy"));
+
+  // Pull, depuis le menu d'une branche. Il ne concerne que la branche courante
+  // — le backend ne tire que dans HEAD — et reprend le mode du bouton Pull,
+  // sauf « Fetch every remote », qui n'est pas un pull : l'entrée dit Pull,
+  // elle en fait un.
+  const pullEntryMode = $derived<PullMode>(
+    tabs.pullMode === "fetchAll" ? "fastForwardOrMerge" : tabs.pullMode,
+  );
+  const canPull = $derived(!repo.busyRemote && !!repo.repoInfo);
+
+  async function runPull() {
+    branchMerge.close();
+    await repo.pull(pullEntryMode);
+  }
 
   // ── Menu contextuel d'une pull request ──────────────────────────────────────
   // Rendu ici comme les deux autres menus de la colonne : le geste part d'une
@@ -372,38 +386,62 @@
     style="left: {mergeMenuPos.x}px; top: {mergeMenuPos.y}px"
     role="menu"
   >
-    <p class="ctx-head">{t("branches.merge.head", { target: request.target })}</p>
-    <button
-      class="ctx-item wrap"
-      role="menuitem"
-      disabled={!canMerge}
-      title={canMerge ? t("branches.merge.item.hint") : busyHint}
-      onclick={() => runMerge("fastForwardOrMerge")}
-    >
-      {@render mergeIcon()}
-      <!-- Une seule entrée de catalogue, les deux noms de branches restant en
-           gras au milieu de la phrase : `RichText` les met en forme sans la
-           découper, donc sans figer l'ordre des mots. -->
-      <span>
-        <RichText
-          key="branches.merge.item"
-          params={{
-            source: { text: request.source, tag: "strong" },
-            target: { text: request.target, tag: "strong" },
-          }}
-        />
-      </span>
-    </button>
-    <button
-      class="ctx-item wrap"
-      role="menuitem"
-      disabled={!canMerge}
-      title={canMerge ? t("branches.merge.noFastForward.hint") : busyHint}
-      onclick={() => runMerge("noFastForward")}
-    >
-      {@render mergeCommitIcon()}
-      <span>{t("branches.merge.noFastForward")}</span>
-    </button>
+    {#if !request.fromDrop}
+      {@const isHead = repo.repoInfo?.branch === request.target}
+      <!-- Le pull ne vaut que pour la branche courante : sur une autre, l'entrée
+           reste là mais grisée, et dit quoi faire — la basculer d'abord. -->
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={!isHead || !canPull}
+        title={!isHead
+          ? t("branches.pull.other")
+          : canPull
+            ? t(`toolbar.pull.${pullEntryMode}.hint`)
+            : t("branches.pull.busy")}
+        onclick={runPull}
+      >
+        {@render pullIcon()}
+        <span>{t(`toolbar.pull.${pullEntryMode}`)}</span>
+      </button>
+    {/if}
+    {#if request.source !== request.target}
+      {#if !request.fromDrop}
+        <div class="ctx-sep"></div>
+      {/if}
+      <p class="ctx-head">{t("branches.merge.head", { target: request.target })}</p>
+      <button
+        class="ctx-item wrap"
+        role="menuitem"
+        disabled={!canMerge}
+        title={canMerge ? t("branches.merge.item.hint") : busyHint}
+        onclick={() => runMerge("fastForwardOrMerge")}
+      >
+        {@render mergeIcon()}
+        <!-- Une seule entrée de catalogue, les deux noms de branches restant en
+             gras au milieu de la phrase : `RichText` les met en forme sans la
+             découper, donc sans figer l'ordre des mots. -->
+        <span>
+          <RichText
+            key="branches.merge.item"
+            params={{
+              source: { text: request.source, tag: "strong" },
+              target: { text: request.target, tag: "strong" },
+            }}
+          />
+        </span>
+      </button>
+      <button
+        class="ctx-item wrap"
+        role="menuitem"
+        disabled={!canMerge}
+        title={canMerge ? t("branches.merge.noFastForward.hint") : busyHint}
+        onclick={() => runMerge("noFastForward")}
+      >
+        {@render mergeCommitIcon()}
+        <span>{t("branches.merge.noFastForward")}</span>
+      </button>
+    {/if}
   </div>
 {/if}
 
@@ -472,6 +510,15 @@
 {/snippet}
 
 <!-- Deux traits qui se rejoignent : une branche versée dans une autre. -->
+{#snippet pullIcon()}
+  <!-- Flèche descendante vers une base, celle du bouton Pull. -->
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 1.75v7.5" />
+    <path d="M4.75 6 8 9.25 11.25 6" />
+    <path d="M3 13.25h10" />
+  </svg>
+{/snippet}
+
 {#snippet mergeIcon()}
   <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="4" cy="3.25" r="1.75" />

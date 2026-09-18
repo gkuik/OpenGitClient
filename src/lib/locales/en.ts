@@ -196,6 +196,9 @@ export const en = {
   "branches.merge.noFastForward.hint":
     "Always a merge commit, even where a fast-forward would do — the merge stays visible in the history",
   "branches.merge.busy": "An operation is running, or a merge is still to be finished",
+  // Pull, dans le même menu : seule la branche courante peut être tirée.
+  "branches.pull.other": "Only the current branch can be pulled: double-click this one to check it out first",
+  "branches.pull.busy": "A remote operation is already running",
 
   // ── Colonne de gauche : stashes ───────────────────────────────────────────
   "stashes.title": "Stashes",

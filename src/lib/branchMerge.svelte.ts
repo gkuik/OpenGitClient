@@ -25,6 +25,12 @@ export interface MergeRequest {
   /** Où ouvrir le menu, en coordonnées fenêtre. */
   x: number;
   y: number;
+  /**
+   * Née d'un dépôt plutôt que d'un clic droit. Le menu ne propose alors que
+   * la fusion : un dépôt est un geste de fusion, là où le clic droit est le
+   * menu de la branche, qui porte aussi son pull.
+   */
+  fromDrop: boolean;
 }
 
 /**
@@ -92,10 +98,15 @@ class BranchMerge {
     return dropped;
   }
 
-  /** Demande une fusion (dépôt, ou clic droit) : ouvre le menu à cet endroit. */
-  ask(source: string, target: string, x: number, y: number) {
-    if (source === target) return;
-    this.request = { source, target, x, y };
+  /**
+   * Ouvre le menu d'une branche à cet endroit : dépôt d'une branche sur une
+   * autre, ou clic droit. Une branche déposée sur elle-même n'a rien à
+   * demander ; un clic droit sur la branche courante, si — son pull, la
+   * fusion étant alors retirée du menu.
+   */
+  ask(source: string, target: string, x: number, y: number, fromDrop = false) {
+    if (fromDrop && source === target) return;
+    this.request = { source, target, x, y, fromDrop };
   }
 
   /** Ferme le menu sans rien fusionner. */
@@ -127,7 +138,7 @@ class BranchMerge {
     // Un vrai glissement, même sans cible : le clic qui suit n'en est pas un.
     this.dropped = this.dragging !== null;
     this.stop();
-    if (target) this.ask(source, target, e.clientX, e.clientY);
+    if (target) this.ask(source, target, e.clientX, e.clientY, true);
   };
 
   private onCancel = (e: PointerEvent) => {

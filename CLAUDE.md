@@ -288,7 +288,7 @@ Reload after a pull is wider than after a fetch: `repoInfo` first (it decides wh
 ### A branch is merged into the one it is dropped on
 
 Dragging a local branch onto another opens a one-entry menu; right-clicking a
-local branch opens the same one. Both say the same thing: **the row you landed on
+local branch opens the same one, **with a Pull entry on top**. Both say the same thing: **the row you landed on
 receives the merge** — the dragged branch, or the current one for a right-click.
 That is what a branch dropped on another means, and it is GitKraken's convention.
 It also means the target is *not* necessarily the checked-out branch, which is
@@ -329,6 +329,17 @@ new to resolve conflicts with. `AppError::MergeInProgress` refuses a second merg
 over the first, since `MERGE_HEAD` is unique and overwriting it would lose the
 side still to resolve. Nothing is ever forced, and a fast-forward is never
 inflated into a merge commit (`--no-ff` is not offered).
+
+**The right-click menu is the branch's menu, the drop menu is a merge gesture** —
+`MergeRequest.fromDrop` tells them apart. Right-click adds a **Pull** entry above
+the merge entries: it runs `repo.pull()` with the Pull button's mode (except
+*Fetch every remote*, which is not a pull and falls back to fast-forward-or-merge),
+and is enabled **only on the current branch**, since the backend only ever pulls
+into HEAD — on another branch it stays, greyed, and its tooltip says to check the
+branch out first. That is also why right-clicking the *current* branch now opens
+the menu at all (it used to be refused as a self-merge): it shows Pull alone, the
+merge entries being dropped when source and target coincide. A drop keeps the
+early return and never shows Pull.
 
 `RepoStore.reloadAfterMerge` runs **on failure too**, and that is not a
 precaution: a real merge switches to the target *before* writing, so HEAD may
