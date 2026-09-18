@@ -284,6 +284,10 @@ pub struct PushReport {
     /// Vrai si le suivi vient d'être posé, c'est-à-dire au premier push de la
     /// branche (`push -u`).
     pub upstream_set: bool,
+    /// Vrai si la branche distante a été **réécrite** plutôt qu'avancée. Le
+    /// compte rendu doit le dire : « publiée » et « réécrite » ne racontent pas
+    /// le même événement à qui relira l'historique du distant.
+    pub forced: bool,
 }
 
 /// Charge utile de l'événement `repo://pushed`, jumelle de [`FetchEvent`] : le
@@ -317,6 +321,30 @@ impl Default for PullMode {
     fn default() -> Self {
         Self::FastForwardOrMerge
     }
+}
+
+/// Comment le push traite la branche distante.
+///
+/// Contrairement à [`PullMode`], ce n'est **pas** une préférence persistée, et
+/// c'est délibéré : un force retenu d'une fois sur l'autre transformerait le
+/// bouton Push en piège. Le mode est choisi au coup par coup, dans le menu
+/// contextuel du bouton, et retombe à [`PushMode::Normal`] aussitôt après.
+///
+/// Les deux forces ne diffèrent que par une vérification, mais elle change tout :
+/// `ForceWithLease` refuse d'envoyer si la branche distante n'est plus là où le
+/// dernier fetch l'a vue — c'est-à-dire si quelqu'un a poussé entre-temps —, là
+/// où `Force` écrase ce qui s'y trouve sans regarder.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum PushMode {
+    /// `git push` : le distant refuse tout ce qui n'est pas une avance rapide.
+    #[default]
+    Normal,
+    /// `git push --force-with-lease` : réécrit, mais seulement si le distant est
+    /// resté sur la référence de suivi que nous connaissons.
+    ForceWithLease,
+    /// `git push --force` : réécrit quoi qu'il y ait en face.
+    Force,
 }
 
 /// Thème de l'interface, choisi dans les paramètres et persisté.

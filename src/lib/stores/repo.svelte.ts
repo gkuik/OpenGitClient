@@ -17,6 +17,7 @@ import type {
   Profile,
   PullEvent,
   PullMode,
+  PushMode,
   PullReport,
   PullRequestEntry,
   PullRequestEvent,
@@ -877,13 +878,20 @@ export class RepoStore {
    * Publie la branche courante. Même fonctionnement que `fetch` : le résultat
    * revient par `repo://pushed`.
    */
-  async push() {
+  /**
+   * Publie la branche courante.
+   *
+   * Le mode est un argument, jamais un état : rien ici ne retient qu'un force a
+   * eu lieu, et le prochain appel repart de `"normal"`. C'est ce qui empêche le
+   * bouton de devenir un force push par inadvertance.
+   */
+  async push(mode: PushMode = "normal") {
     if (this.busyRemote || !this.repoInfo) return;
     this.pushing = true;
     this.error = null;
     this.setOpStatus(null);
     try {
-      await api.pushBranch(this.repoId);
+      await api.pushBranch(this.repoId, mode);
     } catch (e) {
       this.pushing = false;
       this.error = e as AppError;
@@ -1073,11 +1081,15 @@ export class RepoStore {
     }
     if (!event.report) return;
 
-    const { remote, branch, upstreamSet } = event.report;
+    const { remote, branch, upstreamSet, forced } = event.report;
+    // Une réécriture ne se raconte pas comme une publication : c'est le seul
+    // geste de l'application qui puisse retirer des commits d'un serveur.
     this.setOpStatus(
-      upstreamSet
-        ? t("op.push.published.upstream", { remote, branch })
-        : t("op.push.published", { remote, branch }),
+      forced
+        ? t("op.push.forced", { remote, branch })
+        : upstreamSet
+          ? t("op.push.published.upstream", { remote, branch })
+          : t("op.push.published", { remote, branch }),
     );
 
     // Le push a fait avancer `refs/remotes/**` (libgit2 met les tips à jour) :

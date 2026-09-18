@@ -82,6 +82,9 @@ pub enum AppError {
     #[error("Push refused: the remote has moved ahead ({0}). Fetch, then integrate its commits before pushing again.")]
     PushRejected(String),
 
+    #[error("Force push refused: the remote branch has moved since the last fetch (it is now at {0}). Fetch and look at what arrived before forcing again.")]
+    PushLeaseStale(String),
+
     #[error("{0}")]
     Network(String),
 
@@ -118,6 +121,7 @@ impl AppError {
             AppError::DetachedHead => "DetachedHead",
             AppError::NoUpstream => "NoUpstream",
             AppError::PushRejected(_) => "PushRejected",
+            AppError::PushLeaseStale(_) => "PushLeaseStale",
             AppError::Network(_) => "Network",
             AppError::Git(_) => "Git",
             AppError::Io(_) => "Io",
@@ -132,7 +136,8 @@ impl AppError {
             AppError::ForgeToken(arg)
             | AppError::ForgeAuth(arg)
             | AppError::ForgeNotFound(arg)
-            | AppError::PushRejected(arg) => Some(arg),
+            | AppError::PushRejected(arg)
+            | AppError::PushLeaseStale(arg) => Some(arg),
             _ => None,
         }
     }

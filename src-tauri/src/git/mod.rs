@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
-    MergeMode, MergeReport, PullMode, PullReport, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
+    MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry,
 };
 use crate::error::AppError;
@@ -181,14 +181,17 @@ pub trait GitBackend: Send {
     /// Publie la **branche courante** sur le dépôt distant (`git push`), et pose
     /// son suivi si elle n'en avait pas (`push -u`).
     ///
-    /// Jamais de force : un refus du distant remonte tel quel en
+    /// En [`PushMode::Normal`], un refus du distant remonte tel quel en
     /// [`AppError::PushRejected`], à charge pour l'utilisateur de récupérer les
-    /// commits manquants d'abord.
+    /// commits manquants d'abord. Les deux modes de force réécrivent la branche
+    /// distante ; `ForceWithLease` s'interdit de le faire quand elle a bougé
+    /// depuis le dernier fetch et remonte alors [`AppError::PushLeaseStale`],
+    /// sans avoir rien envoyé.
     ///
     /// **Bloquante sur le réseau**, comme [`GitBackend::fetch`] : mêmes
     /// contraintes, elle ne doit jamais être appelée depuis le corps d'une
     /// commande Tauri (voir `commands::push_branch`).
-    fn push(&self, remote: Option<&str>) -> Result<PushReport, AppError>;
+    fn push(&self, remote: Option<&str>, mode: PushMode) -> Result<PushReport, AppError>;
 
     /// Récupère puis intègre, selon le mode choisi (`git pull`).
     ///

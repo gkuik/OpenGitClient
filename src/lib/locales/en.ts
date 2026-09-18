@@ -147,6 +147,16 @@ export const en = {
   "toolbar.pull.menu.hint": "Right-click to choose what this button does",
   "toolbar.push": "Push",
   "toolbar.push.hint": "Publish the current branch to the remote",
+  "toolbar.push.menu": "These rewrite the remote branch",
+  "toolbar.push.menu.hint": "Right-click for the force options",
+  "toolbar.push.lease": "Force push (with lease)",
+  "toolbar.push.lease.hint":
+    "Rewrites the remote branch, but only if it is still where the last fetch saw it — nothing is sent if someone pushed in the meantime",
+  "toolbar.push.lease.confirm": "Confirm: force push (with lease)",
+  "toolbar.push.force": "Force push",
+  "toolbar.push.force.hint":
+    "Rewrites the remote branch whatever it now holds — commits pushed by someone else are lost, with no way back",
+  "toolbar.push.force.confirm": "Confirm: force push",
   "toolbar.fetch": "Fetch",
   "toolbar.fetch.hint": "Fetch the refs of the remote",
   "toolbar.status.fetching": "Fetching…",
@@ -292,6 +302,7 @@ export const en = {
   },
   "op.pull.diverged": "Diverged: {ahead} local, {behind} on the other side — merge not requested",
   "op.push.published": "{remote}: {branch} published",
+  "op.push.forced": "{remote}: {branch} rewritten (force push)",
   "op.push.published.upstream": "{remote}: {branch} published, upstream set",
   "op.merge.upToDate": "{target} already contains {source}",
   "op.merge.fastForwarded": {
@@ -330,6 +341,8 @@ export const en = {
   "error.ForgeUnsupported": "Pull requests are only read from GitHub for now",
   "error.DetachedHead": "No current branch (detached HEAD)",
   "error.NoUpstream": "The current branch tracks no remote branch: nothing to pull",
+  "error.PushLeaseStale":
+    "Force push refused: the remote branch has moved since the last fetch (it is now at {arg}). Fetch and look at what arrived before forcing again.",
   "error.PushRejected":
     "Push refused: the remote has moved ahead ({arg}). Fetch, then integrate its commits before pushing again.",
 };

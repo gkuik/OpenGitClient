@@ -15,6 +15,7 @@ import type {
   Profile,
   PullEvent,
   PullMode,
+  PushMode,
   PullRequestEvent,
   PushEvent,
   RemoteBranchEntry,
@@ -131,11 +132,15 @@ export const api = {
     listen<FetchEvent>("repo://fetched", (e) => handler(e.payload)),
   /**
    * Publie la branche courante. Même contrat que `fetchRemote` : réponse
-   * immédiate, résultat par `onPushed`. Le suivi est posé au premier push,
-   * et rien n'est jamais forcé — un rejet du distant remonte en erreur.
+   * immédiate, résultat par `onPushed`. Le suivi est posé au premier push, et
+   * un rejet du distant remonte en erreur.
+   *
+   * `mode` n'est forcé que sur demande explicite de l'utilisateur, entrée par
+   * entrée dans le menu du bouton : il n'est ni persisté ni mémorisé d'un appel
+   * à l'autre.
    */
-  pushBranch: (repoId: string, remote?: string) =>
-    call<void>("push_branch", { repoId, remote: remote ?? null }),
+  pushBranch: (repoId: string, mode: PushMode = "normal", remote?: string) =>
+    call<void>("push_branch", { repoId, mode, remote: remote ?? null }),
   onPushed: (handler: (event: PushEvent) => void): Promise<UnlistenFn> =>
     listen<PushEvent>("repo://pushed", (e) => handler(e.payload)),
   /**

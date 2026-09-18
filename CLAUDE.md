@@ -153,7 +153,7 @@ The backend returns `staged` / `unstaged` / `untracked` separately. The sidebar 
 
 After any refresh, `resyncSelection()` re-locates the selected file, because staging moves it between sections.
 
-### Discarding everything is one reset plus a clean, and it is the only destructive action
+### Discarding everything is one reset plus a clean
 
 `discard_all` sits at the right column's header — `↺ Discard all`, against the right edge of the `N changes on <branch>` line. It brings tracked files back to HEAD (`ResetType::Hard`, index and worktree) **and deletes untracked files**. That second half is not an extra: the counter beside the button counts untracked files, so leaving them behind would make the button lie about what it just did — the same reasoning that puts `INCLUDE_UNTRACKED` on `stash_save`.
 
@@ -220,7 +220,10 @@ Each result comes back as an event — `repo://fetched`, `repo://pushed` — not
 Push adds three things fetch doesn't need:
 
 - **`push_update_reference` is mandatory, not decorative.** A server can refuse one ref (non-fast-forward, protected branch, hook) while `push()` itself returns `Ok`. Without reading that callback, a rejection would be reported as a success. The client-side refusal is a separate path — libgit2 compares the advertised refs before sending anything and returns `ErrorCode::NotFastForward` — and both funnel into `AppError::PushRejected`.
-- **An explicit refspec** (`refs/heads/<b>:refs/heads/<b>`), not the remote's configured ones: only the current branch is published, never every head. No leading `+` anywhere — **force is not offered at all**, not even `--force-with-lease`.
+- **An explicit refspec** (`refs/heads/<b>:refs/heads/<b>`), not the remote's configured ones: only the current branch is published, never every head. The leading `+` appears only for a `PushMode` the user picked entry by entry in the button's context menu — never by default.
+- **`PushMode` is an argument, never a preference.** Unlike `PullMode` it is not persisted, not remembered between calls, and the store's `push()` defaults it back to `"normal"`: a force retained from one time to the next would turn the Push button into a trap.
+- **`ForceWithLease` is a real lease, not a label.** libgit2 has no such mode, so it is implemented in the `push_negotiation` callback: it fires between the negotiation and the upload, and hands over each ref's *current* value on the server. Comparing that to our `refs/remotes/<remote>/<branch>` and returning an error aborts the push **before a single byte is sent** — which is exactly what `--force-with-lease` promises. A missing remote branch gives a zero oid on both sides, so creating one is not a lease break. Careful with the names: `PushUpdate::src()` is what the server holds *now*, `dst()` the value we want to write — the reverse of the first reading, and the tests are what caught it.
+- **A broken lease is its own error** (`PushLeaseStale`, carrying the oid the remote is actually at), not a `PushRejected`: nothing was refused by the server, we refused ourselves, and the answer is to fetch and look at what arrived.
 - **`push -u` happens after the push, and only if the branch had no upstream.** Setting it earlier would leave a branch tracking a ref that a failed push never created. `PushReport.upstreamSet` reports whether it happened, since `set_upstream` can still fail on its own (that failure doesn't fail the push — the commits *are* published by then).
 
 Two things inside the libgit2 impl that look optional and aren't:
@@ -690,7 +693,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only, sets its upstream on first push, and never forces. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), searchable, filterable on drafts and closed PRs, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), searchable, filterable on drafts and closed PRs, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
@@ -709,15 +712,17 @@ The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Te
 
 The mode is a global preference in `prefs.json`, not per-repository. The menu lists four entries and only three are live: **rebase is rendered disabled**, because it has no `PullMode` variant behind it. The enum describes what exists; the menu says what will exist.
 
+**Push carries a right-click menu too, and it is the opposite kind of menu**: its entries *act* rather than pick a default — a force retained across pushes would be a trap, so `PushMode` travels as an argument and falls back to `"normal"` immediately. Two entries, both rewriting the remote branch, both in the danger colour, both armed by a first click and run by a second (the stash-drop pattern, for want of a declared confirm capability): *force push (with lease)*, which sends nothing if the remote moved since the last fetch, and *force push*, which does not look. They are disabled while a remote operation is running, unlike the Pull menu's entries, which only record a choice.
+
 **A local branch is merged into another** from the sidebar — dragged onto it, or
 right-clicked — fast-forwarding without a checkout when it can, switching to the
 target when it must, and leaving a conflict in the worktree for the same
 resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
-(`--no-ff`); nothing is ever forced in the `git push --force` sense. Branch *creation*, renaming and deletion are
+(`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branch *creation*, renaming and deletion are
 still nowhere, and nothing rebases.
 
 The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. The one destructive operation that exists is **Discard all changes**, described above; per-file discard does not, and neither does anything that rewrites history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
+AI features are intentionally absent — don't add UI for features that have no working backend. **Two destructive operations exist**, and only two: **Discard all changes**, described above, and the **force push** in the Push button's context menu — the first loses local work, the second can remove commits from a server for everybody. Both are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Per-file discard does not exist, and neither does anything that rewrites *local* history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.

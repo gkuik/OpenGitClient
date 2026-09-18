@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
-    MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, RecentRepo,
+    MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
     ThemeMode,
 };
@@ -473,6 +473,7 @@ const PUSH_EVENT: &str = "repo://pushed";
 pub fn push_branch(
     repo_id: String,
     remote: Option<String>,
+    mode: PushMode,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
@@ -486,8 +487,8 @@ pub fn push_branch(
 
     let path = PathBuf::from(&repo_id);
     std::thread::spawn(move || {
-        let outcome =
-            crate::git::open_repository(&path).and_then(|backend| backend.push(remote.as_deref()));
+        let outcome = crate::git::open_repository(&path)
+            .and_then(|backend| backend.push(remote.as_deref(), mode));
 
         if let Some(state) = app.try_state::<Mutex<AppState>>() {
             if let Ok(mut guard) = state.lock() {

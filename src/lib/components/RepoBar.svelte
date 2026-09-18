@@ -16,7 +16,7 @@
   import type { Snippet } from "svelte";
   import { t } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
-  import type { PullMode } from "../types";
+  import type { PullMode, PushMode } from "../types";
 
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
   // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
@@ -67,6 +67,40 @@
     void tabs.setPullMode(mode);
   }
 
+  // ── Menu du bouton Push ─────────────────────────────────────────────────────
+  //
+  // Ce menu ne ressemble pas à celui du Pull, et c'est voulu : celui-ci ne
+  // choisit pas ce que le bouton fera plus tard, il **agit**. Un mode de force
+  // retenu d'une fois sur l'autre ferait du bouton Push un piège ; ici il est
+  // choisi au coup par coup et retombe aussitôt.
+  //
+  // D'où aussi la confirmation en deux temps, comme la suppression d'un stash :
+  // aucune capacité de dialogue natif n'est déclarée, et c'est la seule action
+  // de l'application qui puisse retirer des commits d'un serveur.
+  let pushMenu = $state<{ x: number; y: number } | null>(null);
+  /** Entrée armée : le second clic l'exécute. */
+  let confirmPush = $state<PushMode | null>(null);
+  const PUSH_MENU_W = 300;
+  const PUSH_MENU_H = 132;
+
+  function openPushMenu(x: number, y: number) {
+    pushMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - PUSH_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - PUSH_MENU_H - 8)),
+    };
+    confirmPush = null;
+  }
+
+  function forcePush(mode: PushMode) {
+    if (confirmPush !== mode) {
+      confirmPush = mode;
+      return;
+    }
+    pushMenu = null;
+    confirmPush = null;
+    void repo.push(mode);
+  }
+
   /*
     Le dépôt n'est pas encore chargé le temps d'un aller-retour à l'ouverture
     d'un onglet. La barre reste en place — sa hauteur ne doit pas sauter — mais
@@ -89,10 +123,13 @@
   );
 </script>
 
-<!-- Échap referme le menu, comme ceux de la colonne des branches. -->
+<!-- Échap referme les deux menus, comme ceux de la colonne des branches. -->
 <svelte:window
   onkeydown={(e) => {
-    if (e.key === "Escape") pullMenu = null;
+    if (e.key !== "Escape") return;
+    pullMenu = null;
+    pushMenu = null;
+    confirmPush = null;
   }}
 />
 
@@ -107,7 +144,7 @@
       run: currentPull.mode ? () => repo.pull(currentPull.mode!) : undefined,
       busy: unavailable,
       count: repo.currentGap?.behind,
-      menu: openPullMenu,
+      menu: { open: openPullMenu, hint: t("toolbar.pull.menu.hint") },
     })}
     {@render action({
       label: t("toolbar.push"),
@@ -116,6 +153,7 @@
       run: () => repo.push(),
       busy: unavailable,
       count: repo.currentGap?.ahead,
+      menu: { open: openPushMenu, hint: t("toolbar.push.menu.hint") },
     })}
     {@render action({
       label: t("toolbar.fetch"),
@@ -171,6 +209,83 @@
 {/if}
 
 <!--
+  Menu du bouton Push. Deux entrées, deux façons de réécrire la branche
+  distante — et une seule des deux regarde avant d'écrire.
+
+  Elles sont désactivées pendant une opération distante : contrairement au menu
+  du Pull, qui ne fait que retenir un choix, celles-ci partent sur le réseau.
+-->
+{#if pushMenu}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => {
+      pushMenu = null;
+      confirmPush = null;
+    }}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      pushMenu = null;
+      confirmPush = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu push-menu"
+    style="left: {pushMenu.x}px; top: {pushMenu.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">{t("toolbar.push.menu")}</p>
+    <button
+      class="ctx-item wrap danger"
+      role="menuitem"
+      disabled={unavailable}
+      title={t("toolbar.push.lease.hint")}
+      onclick={() => forcePush("forceWithLease")}
+    >
+      {@render leaseIcon()}
+      <span>
+        {confirmPush === "forceWithLease"
+          ? t("toolbar.push.lease.confirm")
+          : t("toolbar.push.lease")}
+      </span>
+    </button>
+    <button
+      class="ctx-item wrap danger"
+      role="menuitem"
+      disabled={unavailable}
+      title={t("toolbar.push.force.hint")}
+      onclick={() => forcePush("force")}
+    >
+      {@render forceIcon()}
+      <span>
+        {confirmPush === "force" ? t("toolbar.push.force.confirm") : t("toolbar.push.force")}
+      </span>
+    </button>
+  </div>
+{/if}
+
+<!-- La flèche du push, avec une coche : on n'écrase que ce qu'on a vérifié. -->
+{#snippet leaseIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 12.5v-7" />
+    <path d="M3.5 8 6 5.5 8.5 8" />
+    <path d="M1.5 2.75h9" />
+    <path d="M10.5 11.5 12 13l2.5-3" />
+  </svg>
+{/snippet}
+
+<!-- La même flèche, avec un point d'exclamation : rien n'est vérifié. -->
+{#snippet forceIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M6 12.5v-7" />
+    <path d="M3.5 8 6 5.5 8.5 8" />
+    <path d="M1.5 2.75h9" />
+    <path d="M12.5 9v2.5" />
+    <path d="M12.5 13.6v.01" />
+  </svg>
+{/snippet}
+
+<!--
   Un bouton de la barre : icône au-dessus du libellé.
 
   Un bouton sans `run` est désactivé plutôt qu'absent : la place de la commande
@@ -190,8 +305,8 @@
   run?: () => void;
   busy?: boolean;
   count?: number;
-  /** Ouvre le menu du bouton, en coordonnées fenêtre. */
-  menu?: (x: number, y: number) => void;
+  /** Menu du bouton : son infobulle, et son ouverture en coordonnées fenêtre. */
+  menu?: { hint: string; open: (x: number, y: number) => void };
 })}
   {@const disabled = !a.run || a.busy}
   {@const hint = a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
@@ -210,11 +325,11 @@
   <div
     class="split"
     class:disabled
-    title={a.menu ? `${hint}\n${t("toolbar.pull.menu.hint")}` : hint}
+    title={a.menu ? `${hint}\n${a.menu.hint}` : hint}
     oncontextmenu={a.menu
       ? (e) => {
           e.preventDefault();
-          a.menu!(e.clientX, e.clientY);
+          a.menu!.open(e.clientX, e.clientY);
         }
       : undefined}
   >
@@ -229,7 +344,7 @@
             if (e.key !== "ContextMenu") return;
             e.preventDefault();
             const r = e.currentTarget.getBoundingClientRect();
-            a.menu!(r.left, r.bottom + 2);
+            a.menu!.open(r.left, r.bottom + 2);
           }
         : undefined}
     >
@@ -371,6 +486,35 @@
     font-size: 0.62rem;
     font-variant-numeric: tabular-nums;
     line-height: 1.4;
+  }
+
+  /* Menu du bouton Push : les libellés de confirmation sont longs, l'entrée se
+     replie donc au lieu d'étirer le menu hors de l'écran. */
+  .push-menu {
+    min-width: 260px;
+    max-width: 300px;
+  }
+  .ctx-item.wrap {
+    white-space: normal;
+    align-items: flex-start;
+    line-height: 1.35;
+  }
+  /* L'icône garde l'axe de la première ligne quand le texte se replie. */
+  .ctx-item.wrap .ctx-ic {
+    margin-top: 0.1rem;
+  }
+  .ctx-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+  /* Réécrire une branche distante n'est pas une action ordinaire : elle se
+     signale comme la suppression d'un stash. */
+  .ctx-item.danger {
+    color: var(--danger);
+  }
+  .ctx-item.danger:hover:not(:disabled) {
+    background: var(--danger-bg);
   }
 
   /* Menu du bouton Pull : le chrome commun est dans `app.css`, ne reste ici que

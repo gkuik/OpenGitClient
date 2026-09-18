@@ -211,6 +211,15 @@ export interface FetchEvent {
 export type PullMode = "fetchAll" | "fastForwardOnly" | "fastForwardOrMerge";
 
 /**
+ * Comment le push traite la branche distante.
+ *
+ * **Jamais persisté**, contrairement à `PullMode` : le mode est choisi au coup
+ * par coup dans le menu contextuel du bouton Push et retombe aussitôt à
+ * `"normal"`. Un force retenu d'une fois sur l'autre ferait du bouton un piège.
+ */
+export type PushMode = "normal" | "forceWithLease" | "force";
+
+/**
  * Thème de l'interface, choisi dans les paramètres et persisté côté Rust.
  *
  * `"system"` n'est pas une palette : c'est l'absence de choix, résolue en clair
@@ -296,6 +305,11 @@ export interface PushReport {
   branch: string;
   /** Le suivi vient d'être posé (premier push de la branche). */
   upstreamSet: boolean;
+  /**
+   * La branche distante a été **réécrite** et non avancée. Le compte rendu le
+   * dit : « publiée » et « réécrite » ne racontent pas la même chose.
+   */
+  forced: boolean;
 }
 
 /** Charge utile de `repo://pushed`, jumelle de `FetchEvent`. */
