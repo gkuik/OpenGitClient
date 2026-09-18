@@ -6,9 +6,10 @@
     Barre d'upstream, GitKraken mot pour mot : « What remote/branch should
     "test2" push to and pull from? » · distant · / · nom · Submit · Cancel.
 
-    Elle s'affiche avant le **premier** push d'une branche, entre la barre du
-    dépôt et les trois colonnes — sur toute la largeur, comme chez GitKraken,
-    parce que la question concerne le dépôt et non ce qu'on regarde. Rien n'est
+    Elle s'affiche avant le **premier** push d'une branche, tout en haut du
+    dépôt, au-dessus de sa barre Pull / Push / Fetch — sur toute la largeur,
+    comme chez GitKraken, parce que la question concerne le dépôt et non ce
+    qu'on regarde, et qu'elle précède le geste dont cette barre porte le bouton. Rien n'est
     envoyé tant qu'elle est ouverte : c'est le suivi qui se décide ici, *push
     et pull*, et un choix silencieux aurait pu pointer la branche sur un distant
     qu'on ne voulait pas.
@@ -100,7 +101,7 @@
 
 <style>
   /* Une ligne, centrée dans la largeur de la fenêtre, sur un fond teinté qui
-     la distingue de la barre du dépôt juste au-dessus. */
+     la distingue de la barre du dépôt juste en dessous. */
   .upstream {
     display: flex;
     align-items: center;

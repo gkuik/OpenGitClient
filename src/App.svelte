@@ -46,12 +46,14 @@
       <!-- Nom du dépôt · Pull / Push / Fetch · compte rendu. Ces trois actions
            concernent le dépôt entier : elles ont quitté la colonne des branches,
            qui n'en portait qu'à titre de voisinage. -->
-      <RepoBar />
-
       <!-- Avant le premier push d'une branche : vers quel distant, sous quel
-           nom. Sur toute la largeur, comme chez GitKraken — la question
-           concerne le dépôt, pas une colonne. Ne rend rien sans demande. -->
+           nom. Tout en haut du dépôt, au-dessus même de sa barre, comme chez
+           GitKraken — la question concerne le dépôt, pas une colonne, et elle
+           précède le geste dont la barre porte le bouton. Ne rend rien sans
+           demande. -->
       <UpstreamPrompt />
+
+      <RepoBar />
 
       <div class="body">
         <BranchSidebar />
@@ -101,7 +103,7 @@
   /* La barre du dépôt puis les trois colonnes, qui prennent tout le reste. */
   .repo {
     display: grid;
-    /* Barre du dépôt, barre d'upstream (vide le plus souvent), les colonnes. */
+    /* Barre d'upstream (vide le plus souvent), barre du dépôt, les colonnes. */
     grid-template-rows: auto auto 1fr;
     min-height: 0;
     overflow: hidden;
