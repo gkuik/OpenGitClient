@@ -107,6 +107,11 @@
     overflow: hidden;
   }
   .body {
+    /* Placée d'office sur la rangée souple : sans cela, quand la barre
+       d'upstream ne rend rien, les colonnes remontent dans sa rangée `auto`,
+       prennent la hauteur de leur contenu et laissent le `1fr` vide en dessous
+       — l'application ne remplissait plus que la moitié de la fenêtre. */
+    grid-row: 3;
     display: grid;
     /* Branches à gauche · graph/diff au centre · statut + commit à droite. Les
        deux largeurs sont réglables séparément à la souris ; leur variable est
