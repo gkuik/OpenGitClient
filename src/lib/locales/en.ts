@@ -87,13 +87,9 @@ export const en = {
   "status.unstageAll": "Unstage all",
   "status.file.stage": "Stage",
   "status.file.unstage": "Unstage",
-  // Menu contextuel d'une ligne. L'en-tête dit ce que l'entrée coûtera : un
-  // fichier suivi revient à HEAD, un fichier neuf est supprimé — et ce n'est
-  // pas le même prix, exactement comme le panneau « Discard all » les sépare.
+  // Menu contextuel d'une ligne, une seule entrée.
   "status.file.menu.discard": "Discard changes",
   "status.file.menu.discard.confirm": "Confirm: discard changes",
-  "status.file.menu.tracked": "Back to the last committed state. Nothing can be recovered afterwards.",
-  "status.file.menu.new": "This file exists nowhere else: it will be deleted from disk. Nothing can be recovered afterwards.",
 
   // ── Boîte de commit ───────────────────────────────────────────────────────
   "commit.tab.commit": "Commit",

@@ -35,10 +35,11 @@
   // menu est rendu ici, une fois pour la colonne, comme celui des stashes dans
   // la colonne de gauche. Une seule entrée, irréversible, donc armée par un
   // premier clic et exécutée par le second — le patron de la suppression d'un
-  // stash, faute de capacité de confirmation déclarée.
+  // stash, faute de capacité de confirmation déclarée. Rien au-dessus de
+  // l'entrée : le menu s'ouvre sur la ligne qu'il concerne.
   let confirmDiscard = $state(false);
-  const FILE_MENU_W = 272;
-  const FILE_MENU_H = 96;
+  const FILE_MENU_W = 200;
+  const FILE_MENU_H = 40;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const fileMenuPos = $derived(
@@ -48,14 +49,6 @@
           y: Math.max(8, Math.min(fileMenu.request.y, window.innerHeight - FILE_MENU_H - 8)),
         }
       : null,
-  );
-
-  // Un fichier neuf — non suivi, ou ajouté à l'index — n'existe que sur le
-  // disque : l'abandonner, c'est le supprimer. L'en-tête du menu le dit avant
-  // le clic, parce que ce n'est pas le même prix qu'un retour à HEAD.
-  const fileIsNew = $derived(
-    fileMenu.request?.entry.status === "untracked" ||
-      fileMenu.request?.entry.status === "added",
   );
 
   // Réarme à chaque ouverture : un clic droit sur une autre ligne ne doit pas
@@ -237,12 +230,10 @@
 
 <!--
   Menu contextuel d'un fichier : superposition qui ferme + menu positionné, la
-  mécanique des menus de la colonne de gauche. L'en-tête nomme le fichier et
-  annonce ce que l'entrée coûtera ; l'entrée est en couleur de danger et se
-  confirme sur place.
+  mécanique des menus de la colonne de gauche. Une entrée en couleur de danger,
+  qui se confirme sur place.
 -->
 {#if fileMenu.request && fileMenuPos}
-  {@const entry = fileMenu.request.entry}
   <button
     class="ctx-overlay"
     aria-label={t("common.closeMenu")}
@@ -257,10 +248,6 @@
     style="left: {fileMenuPos.x}px; top: {fileMenuPos.y}px"
     role="menu"
   >
-    <div class="ctx-head">
-      <code class="file-name" title={entry.path}>{entry.path}</code>
-      <span class="file-cost">{fileIsNew ? t("status.file.menu.new") : t("status.file.menu.tracked")}</span>
-    </div>
     <button
       class="ctx-item danger"
       role="menuitem"
@@ -515,27 +502,10 @@
     opacity: 0.4;
     cursor: default;
   }
-  /* Ce qui distingue ce menu-là : sa largeur, son en-tête à deux lignes et
-     son icône (la carrosserie commune est dans app.css). */
+  /* Ce qui distingue ce menu-là : sa largeur et son icône (la carrosserie
+     commune est dans app.css). */
   .file-menu {
-    width: 272px;
-  }
-  .file-menu .ctx-head {
-    display: flex;
-    flex-direction: column;
-    gap: 0.2rem;
-    max-width: none;
-  }
-  .file-name {
-    font-family: var(--mono);
-    font-size: 0.72rem;
-    color: var(--text);
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .file-cost {
-    white-space: normal;
+    width: 200px;
   }
   .ctx-item.danger {
     color: var(--danger);
