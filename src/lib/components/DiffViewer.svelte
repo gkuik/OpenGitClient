@@ -1,6 +1,7 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
   import Cross from "./Cross.svelte";
+  import CommitBody from "./CommitBody.svelte";
   import { repo } from "../stores/repo.svelte";
 
   function sign(kind: string): string {
@@ -34,6 +35,28 @@
     <div class="file-head">
       <span class="fname">{repo.selectedPath}</span>
       <span class="tag">{tag}</span>
+      <!-- Un Markdown se lit aussi rendu : la bascule n'apparaît que là, un
+           autre fichier n'ayant que son code à montrer. Le rendu passe par
+           `CommitBody`, le même Markdown sans `{@html}` que les descriptions de
+           commit — un README vient de l'extérieur autant qu'un message. -->
+      {#if repo.selectedIsMarkdown}
+        <div class="seg" role="group" aria-label={t("diff.view.preview")}>
+          <button
+            class:active={!repo.showPreview}
+            title={t("diff.view.code.hint")}
+            onclick={() => repo.setRenderMarkdown(false)}
+          >
+            {t("diff.view.code")}
+          </button>
+          <button
+            class:active={repo.showPreview}
+            title={t("diff.view.preview.hint")}
+            onclick={() => repo.setRenderMarkdown(true)}
+          >
+            {t("diff.view.preview")}
+          </button>
+        </div>
+      {/if}
       <button
         class="close"
         onclick={() => repo.clearSelection()}
@@ -44,7 +67,19 @@
       </button>
     </div>
 
-    {#if !repo.diff}
+    {#if repo.showPreview}
+      {#if !repo.preview}
+        <p class="placeholder">{t("diff.preview.loading")}</p>
+      {:else if repo.preview.text === null}
+        <p class="placeholder">
+          {repo.preview.binary ? t("diff.preview.binary") : t("diff.preview.unavailable")}
+        </p>
+      {:else}
+        <div class="preview">
+          <CommitBody text={repo.preview.text} />
+        </div>
+      {/if}
+    {:else if !repo.diff}
       <p class="placeholder">{t("diff.loading")}</p>
     {:else if repo.diff.isBinary}
       <p class="placeholder">{t("diff.binary")}</p>
@@ -106,8 +141,54 @@
     padding: 0.1rem 0.4rem;
     border-radius: 4px;
   }
+  /* Bascule Code | Preview : le gabarit segmenté de Path | Tree, dans la
+     colonne de droite. Poussée contre la croix, à droite de l'en-tête. */
+  .seg {
+    flex: none;
+    margin-left: auto;
+    display: flex;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    overflow: hidden;
+  }
+  .seg button {
+    background: var(--bg-raised);
+    border: none;
+    color: var(--text-dim);
+    font-size: 0.75rem;
+    padding: 0.25rem 0.6rem;
+    cursor: pointer;
+  }
+  .seg button.active {
+    background: var(--accent);
+    color: var(--accent-text);
+  }
+  /* Le rendu est de la prose : une colonne de lecture, sélectionnable, et un
+     corps de texte à la taille du reste de l'interface plutôt qu'à celle,
+     réduite, d'une description de commit dans sa colonne. */
+  .preview {
+    max-width: 52rem;
+    padding: 1rem 1.4rem 2rem;
+    user-select: text;
+    -webkit-user-select: text;
+  }
+  .preview :global(.md) {
+    font-size: 0.86rem;
+    line-height: 1.55;
+    color: var(--text);
+  }
+  .preview :global(.md .h1) {
+    font-size: 1.3rem;
+  }
+  .preview :global(.md .h2) {
+    font-size: 1.1rem;
+  }
+  .preview :global(.md .h3) {
+    font-size: 0.95rem;
+  }
   .close {
-    /* Poussée à droite de l'en-tête. */
+    /* Poussée à droite de l'en-tête. Quand la bascule est là, c'est elle qui
+       porte la marge, et la croix reste collée à elle. */
     margin-left: auto;
     flex: none;
     width: 1.5rem;
@@ -125,6 +206,11 @@
     align-items: center;
     justify-content: center;
     padding: 0;
+  }
+  /* Deux marges automatiques se partageraient l'espace et laisseraient la
+     bascule au milieu de l'en-tête : à côté de la bascule, la croix n'en a pas. */
+  .seg + .close {
+    margin-left: 0;
   }
   .close:hover {
     border-color: var(--accent);

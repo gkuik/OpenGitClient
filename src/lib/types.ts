@@ -61,6 +61,25 @@ export interface FileDiff {
   hunks: DiffHunk[];
 }
 
+/**
+ * D'où lire un fichier : la version que le diff affiché compare. Miroir de
+ * `DiffTarget` côté backend, pour qu'un aperçu montre toujours ce que le diff
+ * montre — jamais le disque quand on regarde l'index.
+ */
+export type FileSource =
+  | { kind: "worktree" }
+  | { kind: "index" }
+  | { kind: "commit"; oid: string };
+
+/**
+ * Contenu d'un fichier pour l'aperçu rendu. `text` absent = rien à rendre :
+ * binaire (`binary`), absent de la source, ou trop gros pour un aperçu.
+ */
+export interface FileContent {
+  text: string | null;
+  binary: boolean;
+}
+
 export interface CommitResult {
   oid: string;
   summary: string;

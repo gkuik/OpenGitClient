@@ -9,7 +9,8 @@
 use std::path::{Path, PathBuf};
 
 use crate::dto::{
-    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileDiff, Identity,
+    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileContent, FileDiff,
+    FileSource, Identity,
     MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry,
 };
@@ -186,6 +187,11 @@ pub trait GitBackend: Send {
 
     /// Diff d'un fichier au sein d'un commit (commit ↔ premier parent).
     fn commit_file_diff(&self, oid: &str, path: &str) -> Result<FileDiff, AppError>;
+
+    /// Contenu d'un fichier depuis la source donnée — disque, index ou commit —
+    /// pour l'aperçu rendu d'un Markdown. Plafonné : un aperçu n'a pas à
+    /// charger un fichier de plusieurs mégaoctets dans le webview.
+    fn file_content(&self, path: &str, source: &FileSource) -> Result<FileContent, AppError>;
 
     /// Récupère les références du dépôt distant (`git fetch`). `remote` à `None`
     /// laisse l'implémentation résoudre le distant à interroger.

@@ -84,6 +84,32 @@ pub struct FileDiff {
     pub hunks: Vec<DiffHunk>,
 }
 
+/// D'où lire un fichier : la version que le diff affiché compare. Le même
+/// discriminant que `DiffTarget` côté frontend, pour qu'un aperçu montre
+/// toujours ce que le diff montre — jamais le disque quand on regarde l'index.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum FileSource {
+    /// Le fichier tel qu'il est sur le disque (diff index ↔ working directory).
+    Worktree,
+    /// La version indexée (diff HEAD ↔ index).
+    Index,
+    /// La version dans un commit donné.
+    Commit { oid: String },
+}
+
+/// Contenu d'un fichier, pour l'aperçu rendu.
+///
+/// `text` est absent quand il n'y a rien à rendre : fichier binaire, absent de
+/// la source (supprimé, ou jamais dans ce commit), ou trop gros pour un aperçu
+/// — `binary` distingue le premier cas, qui mérite un mot différent.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FileContent {
+    pub text: Option<String>,
+    pub binary: bool,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CommitResult {
     pub oid: String,

@@ -7,8 +7,10 @@ import type {
   BranchEntry,
   CommitDetails,
   FetchEvent,
+  FileContent,
   FileDiff,
   FileEntry,
+  FileSource,
   FileStatus,
   GraphCommit,
   Identity,
@@ -165,6 +167,21 @@ export class RepoStore {
   // Ce qui est actuellement affiché dans le visualiseur de diff.
   diffTarget = $state<DiffTarget | null>(null);
 
+  /**
+   * Un Markdown se lit aussi rendu : le choix Code | Preview du visualiseur.
+   * Il survit d'un fichier à l'autre — qui lit un README rendu veut lire le
+   * suivant de même — mais reste propre à l'onglet, comme la sélection.
+   * Sans effet sur un fichier qui n'est pas du Markdown, où seul le code a un
+   * sens.
+   */
+  renderMarkdown = $state(false);
+  /**
+   * Contenu du fichier affiché, pour l'aperçu. Chargé seulement quand l'aperçu
+   * est demandé et que le fichier est du Markdown : le diff, lui, est toujours
+   * là — c'est lui qu'on ferme, pas l'aperçu.
+   */
+  preview = $state<FileContent | null>(null);
+
   // Fetch et push : la commande rend la main tout de suite, le backend
   // travaillant sur un thread dédié. Ces drapeaux couvrent donc l'aller *et*
   // l'attente du résultat. Deux drapeaux distincts, mais le backend n'en laisse
@@ -310,6 +327,22 @@ export class RepoStore {
   /** Vrai uniquement pour un fichier *indexé* du working directory. */
   get selectedStaged(): boolean {
     return this.diffTarget?.kind === "worktree" && this.diffTarget.staged;
+  }
+
+  /** Le fichier affiché est du Markdown : la bascule Code | Preview a un sens. */
+  get selectedIsMarkdown(): boolean {
+    const path = this.selectedPath?.toLowerCase() ?? "";
+    return path.endsWith(".md") || path.endsWith(".markdown");
+  }
+
+  /** L'aperçu est ce qui s'affiche au centre : demandé, et applicable. */
+  get showPreview(): boolean {
+    return this.renderMarkdown && this.selectedIsMarkdown;
+  }
+
+  setRenderMarkdown(on: boolean) {
+    this.renderMarkdown = on;
+    if (on) void this.loadPreview();
   }
 
   /** Fichiers non indexés = modifiés + non suivis, triés. */
@@ -624,6 +657,7 @@ export class RepoStore {
   clearSelection() {
     this.diffTarget = null;
     this.diff = null;
+    this.preview = null;
   }
 
   // ── Graph ───────────────────────────────────────────────────────────────────
@@ -1511,6 +1545,7 @@ export class RepoStore {
     const target = this.diffTarget;
     if (!target) {
       this.diff = null;
+      this.preview = null;
       return;
     }
     try {
@@ -1521,6 +1556,38 @@ export class RepoStore {
     } catch (e) {
       this.error = e as AppError;
       this.diff = null;
+    }
+    // L'aperçu suit le diff : même fichier, même source, rechargé avec lui
+    // — un refresh du status peut avoir changé le contenu sur le disque.
+    await this.loadPreview();
+  }
+
+  /**
+   * Charge le contenu à rendre, si l'aperçu est demandé et que le fichier est
+   * du Markdown ; sinon le vide. La source est celle du diff : l'index pour un
+   * fichier indexé, le disque sinon, le commit pour un fichier de commit — un
+   * aperçu qui montrerait le disque en regardant l'index mentirait.
+   */
+  private async loadPreview() {
+    const target = this.diffTarget;
+    if (!target || !this.showPreview) {
+      this.preview = null;
+      return;
+    }
+    const source: FileSource =
+      target.kind === "commit"
+        ? { kind: "commit", oid: target.oid }
+        : target.staged
+          ? { kind: "index" }
+          : { kind: "worktree" };
+    try {
+      const content = await api.fileContent(this.repoId, target.path, source);
+      // La sélection a pu changer pendant l'aller-retour : ne pas afficher le
+      // contenu d'un fichier sous le nom d'un autre.
+      if (this.diffTarget === target) this.preview = content;
+    } catch (e) {
+      this.error = e as AppError;
+      this.preview = null;
     }
   }
 }

@@ -15,7 +15,8 @@ use git2::{
 use super::{GitBackend, WatchRoots};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
-    FetchReport, FetchedRef, FileDiff, FileEntry, FileStatus, GraphCommit, GraphRef, GraphRefKind,
+    FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
+    GraphRef, GraphRefKind,
     Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, Upstream,
 };
@@ -816,6 +817,55 @@ impl GitBackend for Libgit2Backend {
         build_file_diff(path, &diff)
     }
 
+    fn file_content(&self, path: &str, source: &FileSource) -> Result<FileContent, AppError> {
+        let repo = self.repo()?;
+        let rel = Path::new(path);
+
+        // Le disque n'est pas un blob : on le lit tel quel, avec l'heuristique
+        // de Git pour le binaire (un octet nul dans les premiers 8 Ko).
+        let bytes: Option<Vec<u8>> = match source {
+            FileSource::Worktree => match repo.workdir() {
+                Some(workdir) => match std::fs::read(workdir.join(rel)) {
+                    Ok(b) => Some(b),
+                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
+                    Err(e) => return Err(e.into()),
+                },
+                None => None,
+            },
+            FileSource::Index => {
+                let index = repo.index()?;
+                match index.get_path(rel, 0) {
+                    Some(entry) => Some(repo.find_blob(entry.id)?.content().to_vec()),
+                    None => None,
+                }
+            }
+            FileSource::Commit { oid } => {
+                let tree = find_commit(&repo, oid)?.tree()?;
+                match tree.get_path(rel) {
+                    Ok(entry) => entry
+                        .to_object(&repo)?
+                        .as_blob()
+                        .map(|b| b.content().to_vec()),
+                    Err(_) => None,
+                }
+            }
+        };
+
+        let Some(bytes) = bytes else {
+            return Ok(FileContent { text: None, binary: false });
+        };
+        if is_binary(&bytes) {
+            return Ok(FileContent { text: None, binary: true });
+        }
+        if bytes.len() > MAX_PREVIEW_BYTES {
+            return Ok(FileContent { text: None, binary: false });
+        }
+        Ok(FileContent {
+            text: Some(String::from_utf8_lossy(&bytes).into_owned()),
+            binary: false,
+        })
+    }
+
     fn fetch(&self, remote: Option<&str>) -> Result<FetchReport, AppError> {
         let repo = self.repo()?;
         let name = resolve_remote(&repo, remote)?;
@@ -1496,6 +1546,15 @@ fn short_oid(oid: Oid) -> String {
 
 /// Résout un OID textuel en commit. Chaîne malformée et objet absent donnent la
 /// même erreur : de l'extérieur, le commit demandé n'existe pas.
+/// Au-delà, pas d'aperçu : un webview n'a pas à recevoir un fichier de
+/// plusieurs mégaoctets pour en rendre le Markdown.
+const MAX_PREVIEW_BYTES: usize = 1 << 20;
+
+/// L'heuristique de Git : un octet nul dans les premiers 8 Ko fait un binaire.
+fn is_binary(bytes: &[u8]) -> bool {
+    bytes.iter().take(8000).any(|&b| b == 0)
+}
+
 fn find_commit<'r>(repo: &'r Repository, oid: &str) -> Result<Commit<'r>, AppError> {
     let parsed = Oid::from_str(oid).map_err(|_| AppError::CommitNotFound)?;
     repo.find_commit(parsed).map_err(|_| AppError::CommitNotFound)
@@ -1942,6 +2001,37 @@ mod tests {
         cfg.set_str("user.email", "test@example.com").unwrap();
         let backend = Libgit2Backend::open(&dir).unwrap();
         (dir, backend)
+    }
+
+    #[test]
+    fn file_content_reads_the_version_the_diff_compares() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("README.md"), "# v1\n").unwrap();
+        git.stage("README.md").unwrap();
+        let first = git.commit("c1", None, false).unwrap();
+
+        // Trois versions à la fois : commit, index, disque.
+        fs::write(dir.join("README.md"), "# v2\n").unwrap();
+        git.stage("README.md").unwrap();
+        fs::write(dir.join("README.md"), "# v3\n").unwrap();
+
+        let commit = FileSource::Commit { oid: first.oid.clone() };
+        assert_eq!(git.file_content("README.md", &commit).unwrap().text.as_deref(), Some("# v1\n"));
+        assert_eq!(git.file_content("README.md", &FileSource::Index).unwrap().text.as_deref(), Some("# v2\n"));
+        assert_eq!(git.file_content("README.md", &FileSource::Worktree).unwrap().text.as_deref(), Some("# v3\n"));
+
+        // Absent de la source : rien à rendre, sans erreur.
+        let missing = git.file_content("nope.md", &FileSource::Worktree).unwrap();
+        assert!(missing.text.is_none() && !missing.binary);
+        let missing = git.file_content("nope.md", &commit).unwrap();
+        assert!(missing.text.is_none() && !missing.binary);
+
+        // Binaire : dit comme tel.
+        fs::write(dir.join("blob.bin"), b"\x00\x01\x02").unwrap();
+        let bin = git.file_content("blob.bin", &FileSource::Worktree).unwrap();
+        assert!(bin.text.is_none() && bin.binary);
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]

@@ -15,7 +15,8 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
-    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileDiff, Identity,
+    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
+    FileSource, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
     ThemeMode,
@@ -720,6 +721,20 @@ pub fn commit_file_diff(
     lock(&state)?
         .backend(&repo_id)?
         .commit_file_diff(&oid, &path)
+}
+
+/// Contenu d'un fichier depuis la source que le diff affiché compare — pour
+/// l'aperçu rendu d'un Markdown.
+#[tauri::command]
+pub fn file_content(
+    repo_id: String,
+    path: String,
+    source: FileSource,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<FileContent, AppError> {
+    lock(&state)?
+        .backend(&repo_id)?
+        .file_content(&path, &source)
 }
 
 // ── Pull requests ───────────────────────────────────────────────────────────

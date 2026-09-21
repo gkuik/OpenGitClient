@@ -8,7 +8,9 @@ import type {
   CommitGraphPage,
   CommitResult,
   FetchEvent,
+  FileContent,
   FileDiff,
+  FileSource,
   Identity,
   MergeMode,
   MergeReport,
@@ -294,4 +296,7 @@ export const api = {
   /** Diff d'un fichier dans un commit (commit ↔ premier parent). */
   commitFileDiff: (repoId: string, oid: string, path: string) =>
     call<FileDiff>("commit_file_diff", { repoId, oid, path }),
+  /** Contenu d'un fichier depuis la source que le diff compare (aperçu Markdown). */
+  fileContent: (repoId: string, path: string, source: FileSource) =>
+    call<FileContent>("file_content", { repoId, path, source }),
 };

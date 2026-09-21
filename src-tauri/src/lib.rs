@@ -83,6 +83,7 @@ pub fn run() {
             commands::commit_graph,
             commands::commit_details,
             commands::commit_file_diff,
+            commands::file_content,
             commands::load_pull_requests,
             commands::open_pull_request,
         ])
