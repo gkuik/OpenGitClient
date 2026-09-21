@@ -105,7 +105,6 @@
   .badge.add { color: var(--ok); }
   .badge.del { color: var(--danger); }
   .badge.ren { color: var(--info); }
-  .badge.unt { color: var(--neutral); }
   .path {
     flex: 1;
     overflow: hidden;

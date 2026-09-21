@@ -10,11 +10,15 @@
   }
 
   // D'où vient le diff affiché : working directory (indexé ou non) ou commit.
+  // Un fichier non suivi n'est pas « modifié » : il est neuf, et le diff est
+  // alors tout son contenu.
   const tag = $derived.by(() => {
     const target = repo.diffTarget;
     if (target?.kind === "commit")
       return t("diff.tag.commit", { oid: target.oid.slice(0, 7) });
-    return repo.selectedStaged ? t("diff.tag.staged") : t("diff.tag.modified");
+    if (repo.selectedStaged) return t("diff.tag.staged");
+    const untracked = repo.status?.untracked.some((f) => f.path === repo.selectedPath) ?? false;
+    return untracked ? t("diff.tag.untracked") : t("diff.tag.modified");
   });
 </script>
 

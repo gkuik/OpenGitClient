@@ -17,5 +17,9 @@ export const STATUS_BADGES: Record<FileStatus, StatusBadge> = {
   renamed: { label: "R", cls: "ren" },
   typechange: { label: "T", cls: "mod" },
   conflicted: { label: "C", cls: "del" },
-  untracked: { label: "?", cls: "unt" },
+  // Un fichier non suivi est un fichier neuf, comme un fichier ajouté à
+  // l'index : même lettre, même vert — les compteurs de dossiers les comptent
+  // déjà ensemble sous « + ». Le « ? » de `git status` ne disait rien de plus
+  // que l'absence du fichier dans l'index, ce que la section indique déjà.
+  untracked: { label: "A", cls: "add" },
 };

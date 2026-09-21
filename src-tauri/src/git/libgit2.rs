@@ -161,8 +161,12 @@ impl GitBackend for Libgit2Backend {
     fn file_diff(&self, path: &str, staged: bool) -> Result<FileDiff, AppError> {
         let repo = self.repo()?;
         let mut opts = DiffOptions::new();
+        // `include_untracked` ne fait que *lister* un fichier non suivi : sans
+        // `show_untracked_content`, libgit2 n'en lit pas le contenu et le diff
+        // n'a aucune ligne — un fichier neuf s'affichait « sans différence ».
         opts.pathspec(path)
             .include_untracked(true)
+            .show_untracked_content(true)
             .recurse_untracked_dirs(true)
             .context_lines(3);
 
@@ -1949,6 +1953,16 @@ mod tests {
         let st = git.status().unwrap();
         assert_eq!(st.untracked.len(), 1);
         assert_eq!(st.untracked[0].path, "a.txt");
+
+        // Non suivi, son diff est déjà lisible : tout son contenu en ajouts.
+        let diff = git.file_diff("a.txt", false).unwrap();
+        let additions = diff
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| matches!(l.kind, DiffLineKind::Addition))
+            .count();
+        assert_eq!(additions, 2, "un fichier non suivi montre son contenu");
 
         // 2. Stage → passe en indexé (ajout).
         git.stage("a.txt").unwrap();

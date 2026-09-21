@@ -134,6 +134,7 @@ export const en = {
   "diff.empty": "No difference to show.",
   "diff.tag.staged": "staged",
   "diff.tag.modified": "modified",
+  "diff.tag.untracked": "new file",
   "diff.tag.commit": "commit {oid}",
 
   // ── Colonne de gauche : barre d'outils ────────────────────────────────────
