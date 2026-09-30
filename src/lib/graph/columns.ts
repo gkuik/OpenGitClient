@@ -37,7 +37,8 @@ export const MESSAGE = "message" satisfies ColumnId;
 export const DEFAULT_WIDTHS: Readonly<Record<Exclude<ColumnId, "graph" | "message">, number>> = {
   refs: 10.6,
   author: 9,
-  date: 5.5,
+  // Jour et heure : « Sep 21, 26, 02:32 PM » en anglais.
+  date: 9,
   sha: 4.6,
 };
 
