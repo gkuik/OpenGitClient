@@ -403,20 +403,41 @@
     return PAD_X + lane * LANE_W + LANE_W / 2;
   }
 
-  /** Courbe en S entre deux colonnes ; ligne droite si la colonne ne change pas. */
+  /** Rayon de l'arrondi dans l'angle d'un coude. */
+  const ELBOW_R = 5;
+
+  /*
+    Passage d'une colonne à l'autre : à angle droit, avec un arrondi dans
+    l'angle — comme GitKraken, plutôt qu'une courbe en S qui traversait la
+    rangée en biais. Le sens du coude dépend du segment :
+
+    - `vertical-first` : la ligne descend dans sa colonne, puis tourne pour
+      rejoindre le point à l'horizontale — une branche qui **arrive** sur le
+      commit dont elle part (segment `in`) ;
+    - `horizontal-first` : la ligne part du point à l'horizontale jusqu'à sa
+      colonne, puis descend — un merge vers son second parent, ou une branche
+      qui **repart** (segment `out`).
+
+    Les horizontales sont donc toujours à la hauteur d'un point : c'est là
+    qu'une rangée n'a qu'un seul nœud, et qu'aucun autre ne peut se trouver sur
+    le trajet. Même colonne : ligne droite.
+  */
   function link(
     ctx: CanvasRenderingContext2D,
     x1: number,
     y1: number,
     x2: number,
     y2: number,
+    turn: "vertical-first" | "horizontal-first",
   ) {
     if (x1 === x2) {
       ctx.lineTo(x2, y2);
       return;
     }
-    const my = (y1 + y2) / 2;
-    ctx.bezierCurveTo(x1, my, x2, my, x2, y2);
+    const r = Math.min(ELBOW_R, Math.abs(x2 - x1), Math.abs(y2 - y1));
+    if (turn === "vertical-first") ctx.arcTo(x1, y2, x2, y2, r);
+    else ctx.arcTo(x2, y1, x2, y2, r);
+    ctx.lineTo(x2, y2);
   }
 
   /**
@@ -481,11 +502,11 @@
         } else if (edge.kind === "in") {
           // Descend du haut de la rangée jusqu'au point du commit.
           ctx.moveTo(x1, top);
-          link(ctx, x1, top, x2, mid);
+          link(ctx, x1, top, x2, mid, "vertical-first");
         } else {
           // Repart du point vers la rangée suivante.
           ctx.moveTo(x1, outY);
-          link(ctx, x1, outY, x2, top + ROW_H);
+          link(ctx, x1, outY, x2, top + ROW_H, "horizontal-first");
         }
         ctx.stroke();
         if (edge.dashed) ctx.setLineDash([]);
