@@ -114,7 +114,7 @@
   // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
   // ici, une fois pour la colonne, comme celui des stashes.
   const MERGE_MENU_W = 300;
-  const MERGE_MENU_H = 200;
+  const MERGE_MENU_H = 250;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const mergeMenuPos = $derived(
@@ -142,6 +142,22 @@
     tabs.pullMode === "fetchAll" ? "fastForwardOrMerge" : tabs.pullMode,
   );
   const canPull = $derived(!repo.busyRemote && !!repo.repoInfo);
+
+  /**
+   * « Create branch from here… » : la barre de création s'ouvre sur la tête de
+   * la branche cliquée, locale ou distante. Une branche locale non encore née
+   * n'a pas de commit d'où partir — l'entrée est alors grisée.
+   */
+  function tipOf(name: string, remote: boolean): string {
+    const list = remote ? repo.remoteBranches : repo.branches;
+    return list.find((b) => b.name === name)?.oid ?? "";
+  }
+
+  function branchFrom(name: string, remote: boolean) {
+    const oid = tipOf(name, remote);
+    branchMerge.close();
+    if (oid) repo.askBranch({ oid, from: name });
+  }
 
   async function runPull(branch: string) {
     branchMerge.close();
@@ -493,6 +509,17 @@
     role="menu"
   >
     {#if !request.fromDrop}
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={!tipOf(request.target, request.remote) || repo.checkingOut || repo.busy}
+        onclick={() => branchFrom(request.target, request.remote)}
+      >
+        {@render newBranchIcon()}
+        <span>{t("branches.menu.createBranch")}</span>
+      </button>
+    {/if}
+    {#if !request.fromDrop && !request.remote}
       {@const isHead = repo.repoInfo?.branch === request.target}
       <!-- Sur une autre branche que la courante, l'infobulle dit ce qui change :
            la référence avance sans checkout, et on ne bascule qu'en cas de fusion. -->
@@ -692,6 +719,17 @@
     <path d="M8 1.75v7.5" />
     <path d="M4.75 6 8 9.25 11.25 6" />
     <path d="M3 13.25h10" />
+  </svg>
+{/snippet}
+
+<!-- Une branche qui se détache, et le « + » de ce qu'on crée. -->
+{#snippet newBranchIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.5" cy="3.5" r="1.75" />
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <path d="M4.5 5.25v5.5" />
+    <path d="M4.5 9.5c0-2.5 2-3.5 4-3.5" />
+    <path d="M12.25 3.5v4.5M10 5.75h4.5" />
   </svg>
 {/snippet}
 

@@ -142,6 +142,7 @@ export const en = {
   "graph.columns.hint": "Show or hide columns",
   "graph.columns.reset": "Reset columns",
   // Menu contextuel d'une rangée du graph — une seule entrée.
+  "graph.menu.createBranch": "Create branch here…",
   "graph.menu.createTag": "Create tag here…",
 
   // ── Diff ──────────────────────────────────────────────────────────────────
@@ -194,6 +195,12 @@ export const en = {
   "push.upstream.remote": "Remote",
   "push.upstream.name": "Name of the branch on the remote",
   "push.upstream.submit": "Submit",
+  "toolbar.branch": "Branch",
+  "toolbar.branch.hint": "Create a branch from HEAD and check it out",
+  // Barre de création d'une branche, par-dessus la barre du dépôt.
+  "branch.create.label": "New branch from {from}",
+  "branch.create.name": "Name of the new branch",
+  "branch.create.submit": "Create branch",
   "toolbar.fetch": "Fetch",
   "toolbar.fetch.hint": "Fetch the refs of the remote",
   "toolbar.status.fetching": "Fetching…",
@@ -228,6 +235,7 @@ export const en = {
   "branches.pull.other.hint":
     "Moves this branch forward without checking it out; switches to it only if a merge is needed",
   "branches.pull.busy": "A remote operation is already running",
+  "branches.menu.createBranch": "Create branch from here…",
 
   // ── Colonne de gauche : stashes ───────────────────────────────────────────
   "stashes.title": "Stashes",
@@ -383,6 +391,7 @@ export const en = {
   "op.push.forced": "{remote}: {branch} rewritten (force push)",
   "op.push.published.upstream": "{remote}: {branch} published, upstream set",
   "op.push.published.as": "{remote}: {branch} published as {target}, upstream set",
+  "op.branch.created": "{branch} created and checked out",
   "op.tag.pushed": "{remote}: tag {tag} published",
   "op.tag.deleted": "{remote}: tag {tag} deleted",
   "op.merge.upToDate": "{target} already contains {source}",
@@ -424,6 +433,8 @@ export const en = {
   "error.NoUpstream": "The current branch tracks no remote branch: nothing to pull",
   "error.PushLeaseStale":
     "Force push refused: the remote branch has moved since the last fetch (it is now at {arg}). Fetch and look at what arrived before forcing again.",
+  "error.BranchExists": "A branch named {arg} already exists",
+  "error.InvalidBranchName": "“{arg}” is not a valid branch name",
   "error.TagExists": "A tag named {arg} already exists",
   "error.InvalidTagName": "“{arg}” is not a valid tag name",
   "error.TagRejected":

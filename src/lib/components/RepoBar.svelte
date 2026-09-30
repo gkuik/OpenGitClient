@@ -184,6 +184,18 @@
       run: () => repo.fetch(),
       busy: unavailable,
     })}
+    <!-- Les trois boutons de gauche parlent au distant ; celui-ci reste local.
+         Un filet les sépare pour le dire. -->
+    <span class="group-sep" aria-hidden="true"></span>
+    {@render action({
+      label: t("toolbar.branch"),
+      icon: branchIcon,
+      hint: t("toolbar.branch.hint"),
+      run: () => repo.askBranch(),
+      // Il faut un commit où poser la branche (pas de HEAD non né), et rien
+      // qui écrive déjà le working directory.
+      busy: !repo.repoInfo?.head || repo.checkingOut || repo.busy || repo.mergingBranches,
+    })}
   </div>
 
   <!-- Compte rendu partagé par les trois : le backend ne laisse pas un fetch et
@@ -338,8 +350,11 @@
 -->
 {#snippet action(a: {
   label: string;
-  /** L'opération que le bouton lance : c'est elle qu'il anime, et elle seule. */
-  op: RemoteOp;
+  /**
+   * L'opération distante que le bouton lance : c'est elle qu'il anime, et elle
+   * seule. Absente pour un bouton local (Branch).
+   */
+  op?: RemoteOp;
   icon: Snippet;
   hint: string;
   run?: () => void;
@@ -349,8 +364,8 @@
   menu?: { hint: string; open: (x: number, y: number) => void };
 })}
   {@const disabled = !a.run || a.busy}
-  {@const running = repo.runningOp === a.op}
-  {@const flash = repo.flash?.op === a.op ? repo.flash.outcome : null}
+  {@const running = a.op !== undefined && repo.runningOp === a.op}
+  {@const flash = a.op !== undefined && repo.flash?.op === a.op ? repo.flash.outcome : null}
   {@const hint = a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
   <!--
     Le cadre porte l'infobulle et le clic droit ; le bouton ne porte que
@@ -440,6 +455,17 @@
   </svg>
 {/snippet}
 
+{#snippet branchIcon()}
+  <!-- Une branche qui se détache d'une ligne : celle de la sidebar, agrandie. -->
+  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.5" cy="3.5" r="1.75" />
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <circle cx="11.5" cy="5" r="1.75" />
+    <path d="M4.5 5.25v5.5" />
+    <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" />
+  </svg>
+{/snippet}
+
 {#snippet fetchIcon()}
   <!-- Flèche circulaire : rapatrie les références sans toucher au working dir. -->
   <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -491,7 +517,16 @@
   }
   .actions {
     display: flex;
+    align-items: center;
     gap: 0.4rem;
+  }
+  /* Filet entre les actions distantes et les locales. */
+  .group-sep {
+    flex: none;
+    width: 1px;
+    height: 28px;
+    margin: 0 0.3rem;
+    background: var(--border);
   }
   /* Compte rendu de la dernière opération ; s'efface tout seul. Un peu plus
      grand qu'avant, et coloré selon l'issue : en 0.72rem gris, un compte rendu

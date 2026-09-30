@@ -31,6 +31,12 @@ export interface MergeRequest {
    * menu de la branche, qui porte aussi son pull.
    */
   fromDrop: boolean;
+  /**
+   * Clic droit sur une branche **distante** : ni pull ni fusion ne s'y
+   * appliquent, le menu ne propose que d'en partir pour une nouvelle branche.
+   * `source` et `target` y valent tous deux son nom complet.
+   */
+  remote: boolean;
 }
 
 /**
@@ -104,9 +110,16 @@ class BranchMerge {
    * demander ; un clic droit sur la branche courante, si — son pull, la
    * fusion étant alors retirée du menu.
    */
-  ask(source: string, target: string, x: number, y: number, fromDrop = false) {
+  ask(
+    source: string,
+    target: string,
+    x: number,
+    y: number,
+    fromDrop = false,
+    remote = false,
+  ) {
     if (fromDrop && source === target) return;
-    this.request = { source, target, x, y, fromDrop };
+    this.request = { source, target, x, y, fromDrop, remote };
   }
 
   /** Ferme le menu sans rien fusionner. */

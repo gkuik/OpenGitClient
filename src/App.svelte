@@ -7,6 +7,7 @@
   import SettingsView from "./lib/components/SettingsView.svelte";
   import RepoBar from "./lib/components/RepoBar.svelte";
   import UpstreamPrompt from "./lib/components/UpstreamPrompt.svelte";
+  import BranchPrompt from "./lib/components/BranchPrompt.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
@@ -56,6 +57,8 @@
              suspend le geste, et rien ne bouge en dessous. Ne rend rien sans
              demande. -->
         <UpstreamPrompt />
+        <!-- Création d'une branche : même place, même mécanique. -->
+        <BranchPrompt />
       </div>
 
       <div class="body">
