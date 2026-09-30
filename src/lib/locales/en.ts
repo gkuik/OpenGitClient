@@ -288,6 +288,8 @@ export const en = {
   "settings.graph.diagonal": "Diagonals",
   "settings.graph.roundness": "Roundness",
   "settings.graph.roundness.hint": "Only for rounded corners and curves",
+  "settings.graph.roundness.reset": "Reset",
+  "settings.graph.roundness.reset.hint": "Back to the default roundness, {n} %",
   "settings.profiles": "Profiles",
   "settings.profiles.intro":
     "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right. {note}, their identity living in their own configuration.",

@@ -63,6 +63,11 @@ class GraphLinesStore {
     });
   }
 
+  /** Retour à l'arrondi par défaut. */
+  resetRoundness() {
+    this.setRoundness(GRAPH_ROUNDNESS_DEFAULT);
+  }
+
   /** Le graph suit à chaque mouvement du curseur ; l'écriture, elle, attend. */
   setRoundness(roundness: number) {
     this.roundness = Math.min(Math.max(Math.round(roundness), 0), 100);

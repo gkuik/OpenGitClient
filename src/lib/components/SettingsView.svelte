@@ -2,7 +2,12 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { font, FONT_SIZES } from "../font.svelte";
-  import { graphLines, GRAPH_LINE_STYLES, hasRoundness } from "../graphLines.svelte";
+  import {
+    graphLines,
+    GRAPH_LINE_STYLES,
+    GRAPH_ROUNDNESS_DEFAULT,
+    hasRoundness,
+  } from "../graphLines.svelte";
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
@@ -303,10 +308,13 @@
       </div>
 
       <!-- Arrondi : grisé pour les deux tracés qui n'en ont pas, plutôt que
-           masqué — sa place ne saute pas d'un choix à l'autre. -->
-      <label class="slider" class:off={!hasRoundness(graphLines.style)}>
+           masqué — sa place ne saute pas d'un choix à l'autre. Un `div` et non
+           un `label` : il porte aussi le bouton de remise à zéro, qu'un label
+           ne doit pas contenir à côté de son champ. -->
+      <div class="slider" class:off={!hasRoundness(graphLines.style)}>
         <span>{t("settings.graph.roundness")}</span>
         <input
+          aria-label={t("settings.graph.roundness")}
           type="range"
           min="0"
           max="100"
@@ -317,7 +325,15 @@
           oninput={(e) => graphLines.setRoundness(Number(e.currentTarget.value))}
         />
         <span class="value">{graphLines.roundness} %</span>
-      </label>
+        <button
+          class="ghost"
+          disabled={!hasRoundness(graphLines.style) || graphLines.roundness === GRAPH_ROUNDNESS_DEFAULT}
+          title={t("settings.graph.roundness.reset.hint", { n: GRAPH_ROUNDNESS_DEFAULT })}
+          onclick={() => graphLines.resetRoundness()}
+        >
+          {t("settings.graph.roundness.reset")}
+        </button>
+      </div>
     </section>
 
     <section>
@@ -606,9 +622,9 @@
     border-left: 1px solid var(--border);
   }
   /* Arrondi des tracés du graph. */
-  /* Un `label` du formulaire, mais sur une ligne : la règle générale plus bas le
-     met en colonne, et donne au champ bordure et rembourrage — rien de tout ça
-     ne va à un curseur. */
+  /* Le curseur, sa valeur et sa remise à zéro, sur une ligne. La règle `input`
+     plus bas donne bordure et rembourrage aux champs : rien de tout ça ne va à
+     un curseur. */
   .slider {
     display: flex;
     flex-direction: row;
@@ -789,6 +805,11 @@
   }
   .ghost:hover:not(:disabled) {
     color: var(--text);
+  }
+  /* Déjà au défaut, ou tracé sans arrondi : rien à remettre à zéro. */
+  .slider .ghost:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .primary {
     background: var(--accent);
