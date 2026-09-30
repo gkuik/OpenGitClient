@@ -315,14 +315,6 @@
   });
 
   const dateShown = $derived(placed.some((c) => c.id === "date"));
-  /*
-    Le trait s'interrompt à la fin du message, où se pose l'étiquette : il
-    court jusque-là, puis reprend après elle jusqu'au bord du tableau.
-  */
-  const messageEnd = $derived.by(() => {
-    const col = placed[messageIndex];
-    return col ? col.x + col.width : 0;
-  });
 
   /**
    * Séparateurs visibles : un par rangée qui ouvre une tranche, posé sur sa
@@ -707,7 +699,6 @@
           <div class="sep" style="top: {sep.index * ROW_H}px">
             <span class="sep-line"></span>
             <span class="sep-label">{sep.label}</span>
-            <span class="sep-line" style="flex: none; width: calc(100% - {messageEnd}px)"></span>
           </div>
         {/each}
       </div>
@@ -1207,9 +1198,11 @@
     height: 1px;
     background: var(--border);
   }
+  /* En bout de ligne, au bord droit du tableau : l'étiquette n'appartient à
+     aucune colonne, elle termine le trait. */
   .sep-label {
     flex: none;
-    padding: 0 0.4rem;
+    padding: 0 0.6rem 0 0.4rem;
     font-size: 0.68rem;
     line-height: 1;
     color: var(--text-faint);
