@@ -475,6 +475,18 @@ pub fn set_graph_lines(
     lock(&state)?.set_graph_lines(style)
 }
 
+/// Arrondi des tracés arrondi et courbe du graph, en pourcentage (préférence
+/// globale, persistée, ramenée dans ses bornes).
+#[tauri::command]
+pub fn get_graph_roundness(state: State<'_, Mutex<AppState>>) -> Result<u8, AppError> {
+    Ok(lock(&state)?.graph_roundness())
+}
+
+#[tauri::command]
+pub fn set_graph_roundness(roundness: u8, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.set_graph_roundness(roundness)
+}
+
 /// Disposition du tableau du graph (préférence globale, persistée). Le backend
 /// la ramène à quelque chose d'affichable dans les deux sens.
 #[tauri::command]

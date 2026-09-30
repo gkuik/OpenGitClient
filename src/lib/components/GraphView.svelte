@@ -404,9 +404,6 @@
     return PAD_X + lane * LANE_W + LANE_W / 2;
   }
 
-  /** Rayon de l'arrondi dans l'angle d'un coude. */
-  const ELBOW_R = 8;
-
   /*
     Passage d'une colonne à l'autre, dans le tracé choisi dans les paramètres
     (`graphLines`) : angle droit arrondi (par défaut, comme GitKraken), angle
@@ -437,13 +434,20 @@
       ctx.lineTo(x2, y2);
       return;
     }
+    // L'arrondi choisi dans les paramètres, de 0 à 1.
+    const k = graphLines.roundness / 100;
     if (style === "curve") {
-      const my = (y1 + y2) / 2;
-      ctx.bezierCurveTo(x1, my, x2, my, x2, y2);
+      // Tension : les poignées partent des extrémités vers l'autre bout, d'une
+      // fraction `k` de la hauteur. 0 : quasi droite ; ½ : le S d'origine ; 1 :
+      // un S qui ne quitte sa colonne qu'au milieu.
+      const dy = y2 - y1;
+      ctx.bezierCurveTo(x1, y1 + k * dy, x2, y2 - k * dy, x2, y2);
       return;
     }
-    // Angle droit : arrondi, ou vif — un rayon nul, que `arcTo` trace en angle.
-    const r = style === "sharp" ? 0 : Math.min(ELBOW_R, Math.abs(x2 - x1), Math.abs(y2 - y1));
+    // Angle droit : l'arrondi va du vif (0) au quart de cercle (1), borné par
+    // le plus court des deux côtés du coude. Vif : un rayon nul, que `arcTo`
+    // trace en angle.
+    const r = style === "sharp" ? 0 : k * Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1));
     if (turn === "vertical-first") ctx.arcTo(x1, y2, x2, y2, r);
     else ctx.arcTo(x2, y1, x2, y2, r);
     ctx.lineTo(x2, y2);

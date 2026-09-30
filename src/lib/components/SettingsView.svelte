@@ -2,7 +2,7 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { font, FONT_SIZES } from "../font.svelte";
-  import { graphLines, GRAPH_LINE_STYLES } from "../graphLines.svelte";
+  import { graphLines, GRAPH_LINE_STYLES, hasRoundness } from "../graphLines.svelte";
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
@@ -301,6 +301,23 @@
           </button>
         {/each}
       </div>
+
+      <!-- Arrondi : grisé pour les deux tracés qui n'en ont pas, plutôt que
+           masqué — sa place ne saute pas d'un choix à l'autre. -->
+      <label class="slider" class:off={!hasRoundness(graphLines.style)}>
+        <span>{t("settings.graph.roundness")}</span>
+        <input
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={graphLines.roundness}
+          disabled={!hasRoundness(graphLines.style)}
+          title={hasRoundness(graphLines.style) ? undefined : t("settings.graph.roundness.hint")}
+          oninput={(e) => graphLines.setRoundness(Number(e.currentTarget.value))}
+        />
+        <span class="value">{graphLines.roundness} %</span>
+      </label>
     </section>
 
     <section>
@@ -587,6 +604,37 @@
   }
   .seg button + button {
     border-left: 1px solid var(--border);
+  }
+  /* Arrondi des tracés du graph. */
+  /* Un `label` du formulaire, mais sur une ligne : la règle générale plus bas le
+     met en colonne, et donne au champ bordure et rembourrage — rien de tout ça
+     ne va à un curseur. */
+  .slider {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
+    margin: -0.4rem 0 1.2rem;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .slider input {
+    width: 14rem;
+    padding: 0;
+    border: none;
+    background: none;
+    accent-color: var(--accent);
+  }
+  .slider .value {
+    min-width: 3rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .slider.off {
+    color: var(--text-faint);
+  }
+  .slider.off .value {
+    color: var(--text-faint);
   }
   /* Tracés du graph : le coude dessiné devant le nom. */
   .seg button:has(.line-ic) {

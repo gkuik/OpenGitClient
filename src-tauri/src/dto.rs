@@ -417,6 +417,13 @@ pub enum GraphLineStyle {
     Rounded,
 }
 
+/// Arrondi des tracés « angle droit arrondi » et « courbe », en pourcentage du
+/// maximum que la géométrie permet. Un nombre borné plutôt qu'une énumération,
+/// pour la même raison que la taille du texte : une valeur hors bornes se
+/// ramène dans l'intervalle au lieu de faire échouer `prefs.json`.
+pub const GRAPH_ROUNDNESS_DEFAULT: u8 = 60;
+pub const GRAPH_ROUNDNESS_MAX: u8 = 100;
+
 /// Taille du corps de texte, en **points** — l'unité des recommandations
 /// d'Apple, et celle du pixel CSS à l'échelle 1× de macOS. 13 pt est la taille
 /// du texte système sur macOS, donc le défaut ici.
