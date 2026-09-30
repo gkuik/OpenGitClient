@@ -407,9 +407,11 @@
   .tab:hover {
     color: var(--text);
   }
+  /* Le fond seul distingue l'onglet actif, sans bordure. Celle, transparente,
+     de `.tab` reste en place : l'onglet garde la même taille qu'il soit actif
+     ou non. */
   .tab.active {
     background: var(--accent-bg);
-    border-color: var(--accent);
     color: var(--text);
   }
   /*
