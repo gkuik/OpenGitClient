@@ -28,7 +28,7 @@
   // inchangée tant qu'on ne touche pas au réglage. Le canvas se redessine tout
   // seul, `draw` lisant ces dérivées.
   const ROW_H = $derived(Math.round(font.rootPx * 1.625));
-  const LANE_W = 14;
+  const LANE_W = 20;
   const DOT_R = 5;
   /** Épaisseur des lignes de lanes, et du cercle WIP. */
   const LINE_W = 1.6;
