@@ -287,10 +287,11 @@
   );
 
   /*
-    Tranches de temps, comme GitKraken : sur le premier commit de chaque
-    tranche, un trait en haut de la rangée et l'âge (« 3 hours ago ») au bout
-    du message. `now` avance chaque minute — sans lui, « now » le resterait
-    toute la journée.
+    Tranches de temps, comme GitKraken : entre deux commits de tranches
+    différentes, un trait qui porte l'âge de la nouvelle (« 3 hours ago »),
+    dans sa continuité. Seulement quand la colonne Date est masquée : affichée,
+    elle dit déjà la même chose, rangée par rangée. `now` avance chaque minute
+    — sans lui, « now » le resterait toute la journée.
   */
   let now = $state(Math.floor(Date.now() / 1000));
   $effect(() => {
@@ -313,14 +314,31 @@
     return out;
   });
 
+  const dateShown = $derived(placed.some((c) => c.id === "date"));
+  /*
+    Le trait s'interrompt à la fin du message, où se pose l'étiquette : il
+    court jusque-là, puis reprend après elle jusqu'au bord du tableau.
+  */
+  const messageEnd = $derived.by(() => {
+    const col = placed[messageIndex];
+    return col ? col.x + col.width : 0;
+  });
+
   /**
-   * Trait de séparation au-dessus d'une rangée : quand elle ouvre une tranche
-   * et qu'un commit la précède. Le premier commit porte l'étiquette de sa
-   * tranche, mais pas de trait — il n'y a rien au-dessus à séparer de lui.
+   * Séparateurs visibles : un par rangée qui ouvre une tranche, posé sur sa
+   * frontière haute. Il faut une rangée au-dessus — le WIP compris : sur la
+   * toute première, l'étiquette centrée sur le bord serait coupée en deux.
    */
-  function separatorAt(index: number): boolean {
-    return bucketAt[index] !== null && layout.rows[index - 1]?.kind === "commit";
-  }
+  const separators = $derived.by(() => {
+    if (dateShown) return [];
+    const out: { index: number; label: string }[] = [];
+    visible.forEach((_, i) => {
+      const index = first + i;
+      const bucket = bucketAt[index];
+      if (bucket && index > 0) out.push({ index, label: bucketLabel(bucket, relFmt) });
+    });
+    return out;
+  });
 
   function formatDate(ts: number): string {
     return dateFmt.format(new Date(ts * 1000));
@@ -671,7 +689,6 @@
             class="row"
             class:wip={row.kind === "wip"}
             class:selected={isSelected(row)}
-            class:sep={separatorAt(first + i)}
             style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; grid-template-columns: {template}"
             role="button"
             tabindex="0"
@@ -679,8 +696,18 @@
             onkeydown={(e) => onRowKey(e, row)}
           >
             {#each placed as col (col.id)}
-              {@render cell(row, col.id, bucketAt[first + i])}
+              {@render cell(row, col.id)}
             {/each}
+          </div>
+        {/each}
+        <!-- Posés sur la frontière entre deux rangées, hors d'elles : dans la
+             rangée, la moitié haute de l'étiquette serait rognée. Sous le
+             canvas, pour que les branches passent par-dessus le trait. -->
+        {#each separators as sep (sep.index)}
+          <div class="sep" style="top: {sep.index * ROW_H}px">
+            <span class="sep-line"></span>
+            <span class="sep-label">{sep.label}</span>
+            <span class="sep-line" style="flex: none; width: calc(100% - {messageEnd}px)"></span>
           </div>
         {/each}
       </div>
@@ -697,7 +724,7 @@
   « // WIP ». Les compteurs reprennent le vocabulaire des dossiers de la liste
   de fichiers (✎ / + / −).
 -->
-{#snippet cell(row: GraphRow, id: ColumnId, bucket: TimeBucket | null)}
+{#snippet cell(row: GraphRow, id: ColumnId)}
   {#if id === "graph"}
     <!-- Vide : le canvas dessine par-dessus. -->
     <span class="cell graph-cell"></span>
@@ -786,11 +813,8 @@
       {/each}
     </span>
   {:else if id === MESSAGE}
-    <!-- L'âge de la tranche au bout du message, sur son premier commit : il
-         reste lisible même quand la colonne Date est masquée. -->
     <span class="cell message" title={row.commit.summary}>
       <span class="summary">{row.commit.summary}</span>
-      {#if bucket}<span class="ago">{bucketLabel(bucket, relFmt)}</span>{/if}
     </span>
   {:else if id === "author"}
     <span class="cell author" title={row.commit.authorName}>{row.commit.authorName}</span>
@@ -1164,23 +1188,31 @@
     text-overflow: ellipsis;
     white-space: nowrap;
   }
-  .ago {
-    flex: none;
-    color: var(--text-faint);
-    font-size: 0.72rem;
-  }
-  /* Début d'une tranche de temps : un trait sur toute la largeur de la
-     rangée, graph compris — le canvas, transparent hors de ses lignes, le
-     laisse voir entre les branches. */
-  .row.sep::before {
-    content: "";
+  /* Séparateur de tranche : une ligne de hauteur nulle posée sur la frontière,
+     dont les enfants se centrent verticalement — le trait comme l'étiquette,
+     qui se lit ainsi dans sa continuité. Au-dessus des rangées (leur fond de
+     survol le masquerait), sous le canvas (les branches passent dessus). */
+  .sep {
     position: absolute;
-    top: 0;
     left: 0;
     right: 0;
+    height: 0;
+    display: flex;
+    align-items: center;
+    pointer-events: none;
+    z-index: 2;
+  }
+  .sep-line {
+    flex: 1;
     height: 1px;
     background: var(--border);
-    pointer-events: none;
+  }
+  .sep-label {
+    flex: none;
+    padding: 0 0.4rem;
+    font-size: 0.68rem;
+    line-height: 1;
+    color: var(--text-faint);
   }
   .author {
     color: var(--text-dim);
