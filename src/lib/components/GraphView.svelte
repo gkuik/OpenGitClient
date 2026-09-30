@@ -20,9 +20,23 @@
   // seul, `draw` lisant ces dérivées.
   const ROW_H = $derived(Math.round(font.rootPx * 1.625));
   const LANE_W = 14;
-  const DOT_R = 4;
-  /** Rayon du cercle « modifications en cours » : plus large que le point d'un commit. */
-  const WIP_R = DOT_R + 1.5;
+  const DOT_R = 5;
+  /** Épaisseur des lignes de lanes, et du cercle WIP. */
+  const LINE_W = 1.6;
+  /**
+   * Rayon du cercle « modifications en cours » : même diamètre que le point
+   * d'un commit. C'est le trait qui s'aligne sur `DOT_R`, pas son axe — un
+   * cercle de rayon `DOT_R` déborderait d'une demi-épaisseur.
+   */
+  const WIP_R = DOT_R - LINE_W / 2;
+  /** Motif de la ligne qui relie le nœud WIP à HEAD : ce lien n'est pas un commit. */
+  const WIP_DASH = [3, 2.5];
+  /**
+   * Motif du cercle WIP lui-même, plus serré que celui de la ligne : sur un
+   * cercle de cette taille, le motif de la ligne ne laisserait que trois
+   * tirets. Six périodes font exactement le tour, sans raccord visible.
+   */
+  const WIP_RING_DASH = ((p) => [p * 0.6, p * 0.4])((2 * Math.PI * WIP_R) / 6);
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /*
@@ -188,7 +202,7 @@
     }
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
-    ctx.lineWidth = 1.6;
+    ctx.lineWidth = LINE_W;
 
     const from = Math.max(0, Math.floor(scrollTop / ROW_H) - 1);
     const to = Math.min(layout.rows.length, from + Math.ceil(h / ROW_H) + 3);
@@ -207,6 +221,14 @@
         const x1 = laneX(edge.fromLane);
         const x2 = laneX(edge.toLane);
         ctx.strokeStyle = lanes[edge.color];
+        // Ligne WIP → HEAD : pointillés, comme le nœud. Le décalage se cale sur
+        // la position **absolue** du segment dans le graph, pas sur la vue :
+        // chaque rangée trace son morceau à part, et sans ça le motif
+        // repartirait de zéro à chaque rangée et glisserait au défilement.
+        if (edge.dashed) {
+          ctx.setLineDash(WIP_DASH);
+          ctx.lineDashOffset = (edge.kind === "out" ? outY : top) + scrollTop;
+        }
         ctx.beginPath();
         if (edge.kind === "through") {
           ctx.moveTo(x1, top);
@@ -221,6 +243,7 @@
           link(ctx, x1, outY, x2, top + ROW_H);
         }
         ctx.stroke();
+        if (edge.dashed) ctx.setLineDash([]);
       }
 
       const x = laneX(row.lane);
@@ -228,7 +251,8 @@
       if (isWip) {
         // Cercle vide en pointillés, dans la couleur de la lane de HEAD : ces
         // modifications sont sur cette branche, mais ne sont pas un commit.
-        ctx.setLineDash([3, 2.5]);
+        ctx.setLineDash(WIP_RING_DASH);
+        ctx.lineDashOffset = 0;
         ctx.beginPath();
         ctx.arc(x, mid, radius, 0, Math.PI * 2);
         ctx.strokeStyle = lanes[row.color];
@@ -249,12 +273,13 @@
 
       if (isWip ? selected === null : row.commit.oid === selected) {
         ctx.beginPath();
-        ctx.arc(x, mid, radius + 3, 0, Math.PI * 2);
+        // Même halo pour les deux : les nœuds ont désormais la même taille.
+        ctx.arc(x, mid, DOT_R + 3, 0, Math.PI * 2);
         ctx.strokeStyle = halo;
         ctx.lineWidth = 1.5;
         ctx.stroke();
       }
-      ctx.lineWidth = 1.6;
+      ctx.lineWidth = LINE_W;
     }
   }
 

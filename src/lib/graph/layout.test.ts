@@ -102,15 +102,21 @@ describe("layoutGraph", () => {
 
     // Rien ne descend sur le nœud WIP ; un seul segment en repart, vers HEAD.
     expect(rows[0].edges).toEqual([
-      { fromLane: 0, toLane: 0, color: 0, kind: "out" },
+      { fromLane: 0, toLane: 0, color: 0, kind: "out", dashed: true },
     ]);
-    // Et HEAD le reçoit, comme il recevrait celui d'un enfant.
+    // Et HEAD le reçoit, comme il recevrait celui d'un enfant — en pointillés,
+    // puisque c'est encore la ligne des modifications en cours.
     expect(rows[1].edges).toContainEqual({
       fromLane: 0,
       toLane: 0,
       color: 0,
       kind: "in",
+      dashed: true,
     });
+    // Ce qui repart de HEAD est l'historique ordinaire : trait plein.
+    expect(rows[1].edges.filter((e) => e.kind === "out")).toEqual([
+      { fromLane: 0, toLane: 0, color: 0, kind: "out" },
+    ]);
   });
 
   it("réserve la colonne de HEAD dès le haut quand ce n'est pas le premier commit", () => {
@@ -120,13 +126,21 @@ describe("layoutGraph", () => {
     // La branche courante prend la colonne 0, l'autre est repoussée à droite.
     expect(rows.map((r) => r.lane)).toEqual([0, 1, 0, 0]);
 
-    // La rangée de A n'est que traversée par la ligne qui descend vers HEAD.
+    // La rangée de A n'est que traversée par la ligne qui descend vers HEAD,
+    // en pointillés d'un bout à l'autre ; la colonne de A, elle, reste pleine.
     expect(rows[1].edges).toContainEqual({
       fromLane: 0,
       toLane: 0,
       color: 0,
       kind: "through",
+      dashed: true,
     });
+    expect(rows[1].edges.filter((e) => e.fromLane === 1).every((e) => !e.dashed)).toBe(true);
+    // La ligne aboutit en pointillés sur HEAD (rangée 2) ; ce qui en repart, et
+    // tout ce qui est en dessous, est en trait plein.
+    expect(rows[2].edges.find((e) => e.kind === "in" && e.fromLane === 0)?.dashed).toBe(true);
+    expect(rows[2].edges.filter((e) => e.kind === "out").some((e) => e.dashed)).toBe(false);
+    expect(rows.slice(3).flatMap((r) => r.edges).some((e) => e.dashed)).toBe(false);
   });
 
   it("pose le nœud WIP seul sur un dépôt sans commit", () => {
