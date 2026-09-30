@@ -451,9 +451,10 @@ error for hosts that never had pull requests.
 **Nothing polls.** The watcher knows nothing about PRs — they never touch the
 disk — and interrogating the API on a timer would burn the token's quota for a
 column nobody is necessarily looking at. Loads happen on tab open, after a fetch
-or a push (`reloadRemoteRefs`: someone just asked for news of the remote), on the
-section's ↻, and when the « closed » filter changes — that one alone goes back to
-the network, drafts being already in the payload.
+or a push (`reloadRemoteRefs`: someone just asked for news of the remote), and on
+the error message's *Retry*. The section header carries no action — no filter,
+no reload button: it lists the **open** pull requests, drafts included, and
+nothing else (`ForgeBackend::pull_requests` takes no argument).
 
 Two things the failure path decides, and they are not the same decision:
 
@@ -754,7 +755,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), filterable on drafts and closed PRs from the funnel in the section header, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 

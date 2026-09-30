@@ -58,22 +58,22 @@
     {
       id: "mine",
       label: t("pr.group.mine"),
-      items: repo.prFiltered.filter((pr) => pr.mine),
+      items: repo.pullRequests.filter((pr) => pr.mine),
     },
     {
       id: "assigned",
       label: t("pr.group.assigned"),
-      items: repo.prFiltered.filter((pr) => pr.assigned && !pr.mine),
+      items: repo.pullRequests.filter((pr) => pr.assigned && !pr.mine),
     },
     {
       id: "review",
       label: t("pr.group.review"),
-      items: repo.prFiltered.filter((pr) => pr.reviewing),
+      items: repo.pullRequests.filter((pr) => pr.reviewing),
     },
     {
       id: "others",
       label: t("pr.group.others"),
-      items: repo.prFiltered.filter(
+      items: repo.pullRequests.filter(
         (pr) => !pr.mine && !pr.assigned && !pr.reviewing,
       ),
     },
@@ -81,19 +81,7 @@
 
   /** Compteur de l'en-tête : ce que la section montre, doublons compris une
    * seule fois — c'est le nombre de PR retenues par les filtres. */
-  const total = $derived(repo.prFiltered.length);
-
-  /** Menu des filtres (l'entonnoir), positionné en coordonnées fenêtre. */
-  let filterMenu = $state<{ x: number; y: number } | null>(null);
-  const FILTER_MENU_W = 236;
-
-  function openFilterMenu(e: MouseEvent) {
-    const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
-    filterMenu = {
-      x: Math.max(8, Math.min(r.right - FILTER_MENU_W, window.innerWidth - FILTER_MENU_W - 8)),
-      y: r.bottom + 2,
-    };
-  }
+  const total = $derived(repo.pullRequests.length);
 
   /** Ce qu'un survol doit dire d'une PR, que la ligne tronque forcément. */
   function hint(pr: PullRequestEntry): string {
@@ -108,12 +96,6 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={(e) => {
-    if (e.key === "Escape") filterMenu = null;
-  }}
-/>
-
 <section class:open>
   <SectionHeader
     label={t("pr.title")}
@@ -122,7 +104,6 @@
     {open}
     {onToggle}
     {first}
-    actions={headerActions}
   />
 
   {#if open}
@@ -210,87 +191,6 @@
   {/if}
 </section>
 
-<!-- Menu des filtres. Deux cases, et une seule des deux repasse par le réseau —
-     l'infobulle le dit, pour qu'un clic qui recharge ne soit pas une surprise. -->
-{#if filterMenu}
-  <button
-    class="ctx-overlay"
-    aria-label={t("common.closeMenu")}
-    onclick={() => (filterMenu = null)}
-    oncontextmenu={(e) => {
-      e.preventDefault();
-      filterMenu = null;
-    }}
-  ></button>
-  <div
-    class="ctx-menu filter-menu"
-    style="left: {filterMenu.x}px; top: {filterMenu.y}px"
-    role="menu"
-  >
-    <p class="ctx-head">{t("pr.filter.head")}</p>
-    <button
-      class="ctx-item"
-      role="menuitemcheckbox"
-      aria-checked={repo.prIncludeDrafts}
-      title={t("pr.filter.drafts.hint")}
-      onclick={() => repo.togglePrDrafts()}
-    >
-      <span class="check">{repo.prIncludeDrafts ? "☑" : "☐"}</span>
-      <span>{t("pr.filter.drafts")}</span>
-    </button>
-    <button
-      class="ctx-item"
-      role="menuitemcheckbox"
-      aria-checked={repo.prIncludeClosed}
-      title={t("pr.filter.closed.hint")}
-      onclick={() => {
-        filterMenu = null;
-        void repo.togglePrClosed();
-      }}
-    >
-      <span class="check">{repo.prIncludeClosed ? "☑" : "☐"}</span>
-      <span>{t("pr.filter.closed")}</span>
-    </button>
-  </div>
-{/if}
-
-<!-- Bouton de rechargement, dans l'en-tête : rien ne rapatrie les PR tout seul. -->
-<!-- L'entonnoir et le rechargement, contre le bord droit de l'en-tête. Les
-     deux touchent la liste, mais pas au même prix : l'entonnoir cache les
-     brouillons sur place et ne redemande la liste à la forge que pour les
-     fermées ; le ↻ la redemande toujours. -->
-{#snippet headerActions()}
-  <button
-    class="hdr funnel"
-    class:on={filterMenu !== null}
-    title={t("pr.filter")}
-    aria-label={t("pr.filter")}
-    onclick={(e) => {
-      e.stopPropagation();
-      openFilterMenu(e);
-    }}
-  >
-    {@render funnelIcon()}
-  </button>
-  <button
-    class="hdr reload"
-    title={repo.prReport
-      ? t("pr.reload.repo", { repo: repo.prReport.repo })
-      : t("pr.reload")}
-    aria-label={t("pr.reload")}
-    disabled={repo.prLoading}
-    onclick={(e) => {
-      e.stopPropagation();
-      void repo.loadPullRequests();
-    }}
-  >
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-      <path d="M13.4 9.2A5.5 5.5 0 1 1 12 4.2" />
-      <path d="M9.4 4.6 12 4.2l-.4-2.6" />
-    </svg>
-  </button>
-{/snippet}
-
 <!-- Deux traits qui divergent puis se rejoignent par une flèche : une branche
      proposée à une autre — la fusion demandée, pas encore faite. -->
 {#snippet prIcon()}
@@ -301,12 +201,6 @@
     <path d="M4 5.1v5.8" />
     <path d="M12 10.9V6.5a2 2 0 0 0-2-2H7.5" />
     <path d="M9 2.9 7.2 4.5 9 6.1" />
-  </svg>
-{/snippet}
-
-{#snippet funnelIcon()}
-  <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M2.5 3.5h11l-4.2 5v4l-2.6 1.3V8.5z" />
   </svg>
 {/snippet}
 
@@ -333,36 +227,6 @@
     min-height: 0;
     overflow-y: auto;
     padding: 0.3rem var(--sec-inset) 0.6rem;
-  }
-  .hdr {
-    display: flex;
-    align-items: center;
-    justify-content: center;
-    width: 1.4rem;
-    height: 1.4rem;
-    padding: 0;
-    background: transparent;
-    border: none;
-    border-radius: 4px;
-    color: var(--text-dim);
-    cursor: pointer;
-  }
-  .hdr svg {
-    display: block;
-    width: 13px;
-    height: 13px;
-  }
-  .hdr:hover:not(:disabled) {
-    background: var(--bg-raised);
-    color: var(--text);
-  }
-  .hdr:disabled {
-    color: var(--text-faint);
-    cursor: default;
-  }
-  .funnel.on {
-    background: var(--bg-raised);
-    color: var(--text);
   }
   /* Ligne de groupe, calquée sur le nœud de distant de la section REMOTE. */
   .group {
@@ -515,19 +379,4 @@
     text-decoration: underline;
   }
 
-  /* ── Menu des filtres ──
-     Même gabarit que les menus de `BranchSidebar` ; il vit ici parce qu'il
-     n'appartient qu'à cette section, contrairement à celui des PR, qui se
-     déclenche depuis une ligne et se range avec les autres menus de la colonne. */
-  /* Superposition, boîte, en-tête et entrées sont dans `app.css`, partagés avec
-     les menus de la colonne des branches et celui du bouton Pull. Ne reste ici
-     que la largeur de celui-ci et sa case à cocher. */
-  .filter-menu {
-    min-width: 236px;
-  }
-  .check {
-    flex: none;
-    width: 0.9rem;
-    color: var(--text-faint);
-  }
 </style>

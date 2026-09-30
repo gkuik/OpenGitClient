@@ -63,9 +63,8 @@ impl ForgeRemote {
 /// Ce qu'on sait demander à une forge. Volontairement minuscule : lister les
 /// pull requests, et rien d'autre — on n'en crée pas, on n'en fusionne pas.
 pub trait ForgeBackend {
-    /// Pull requests du dépôt. `include_closed` ajoute les fermées et les
-    /// fusionnées, que le filtre de la section laisse de côté par défaut.
-    fn pull_requests(&self, include_closed: bool) -> Result<PullRequestReport, AppError>;
+    /// Pull requests **ouvertes** du dépôt, brouillons compris.
+    fn pull_requests(&self) -> Result<PullRequestReport, AppError>;
 }
 
 /// L'hôte est-il un GitHub ?
