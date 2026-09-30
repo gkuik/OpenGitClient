@@ -8,7 +8,7 @@
 
 <div class="welcome">
   <div class="card">
-    <h1>GitLite</h1>
+    <h1>OpenGitClient</h1>
     <p class="sub">{t("common.noRepo")}</p>
 
     <button class="open" disabled={tabs.opening} onclick={() => tabs.openFromDialog()}>

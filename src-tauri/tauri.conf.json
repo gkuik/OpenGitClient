@@ -1,8 +1,8 @@
 {
   "$schema": "https://schema.tauri.app/config/2",
-  "productName": "GitLite",
+  "productName": "OpenGitClient",
   "version": "0.1.0",
-  "identifier": "com.gitlite.app",
+  "identifier": "com.opengitclient.app",
   "build": {
     "frontendDist": "../dist",
     "devUrl": "http://localhost:1420",
@@ -12,7 +12,7 @@
   "app": {
     "windows": [
       {
-        "title": "GitLite",
+        "title": "OpenGitClient",
         "width": 1100,
         "height": 720,
         "minWidth": 800,

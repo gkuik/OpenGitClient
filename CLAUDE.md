@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project
 
-GitLite — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
+OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
 Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
@@ -36,7 +36,7 @@ The bar carries `data-tauri-drag-region="deep"` so any of its background drags t
 
 ## Commands
 
-Rust is installed via rustup; in non-interactive shells run `. "$HOME/.cargo/env"` first.
+Rust is installed through Homebrew's `rustup` (`/opt/homebrew/opt/rustup/bin`, on the PATH via `~/.zshrc`); there is no `~/.cargo/env` to source.
 
 ```bash
 npm install                # once
@@ -244,7 +244,7 @@ Two things inside the libgit2 impl that look optional and aren't:
 
 - **Authentication spawns no external process — the app stays standalone.** `Cred::credential_helper` is deliberately *not* used: it runs `git credential-<helper>`, which would make the app depend on an installed Git. Everything goes through libssh2/libgit2, already linked into the binary.
 - **SSH tries the agent, then keys on disk** (`SSH_KEY_NAMES`, newest algorithm first, existing files only). The disk fallback is not optional: libgit2 does not read `~/.ssh/config` and does not look for `~/.ssh/id_*` by itself, so agent-only support locks out anyone whose agent isn't loaded — which is the default on macOS. A passphrase-protected key still fails; a background fetch can't prompt.
-- **HTTPS credentials are the app's own** (`credentials.rs`). It never reads entries written by another tool — reading Git's osxkeychain item would work but triggers a macOS authorization prompt, because that item's ACL doesn't list us. Ours does, so re-reading is silent. macOS stores them as a generic password under service `GitLite`, keyed by host; other platforms behave as an empty store and say so on save rather than accepting a secret they can't read back.
+- **HTTPS credentials are the app's own** (`credentials.rs`). It never reads entries written by another tool — reading Git's osxkeychain item would work but triggers a macOS authorization prompt, because that item's ACL doesn't list us. Ours does, so re-reading is silent. macOS stores them as a generic password under service `OpenGitClient`, keyed by host (an entry still under the pre-rename service `GitLite` counts as present, is moved on its first read, and is erased along with the new one on forget — otherwise a forgotten token would come back from the old service); other platforms behave as an empty store and say so on save rather than accepting a secret they can't read back.
 - **That silence has a condition**: the ACL records the *signing identity* of the app that wrote the entry, not its path. A build signed with a stable identity is recognised from one version to the next; an ad-hoc-signed dev binary has its own hash for identity, which changes on every compile — macOS then asks again, and "Always allow" only authorises the binary of the moment. It is a fact of the dev machine, not of the code, but it is what makes the next point worth having.
 - **`has()` never reads the secret.** It searches on attributes only (`load_attributes`, never `load_data`): the ACL guards the data, so an existence check decrypts nothing and raises no prompt. It is asked on every `remote_info` — so on every Settings load — and routing it through `get` used to decrypt the secret just to throw it away. The secret is now decrypted only where it is actually used: the Git transport and a forge's API.
 - **The secret travels one way.** It enters through `set_credentials` and leaves only towards libgit2. No command returns it, `Credentials` derives no `Debug`, and nothing logs it.

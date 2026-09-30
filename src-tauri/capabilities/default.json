@@ -1,7 +1,7 @@
 {
   "$schema": "../gen/schemas/desktop-schema.json",
   "identifier": "default",
-  "description": "Permissions par défaut de GitLite : core + ouverture d'un dossier via le dialog natif + déplacement de la fenêtre depuis la barre d'onglets.",
+  "description": "Permissions par défaut de OpenGitClient : core + ouverture d'un dossier via le dialog natif + déplacement de la fenêtre depuis la barre d'onglets.",
   "windows": ["main"],
   "permissions": [
     "core:default",

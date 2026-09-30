@@ -247,7 +247,7 @@ export const en = {
   // ── Dialogue d'identifiants ───────────────────────────────────────────────
   "credentials.title": "Credentials for {host}",
   "credentials.note":
-    "No credentials saved for this host. GitLite keeps them in the system keychain and shares them with no other tool.",
+    "No credentials saved for this host. OpenGitClient keeps them in the system keychain and shares them with no other tool.",
   "credentials.refused":
     "The saved credentials were refused by the server. Enter them again — an access token may have expired.",
   "credentials.username": "Username",
@@ -268,17 +268,17 @@ export const en = {
   "settings.appearance": "Appearance",
   "settings.appearance.aria": "Interface theme",
   "settings.appearance.intro":
-    "The theme applies to the whole application. {system} follows the system appearance and switches with it, even while GitLite is running.",
+    "The theme applies to the whole application. {system} follows the system appearance and switches with it, even while OpenGitClient is running.",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
   "settings.theme.system": "System",
   "settings.font": "Text size",
   "settings.font.intro":
-    "The body text size, in points — Apple's unit. {default} is the size of the macOS system text, and GitLite's default. The rest of the interface is expressed in proportion: headings, secondary mentions and spacings follow the text.",
+    "The body text size, in points — Apple's unit. {default} is the size of the macOS system text, and OpenGitClient's default. The rest of the interface is expressed in proportion: headings, secondary mentions and spacings follow the text.",
   "settings.font.size": "{size} pt",
   "settings.profiles": "Profiles",
   "settings.profiles.intro":
-    "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside GitLite use it too. The choice is made in the commit box, on the right. {note}, their identity living in their own configuration.",
+    "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right. {note}, their identity living in their own configuration.",
   "settings.profiles.intro.note": "Deleting a profile changes nothing for the repositories using it",
   "settings.profiles.empty": "No profile yet.",
   "settings.profiles.add": "Add a profile",
@@ -289,7 +289,7 @@ export const en = {
   "settings.profiles.email": "Email address",
   "settings.tokens": "Access tokens",
   "settings.tokens.intro":
-    "One token per host, used for HTTPS repositories. GitLite keeps it in the system keychain and shares it with no other tool. {never}: replacing it means entering a new one. SSH repositories are not listed: they authenticate with a key, through the agent or from {ssh}. A GitHub host is the exception, even cloned over SSH: its token is not used for the transport but to read the pull requests, and it needs the {scope} scope.",
+    "One token per host, used for HTTPS repositories. OpenGitClient keeps it in the system keychain and shares it with no other tool. {never}: replacing it means entering a new one. SSH repositories are not listed: they authenticate with a key, through the agent or from {ssh}. A GitHub host is the exception, even cloned over SSH: its token is not used for the transport but to read the pull requests, and it needs the {scope} scope.",
   "settings.tokens.intro.never": "It is never shown again",
   "settings.tokens.empty":
     "No host to configure among the open tabs. Add a host below to prepare a token in advance.",

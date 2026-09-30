@@ -1,8 +1,8 @@
 [package]
-name = "gitlite"
+name = "opengitclient"
 version = "0.1.0"
-description = "GitLite — client Git desktop léger"
-authors = ["GitLite"]
+description = "OpenGitClient — client Git desktop léger"
+authors = ["OpenGitClient"]
 edition = "2021"
 # Relevé de 1.77 avec l'arrivée d'`ureq` : c'est la version minimale de son
 # implémentation TLS. Rien d'autre dans le projet n'en demande autant.
@@ -10,7 +10,7 @@ rust-version = "1.85"
 
 [lib]
 # `_lib` pour éviter tout conflit de nom sur Windows ; réutilisable en mobile plus tard.
-name = "gitlite_lib"
+name = "opengitclient_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
 [build-dependencies]

@@ -273,7 +273,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let n = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        let dir = std::env::temp_dir().join(format!("gitlite-watch-{nanos}-{n}"));
+        let dir = std::env::temp_dir().join(format!("opengitclient-watch-{nanos}-{n}"));
         fs::create_dir_all(&dir).unwrap();
         git2::Repository::init(&dir).unwrap();
         fs::write(dir.join(".gitignore"), "target/\n").unwrap();

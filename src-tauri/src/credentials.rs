@@ -32,7 +32,13 @@ use crate::error::AppError;
 
 /// Nom de service de nos entrées. Volontairement distinct de tout ce que Git
 /// écrit, pour qu'on ne puisse pas toucher aux identifiants d'un autre outil.
-const SERVICE: &str = "GitLite";
+const SERVICE: &str = "OpenGitClient";
+
+/// Service sous lequel l'application rangeait ses entrées quand elle s'appelait
+/// GitLite. Une entrée qui y est encore est déplacée sous [`SERVICE`] à sa
+/// première lecture ; d'ici là, elle compte comme présente.
+#[cfg(target_os = "macos")]
+const LEGACY_SERVICE: &str = "GitLite";
 
 /// Identifiants d'un hôte.
 ///
@@ -76,7 +82,7 @@ pub fn host_of(url: &str) -> Option<String> {
 mod store {
     use security_framework::item::{ItemClass, ItemSearchOptions};
 
-    use super::{Credentials, SERVICE};
+    use super::{Credentials, LEGACY_SERVICE, SERVICE};
     use crate::error::AppError;
 
     /// Y a-t-il une entrée pour cet hôte ? Sans en lire le contenu.
@@ -84,10 +90,15 @@ mod store {
     /// Recherche sur les seuls attributs (`load_attributes`, jamais
     /// `load_data`) : c'est ce qui distingue cette fonction de `get` du point de
     /// vue du trousseau, qui n'a rien à déchiffrer et donc rien à autoriser.
+    /// Une entrée pas encore migrée compte : `get` la retrouvera.
     pub fn has(host: &str) -> bool {
+        exists(SERVICE, host) || exists(LEGACY_SERVICE, host)
+    }
+
+    fn exists(service: &str, host: &str) -> bool {
         let found = ItemSearchOptions::new()
             .class(ItemClass::generic_password())
-            .service(SERVICE)
+            .service(service)
             .account(host)
             .load_attributes(true)
             .search();
@@ -95,7 +106,21 @@ mod store {
     }
 
     pub fn get(host: &str) -> Option<Credentials> {
-        let raw = security_framework::passwords::get_generic_password(SERVICE, host).ok()?;
+        if let Some(credentials) = read(SERVICE, host) {
+            return Some(credentials);
+        }
+        // Migration paresseuse : l'entrée est recopiée sous le nouveau service,
+        // puis l'ancienne effacée — seulement si la copie a réussi, pour ne
+        // jamais perdre le secret en route.
+        let credentials = read(LEGACY_SERVICE, host)?;
+        if store(host, &credentials).is_ok() {
+            let _ = remove(LEGACY_SERVICE, host);
+        }
+        Some(credentials)
+    }
+
+    fn read(service: &str, host: &str) -> Option<Credentials> {
+        let raw = security_framework::passwords::get_generic_password(service, host).ok()?;
         // Une entrée illisible (format d'une version antérieure, corruption) est
         // traitée comme absente : l'utilisateur la ressaisira.
         serde_json::from_slice(&raw).ok()
@@ -112,8 +137,15 @@ mod store {
     /// résultat demandé, ce n'est pas une erreur.
     const ITEM_NOT_FOUND: i32 = -25300;
 
+    /// Efface aussi une entrée pas encore migrée : sans cela, un jeton oublié
+    /// reviendrait à la lecture suivante, depuis l'ancien service.
     pub fn delete(host: &str) -> Result<(), AppError> {
-        match security_framework::passwords::delete_generic_password(SERVICE, host) {
+        remove(SERVICE, host)?;
+        remove(LEGACY_SERVICE, host)
+    }
+
+    fn remove(service: &str, host: &str) -> Result<(), AppError> {
+        match security_framework::passwords::delete_generic_password(service, host) {
             Ok(()) => Ok(()),
             Err(e) if e.code() == ITEM_NOT_FOUND => Ok(()),
             Err(e) => Err(AppError::CredentialStore(e.to_string())),

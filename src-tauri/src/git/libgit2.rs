@@ -1988,7 +1988,7 @@ mod tests {
             .unwrap()
             .as_nanos();
         let n = DIR_COUNTER.fetch_add(1, Ordering::Relaxed);
-        std::env::temp_dir().join(format!("gitlite-{prefix}-{nanos}-{n}"))
+        std::env::temp_dir().join(format!("opengitclient-{prefix}-{nanos}-{n}"))
     }
 
     /// Crée un dépôt temporaire isolé avec une identité Git locale.

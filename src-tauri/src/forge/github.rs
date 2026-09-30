@@ -18,7 +18,7 @@ use crate::dto::{PullRequestEntry, PullRequestReport};
 use crate::error::AppError;
 
 /// GitHub exige un `User-Agent` ; une requête sans en-tête est refusée en 403.
-const USER_AGENT: &str = "GitLite";
+const USER_AGENT: &str = "OpenGitClient";
 
 /// Version d'API épinglée : une réponse dont la forme change sous nos pieds
 /// casserait la désérialisation sans prévenir.

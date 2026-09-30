@@ -69,6 +69,7 @@ pub struct AppState {
 impl AppState {
     /// Construit l'état et charge les récents + la session si elles existent.
     pub fn new(app: AppHandle) -> Self {
+        migrate_legacy_config(&app);
         let recent = load_json(&app, RECENT_FILE).unwrap_or_default();
         let profiles = load_json(&app, PROFILES_FILE).unwrap_or_default();
         let prefs = load_json(&app, PREFS_FILE).unwrap_or_default();
@@ -324,6 +325,27 @@ fn config_path(app: &AppHandle, file: &str) -> Result<PathBuf, AppError> {
         .app_config_dir()
         .map_err(|e| AppError::Io(e.to_string()))?;
     Ok(dir.join(file))
+}
+
+/// Identifiant de l'application quand elle s'appelait GitLite : le dossier de
+/// configuration porte son nom.
+const LEGACY_IDENTIFIER: &str = "com.gitlite.app";
+
+/// Reprend la configuration écrite sous l'ancien identifiant (récents, session,
+/// profils, préférences). Le dossier est déplacé tel quel, et seulement si le
+/// nouveau n'existe pas encore : une fois l'application lancée sous son nouveau
+/// nom, c'est lui qui fait foi. Un échec n'empêche pas de démarrer, on repart
+/// simplement de zéro.
+fn migrate_legacy_config(app: &AppHandle) {
+    let Ok(dir) = app.path().app_config_dir() else {
+        return;
+    };
+    let Some(legacy) = dir.parent().map(|p| p.join(LEGACY_IDENTIFIER)) else {
+        return;
+    };
+    if legacy != dir && legacy.is_dir() && !dir.exists() {
+        let _ = fs::rename(&legacy, &dir);
+    }
 }
 
 /// Lit un fichier de configuration JSON. Absence ou contenu illisible donnent
