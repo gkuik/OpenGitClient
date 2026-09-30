@@ -606,21 +606,19 @@
       left: 100%;
     }
   }
-  /* Le cadre du bouton : il porte le fond, la bordure et le survol, et reçoit le
-     clic droit à la place du bouton quand celui-ci est désactivé. */
+  /* Le cadre du bouton : il porte le fond et le survol, et reçoit le clic droit
+     à la place du bouton quand celui-ci est désactivé. Plat — ni bordure ni
+     coins arrondis : seul le fond dit l'état (survol, en cours, issue). */
   .split {
     position: relative;
     flex: none;
     display: flex;
     align-items: stretch;
-    border: 1px solid transparent;
-    border-radius: 6px;
   }
   /* Ni le bouton en cours ni celui qui affiche son issue ne prennent le survol :
      leur couleur dit quelque chose, le survol l'effacerait. */
   .split:hover:not(.disabled):not(.running):not([class*="flash-"]) {
     background: var(--bg-raised);
-    border-color: var(--border);
   }
   /* Boutons carrés, icône au-dessus du libellé. `relative` pour ancrer la
      pastille de compteur dans le coin. */
@@ -637,7 +635,7 @@
     padding: 0;
     background: transparent;
     border: none;
-    border-radius: 6px;
+    border-radius: 0;
     color: var(--text);
     font-size: 0.7rem;
     cursor: pointer;
@@ -655,13 +653,12 @@
 
   /*
     Le bouton qui a lancé l'opération reste allumé pendant qu'elle tourne —
-    fond et liseré d'accent — alors que les deux autres se grisent : c'est ce
+    fond d'accent — alors que les deux autres se grisent : c'est ce
     qui dit *laquelle* est en cours. Il reste désactivé (un second clic
     n'aurait rien à faire), d'où la couleur reprise sur `:disabled`.
   */
   .split.running {
     background: var(--accent-bg);
-    border-color: var(--accent);
   }
   .action.running:disabled {
     color: var(--accent-soft);
@@ -693,21 +690,16 @@
     }
   }
 
-  /* Éclair de fin : l'icône d'issue, et le cadre teinté de sa couleur. */
-  .split.flash-ok,
-  .split.flash-neutral {
-    border-color: var(--ok-border);
-  }
+  /* Éclair de fin : l'icône d'issue, et le fond teinté de sa couleur — sauf
+     « rien à faire », que la coche seule suffit à dire. */
   .split.flash-ok {
     background: var(--ok-bg);
   }
   .split.flash-warn {
     background: var(--warn-bg);
-    border-color: var(--warn-border);
   }
   .split.flash-danger {
     background: var(--danger-bg);
-    border-color: var(--danger-border);
   }
   .split.flash-ok .action,
   .split.flash-neutral .action {
@@ -720,7 +712,7 @@
     color: var(--danger);
   }
   .split[class*="flash-"] {
-    transition: background 400ms ease, border-color 400ms ease;
+    transition: background 400ms ease;
   }
   .flash-ic {
     animation: pop 220ms ease-out;
