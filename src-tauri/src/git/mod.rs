@@ -12,7 +12,7 @@ use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileContent, FileDiff,
     FileSource, Identity,
     MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
-    RepoStatus, StashEntry,
+    RepoStatus, StashEntry, TagEntry, TagPushReport,
 };
 use crate::error::AppError;
 
@@ -152,6 +152,45 @@ pub trait GitBackend: Send {
         mode: MergeMode,
     ) -> Result<MergeReport, AppError>;
 
+    // ── Tags ────────────────────────────────────────────────────────────────
+
+    /// Liste les tags (`refs/tags/**`) qui désignent un commit, triés par nom.
+    /// Lecture pure du disque, comme les branches.
+    fn tags(&self) -> Result<Vec<TagEntry>, AppError>;
+
+    /// Crée un tag sur le commit `oid`. Avec un message, le tag est **annoté**
+    /// (un objet signé par l'identité du dépôt, comme un commit) ; sans, il est
+    /// léger — une simple référence.
+    ///
+    /// Jamais forcé : un tag du même nom remonte [`AppError::TagExists`]. Un tag
+    /// est fait pour ne pas bouger, et le déplacer en silence réécrirait ce que
+    /// d'autres ont peut-être déjà récupéré.
+    fn create_tag(&self, name: &str, oid: &str, message: Option<&str>) -> Result<(), AppError>;
+
+    /// Supprime un tag **local**. Le distant n'en sait rien : c'est
+    /// [`GitBackend::delete_remote_tag`] qui s'en charge, geste séparé.
+    fn delete_tag(&self, name: &str) -> Result<(), AppError>;
+
+    /// Amène le commit d'un tag sous HEAD, **détaché** — ce que fait
+    /// `git checkout <tag>`. Stratégie SAFE, comme pour une branche : des
+    /// modifications locales qui seraient écrasées font échouer la bascule.
+    fn checkout_tag(&self, name: &str) -> Result<(), AppError>;
+
+    /// Publie un tag sur le distant (`git push <remote> refs/tags/<t>`).
+    ///
+    /// **Bloquante sur le réseau**, comme [`GitBackend::push`] : jamais depuis
+    /// le corps d'une commande (voir `commands::push_tag`). Jamais forcée non
+    /// plus : un tag différent du même nom sur le distant fait refuser l'envoi
+    /// ([`AppError::TagRejected`]).
+    fn push_tag(&self, name: &str) -> Result<TagPushReport, AppError>;
+
+    /// Supprime un tag **du distant** (`git push <remote> :refs/tags/<t>`), sans
+    /// toucher au tag local. Irréversible pour tous ceux qui partagent ce
+    /// distant ; la confirmation est l'affaire de l'interface.
+    ///
+    /// **Bloquante sur le réseau**, mêmes contraintes que [`GitBackend::push_tag`].
+    fn delete_remote_tag(&self, name: &str) -> Result<TagPushReport, AppError>;
+
     /// Liste la pile de stash, du plus récent au plus ancien.
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError>;
 
@@ -175,7 +214,8 @@ pub trait GitBackend: Send {
     fn stash_drop(&self, index: usize) -> Result<(), AppError>;
 
     /// Page d'historique pour le graph : parcours de toutes les têtes locales et
-    /// de HEAD, trié topologiquement puis par date décroissante.
+    /// distantes, des tags et de HEAD, trié topologiquement puis par date
+    /// décroissante.
     ///
     /// La pagination est un simple `skip`/`limit` sur ce parcours. L'ordre est
     /// stable tant que les références ne bougent pas ; toute mutation du dépôt

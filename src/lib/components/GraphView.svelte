@@ -17,6 +17,7 @@
   import { graphLines } from "../graphLines.svelte";
   import { bucketLabel, bucketStarts, type TimeBucket } from "../graph/timeBuckets";
   import type { TreeCounts } from "../tree";
+  import type { GraphCommit } from "../types";
 
   // ── Géométrie ──────────────────────────────────────────────────────────────
   // ROW_H est la seule chose qui aligne le canvas et le DOM : elle est appliquée
@@ -306,6 +307,36 @@
       x: Math.max(8, Math.min(r.right - COLUMNS_MENU_W, window.innerWidth - COLUMNS_MENU_W - 8)),
       y: r.bottom + 2,
     };
+  }
+
+  // ── Menu d'une rangée ──────────────────────────────────────────────────────
+  // Une seule entrée, et c'est délibéré : le graph reste en lecture seule —
+  // aucun checkout, reset ni branche d'ici. Poser un tag n'écrit qu'une
+  // référence, sans toucher au working directory ni à l'historique.
+  let rowMenu = $state<{ x: number; y: number; commit: GraphCommit } | null>(null);
+  const ROW_MENU_W = 240;
+  const ROW_MENU_H = 80;
+
+  /**
+   * Clic droit sur une rangée de commit. La sélection ne change pas : le menu
+   * nomme le commit visé, et la colonne de droite reste ce qu'elle était. La
+   * rangée WIP garde le menu natif — son champ de résumé a besoin du
+   * copier-coller.
+   */
+  function openRowMenu(e: MouseEvent, row: GraphRow) {
+    if (row.kind !== "commit") return;
+    e.preventDefault();
+    rowMenu = {
+      x: Math.max(8, Math.min(e.clientX, window.innerWidth - ROW_MENU_W - 8)),
+      y: Math.max(8, Math.min(e.clientY, window.innerHeight - ROW_MENU_H - 8)),
+      commit: row.commit,
+    };
+  }
+
+  function createTagHere() {
+    const commit = rowMenu?.commit;
+    rowMenu = null;
+    if (commit) repo.askTag(commit);
   }
 
   // Fenêtre de rangées réellement montées (virtualisation).
@@ -761,6 +792,7 @@
             tabindex="0"
             onclick={() => activate(row)}
             onkeydown={(e) => onRowKey(e, row)}
+            oncontextmenu={(e) => openRowMenu(e, row)}
           >
             {#each placed as col (col.id)}
               {@render cell(row, col.id)}
@@ -784,7 +816,8 @@
       <span
         class="ref peek"
         class:head={peek.badge.isHead}
-        class:remote={!peek.badge.local}
+        class:remote={!peek.badge.local && !peek.badge.tag}
+        class:tag={peek.badge.tag}
         style="--lane: {peek.lane}; left: {peek.x}px; top: {peek.y}px; min-width: {peek.width}px; height: {peek.height}px"
         aria-hidden="true"
       >
@@ -854,7 +887,8 @@
         <span
           class="ref"
           class:head={b.isHead}
-          class:remote={!b.local}
+          class:remote={!b.local && !b.tag}
+          class:tag={b.tag}
           style="--lane: {lanes[row.color]}"
           title={b.title}
           onmouseenter={(e) => onBadgeEnter(e, b, lanes[row.color])}
@@ -882,6 +916,13 @@
      entière au survol. -->
 {#snippet badgeBody(b: RefBadge)}
   {#if b.isHead}<span class="mark" aria-hidden="true">✓</span>{/if}
+  {#if b.tag}
+    <!-- Étiquette, en tête : un tag se reconnaît avant de se lire. -->
+    <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round">
+      <path d="M2 2.75a.75.75 0 0 1 .75-.75h4.4a1 1 0 0 1 .7.3l5.9 5.9a1 1 0 0 1 0 1.4l-4.4 4.4a1 1 0 0 1-1.4 0L2.3 8.1a1 1 0 0 1-.3-.7z" />
+      <circle cx="5.25" cy="5.25" r="1" fill="currentColor" stroke="none" />
+    </svg>
+  {/if}
   <span class="bname">{b.name}</span>
   {#if b.local}
     <svg
@@ -961,7 +1002,40 @@
   </div>
 {/if}
 
-<svelte:window onkeydown={(e) => (e.key === "Escape" ? (columnsMenu = null) : undefined)} />
+<!-- Menu d'une rangée de commit : poser un tag, rien d'autre. -->
+{#if rowMenu}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => (rowMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      rowMenu = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu row-menu"
+    style="left: {rowMenu.x}px; top: {rowMenu.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">{rowMenu.commit.shortOid} · {rowMenu.commit.summary}</p>
+    <button class="ctx-item" role="menuitem" onclick={createTagHere}>
+      <svg class="menu-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+        <path d="M2 2.75a.75.75 0 0 1 .75-.75h4.4a1 1 0 0 1 .7.3l5.9 5.9a1 1 0 0 1 0 1.4l-4.4 4.4a1 1 0 0 1-1.4 0L2.3 8.1a1 1 0 0 1-.3-.7z" />
+        <circle cx="5.25" cy="5.25" r="1" fill="currentColor" stroke="none" />
+      </svg>
+      <span>{t("graph.menu.createTag")}</span>
+    </button>
+  </div>
+{/if}
+
+<svelte:window
+  onkeydown={(e) => {
+    if (e.key !== "Escape") return;
+    columnsMenu = null;
+    rowMenu = null;
+  }}
+/>
 
 <style>
   /* En-tête, puis rangées qui défilent dessous : l'en-tête ne défile jamais. */
@@ -1224,6 +1298,12 @@
     border-style: dashed;
     opacity: 0.85;
   }
+  /* Tag : même couleur de lane, trait plein, l'étiquette en tête suffit à le
+     distinguer d'une branche. Le fond reste celui des pastilles non pleines :
+     seul HEAD est plein. */
+  .ref.tag {
+    border-radius: 8px;
+  }
   /* Copie entière d'une pastille tronquée, au survol : aucune limite de
      largeur, au-dessus du canvas (3) et de l'en-tête (4). Opaque, y compris pour
      une référence distante — sinon le texte de la colonne voisine transparaîtrait
@@ -1330,5 +1410,22 @@
     font-family: var(--mono);
     font-size: 0.72rem;
     color: var(--text-faint);
+  }
+  /* Menu d'une rangée : le résumé du commit, en en-tête, se replie. */
+  .row-menu {
+    min-width: 220px;
+    max-width: 280px;
+  }
+  .row-menu .ctx-head {
+    display: -webkit-box;
+    -webkit-line-clamp: 2;
+    line-clamp: 2;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+  .menu-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
   }
 </style>

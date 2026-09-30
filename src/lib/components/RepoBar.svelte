@@ -117,9 +117,11 @@
         ? t("toolbar.status.pushing")
         : repo.pulling
           ? t("toolbar.status.pulling")
-          : repo.mergingBranches
-            ? t("toolbar.status.merging")
-            : repo.opStatus,
+          : repo.pushingTag
+            ? t("toolbar.status.pushingTag")
+            : repo.mergingBranches
+              ? t("toolbar.status.merging")
+              : repo.opStatus,
   );
 </script>
 

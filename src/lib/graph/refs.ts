@@ -18,6 +18,12 @@ export interface RefBadge {
   isHead: boolean;
   /** La branche existe en local *sur ce commit*. */
   local: boolean;
+  /**
+   * C'est un tag, pas une branche. Il a sa propre pastille même quand une
+   * branche porte le même nom : ce sont deux références distinctes, qui ne
+   * disent pas la même chose (l'une avance, l'autre est faite pour rester).
+   */
+  tag: boolean;
   /** Noms complets des références distantes réunies ici ("origin/main"). */
   remotes: string[];
   /** Toutes les références réunies, pour l'infobulle. */
@@ -46,7 +52,7 @@ export function groupRefs(refs: GraphRef[]): RefBadge[] {
   const byName = new Map<string, RefBadge>();
 
   for (const r of refs) {
-    if (r.kind === "remoteBranch") continue;
+    if (r.kind === "remoteBranch" || r.kind === "tag") continue;
     const existing = byName.get(r.name);
     if (existing) {
       // Deux références locales de même nom n'existent pas ; par sécurité, la
@@ -58,6 +64,7 @@ export function groupRefs(refs: GraphRef[]): RefBadge[] {
       name: r.name,
       isHead: r.kind === "head",
       local: true,
+      tag: false,
       remotes: [],
       title: r.name,
       key: "l:" + r.name,
@@ -83,9 +90,25 @@ export function groupRefs(refs: GraphRef[]): RefBadge[] {
       name: r.name,
       isHead: false,
       local: false,
+      tag: false,
       remotes: [r.name],
       title: r.name,
       key: "r:" + r.name,
+    });
+  }
+
+  // Les tags, chacun le sien : aucun rapprochement, ni avec une branche ni
+  // avec un distant — le backend ne lit que les tags locaux.
+  for (const r of refs) {
+    if (r.kind !== "tag") continue;
+    badges.push({
+      name: r.name,
+      isHead: false,
+      local: false,
+      tag: true,
+      remotes: [],
+      title: r.name,
+      key: "t:" + r.name,
     });
   }
 
@@ -98,9 +121,10 @@ export function groupRefs(refs: GraphRef[]): RefBadge[] {
     Ordre de lecture, et pas seulement d'affichage : la colonne est étroite, donc
     ce qui est en tête est ce qui survivra si l'affichage doit en couper. La
     branche courante d'abord, puis ce qui est ici, puis ce qui n'est que sur le
-    serveur. `sort` est stable, l'ordre du backend (alphabétique) tient lieu de
-    départage.
+    serveur, et les tags en dernier : ils marquent un commit, ils ne disent rien
+    de ce qui avance. `sort` est stable, l'ordre du backend (alphabétique) tient
+    lieu de départage.
   */
-  const rank = (b: RefBadge) => (b.isHead ? 0 : b.local ? 1 : 2);
+  const rank = (b: RefBadge) => (b.isHead ? 0 : b.local ? 1 : b.tag ? 3 : 2);
   return badges.sort((a, b) => rank(a) - rank(b));
 }

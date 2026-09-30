@@ -5,6 +5,7 @@ import type { GraphRef } from "../types";
 const local = (name: string): GraphRef => ({ name, kind: "localBranch" });
 const head = (name: string): GraphRef => ({ name, kind: "head" });
 const remote = (name: string): GraphRef => ({ name, kind: "remoteBranch" });
+const tag = (name: string): GraphRef => ({ name, kind: "tag" });
 
 describe("groupRefs", () => {
   it("réunit une branche locale et son distant au même niveau", () => {
@@ -72,5 +73,27 @@ describe("groupRefs — ordre", () => {
       head("zzz"),
     ]).map((b) => b.name);
     expect(names).toEqual(["zzz", "aaa", "origin/solo"]);
+  });
+});
+
+describe("groupRefs — tags", () => {
+  it("donne sa propre pastille à un tag, même homonyme d'une branche", () => {
+    const badges = groupRefs([local("v1"), tag("v1")]);
+    expect(badges).toHaveLength(2);
+    expect(badges.map((b) => b.key)).toEqual(["l:v1", "t:v1"]);
+    expect(badges[1]).toMatchObject({ name: "v1", tag: true, local: false, remotes: [] });
+  });
+
+  it("n'accroche pas un distant à un tag dont il serait le suffixe", () => {
+    const badges = groupRefs([tag("main"), remote("origin/main")]);
+    expect(badges.find((b) => b.tag)?.remotes).toEqual([]);
+    expect(badges.find((b) => !b.tag)?.name).toBe("origin/main");
+  });
+
+  it("range les tags après les branches, distantes comprises", () => {
+    const names = groupRefs([tag("v2"), remote("origin/solo"), local("aaa")]).map(
+      (b) => b.name,
+    );
+    expect(names).toEqual(["aaa", "origin/solo", "v2"]);
   });
 });

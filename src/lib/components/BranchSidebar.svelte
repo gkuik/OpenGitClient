@@ -3,19 +3,20 @@
   import { repo, tabs } from "../stores/repo.svelte";
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
-  import type { MergeMode, PullMode, PullRequestEntry } from "../types";
+  import { sortTags } from "../tags";
+  import type { MergeMode, PullMode, PullRequestEntry, TagEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import RichText from "./RichText.svelte";
   import PullRequestSection from "./PullRequestSection.svelte";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
 
-  // D'autres catégories (TAGS…) viendront s'ajouter ici : chacune est une
-  // <section> autonome sur ce même modèle.
+  // Chaque catégorie est une <section> autonome sur ce même modèle.
   let localOpen = $state(true);
   let remotesOpen = $state(true);
   let prOpen = $state(true);
   let stashesOpen = $state(true);
+  let tagsOpen = $state(true);
 
   // REMOTE disparaît quand il n'y a rien à y mettre : un dépôt sans distant n'a
   // pas à porter une section vide, et elle réapparaît d'elle-même au premier
@@ -37,6 +38,7 @@
     ...(hasRemotes ? [{ id: "remotes", open: remotesOpen }] : []),
     ...(hasPullRequests ? [{ id: "pulls", open: prOpen }] : []),
     { id: "stashes", open: stashesOpen },
+    { id: "tags", open: tagsOpen },
   ]);
 
   // Le trait de séparation se calcule ici et pas en CSS : PULL REQUESTS est un
@@ -47,6 +49,8 @@
   const nodes = $derived(buildBranchTree(repo.branches));
   // Un niveau de plus que LOCAL : le distant, puis son arborescence.
   const remotes = $derived(buildRemoteTree(repo.remoteBranches));
+  // La dernière version en tête (voir `tags.ts`).
+  const tags = $derived(sortTags(repo.tags));
 
   // ── Menu contextuel des stashes ─────────────────────────────────────────────
   // Une seule instance ouverte à la fois, positionnée en coordonnées fenêtre.
@@ -166,6 +170,65 @@
     if (pr) void repo.openPullRequest(pr);
   }
 
+  // ── Menu contextuel d'un tag ────────────────────────────────────────────────
+  // Même mécanique que les autres menus de la colonne. Les deux suppressions
+  // sont armées par un premier clic et exécutées par le second, comme celle
+  // d'un stash — et réarmées à chaque ouverture, pour qu'un clic droit sur un
+  // autre tag n'hérite pas de la confirmation précédente.
+  let tagMenu = $state<{ x: number; y: number; tag: TagEntry } | null>(null);
+  let tagConfirm = $state<"delete" | "deleteRemote" | null>(null);
+  const TAG_MENU_W = 236;
+  const TAG_MENU_H = 180;
+
+  function openTagMenu(tag: TagEntry, x: number, y: number) {
+    tagMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - TAG_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - TAG_MENU_H - 8)),
+      tag,
+    };
+    tagConfirm = null;
+  }
+
+  function closeTagMenu() {
+    tagMenu = null;
+    tagConfirm = null;
+  }
+
+  function onTagKey(e: KeyboardEvent, tag: TagEntry) {
+    if (e.key === "Enter") {
+      e.preventDefault();
+      void repo.checkoutTag(tag.name);
+    } else if (e.key === "ContextMenu") {
+      e.preventDefault();
+      const r = (e.currentTarget as HTMLElement).getBoundingClientRect();
+      openTagMenu(tag, r.left, r.bottom);
+    }
+  }
+
+  /** Infobulle d'un tag : le message d'un tag annoté d'abord, puis le mode d'emploi. */
+  function tagHint(tag: TagEntry): string {
+    const hint = t("tags.hint", { name: tag.name });
+    return tag.message ? `${tag.message}\n\n${hint}` : hint;
+  }
+
+  // Un checkout écrit le working directory : il attend que ce qui tourne soit fini.
+  const canCheckoutTag = $derived(!repo.checkingOut && !repo.busy && !repo.mergingBranches);
+
+  function runTagAction(action: "checkout" | "push" | "delete" | "deleteRemote") {
+    const tag = tagMenu?.tag;
+    if (!tag) return;
+    // Les deux suppressions demandent un second clic sur la même entrée.
+    if ((action === "delete" || action === "deleteRemote") && tagConfirm !== action) {
+      tagConfirm = action;
+      return;
+    }
+    closeTagMenu();
+    if (action === "checkout") void repo.checkoutTag(tag.name);
+    else if (action === "push") void repo.pushTag(tag.name);
+    else if (action === "delete") void repo.deleteTag(tag.name);
+    else void repo.pushTag(tag.name, true);
+  }
+
   async function runMerge(mode: MergeMode) {
     const request = branchMerge.request;
     branchMerge.close();
@@ -173,14 +236,15 @@
   }
 </script>
 
-<!-- Échap ferme les trois menus de la colonne : stashes, pull requests et
-     fusion. (Pendant un glissement, la même touche l'abandonne — c'est le
+<!-- Échap ferme les quatre menus de la colonne : stashes, tags, pull requests
+     et fusion. (Pendant un glissement, la même touche l'abandonne — c'est le
      module qui l'écoute.) -->
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     close();
     prMenu = null;
+    closeTagMenu();
     branchMerge.close();
   }}
 />
@@ -307,6 +371,53 @@
               </div>
             {:else}
               <p class="empty small">{t("stashes.empty")}</p>
+            {/each}
+          </div>
+        {/if}
+      </section>
+
+      <section class:open={tagsOpen}>
+        <SectionHeader
+          label={t("tags.title")}
+          icon={tagIcon}
+          count={repo.tags.length}
+          open={tagsOpen}
+          onToggle={() => (tagsOpen = !tagsOpen)}
+          first={firstVisual === "tags"}
+        />
+
+        {#if tagsOpen}
+          <div class="sec-body">
+            {#each tags as tag (tag.name)}
+              <!--
+                Même contrat qu'une branche : clic = sélection du commit dans le
+                graph, double-clic ou Entrée = checkout (ici HEAD détaché, un
+                tag ne se déplace pas). Clic droit ou touche menu : les actions.
+              -->
+              <div
+                class="tag"
+                class:selected={repo.selectedCommitOid === tag.oid}
+                class:active={tagMenu?.tag.name === tag.name}
+                role="button"
+                tabindex="0"
+                title={tagHint(tag)}
+                onclick={() => repo.selectCommit(tag.oid)}
+                ondblclick={() => repo.checkoutTag(tag.name)}
+                onkeydown={(e) => onTagKey(e, tag)}
+                oncontextmenu={(e) => {
+                  e.preventDefault();
+                  openTagMenu(tag, e.clientX, e.clientY);
+                }}
+              >
+                {@render tagIcon()}
+                <span class="tname">{tag.name}</span>
+                {#if tag.message !== null}
+                  <!-- Annoté : il porte un message, que l'infobulle montre. -->
+                  <span class="annotated" aria-hidden="true">≡</span>
+                {/if}
+              </div>
+            {:else}
+              <p class="empty small">{t("tags.empty")}</p>
             {/each}
           </div>
         {/if}
@@ -476,6 +587,76 @@
   </div>
 {/if}
 
+<!--
+  Menu d'un tag. Les deux suppressions sont en couleur de danger et demandent
+  un second clic : la locale ne se rattrape pas, la distante encore moins —
+  elle retire le tag à tous ceux qui récupèrent depuis ce distant.
+-->
+{#if tagMenu}
+  {@const tag = tagMenu.tag}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={closeTagMenu}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      closeTagMenu();
+    }}
+  ></button>
+  <div
+    class="ctx-menu tag-menu"
+    style="left: {tagMenu.x}px; top: {tagMenu.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">{tag.name}</p>
+    <button
+      class="ctx-item"
+      role="menuitem"
+      disabled={!canCheckoutTag}
+      onclick={() => runTagAction("checkout")}
+    >
+      {@render checkoutIcon()}
+      <span>{t("tags.menu.checkout")}</span>
+    </button>
+    <button
+      class="ctx-item"
+      role="menuitem"
+      disabled={repo.busyRemote}
+      title={repo.busyRemote ? t("tags.menu.busy") : t("tags.menu.push.hint")}
+      onclick={() => runTagAction("push")}
+    >
+      {@render pushIcon()}
+      <span>{t("tags.menu.push")}</span>
+    </button>
+    <div class="ctx-sep"></div>
+    <button
+      class="ctx-item danger"
+      role="menuitem"
+      title={t("tags.menu.delete.hint")}
+      onclick={() => runTagAction("delete")}
+    >
+      {@render dropIcon()}
+      <span>
+        {tagConfirm === "delete" ? t("tags.menu.delete.confirm") : t("tags.menu.delete")}
+      </span>
+    </button>
+    <button
+      class="ctx-item danger"
+      role="menuitem"
+      disabled={repo.busyRemote}
+      title={repo.busyRemote ? t("tags.menu.busy") : t("tags.menu.deleteRemote.hint")}
+      onclick={() => runTagAction("deleteRemote")}
+    >
+      {@render dropIcon()}
+      <span>
+        {tagConfirm === "deleteRemote"
+          ? t("tags.menu.deleteRemote.confirm")
+          : t("tags.menu.deleteRemote")}
+      </span>
+    </button>
+  </div>
+{/if}
+
 <!-- Icônes des actions de stash. Trait `currentColor` : suivent la couleur du
      bouton (rouge sur « Supprimer »). -->
 {#snippet applyIcon()}
@@ -543,6 +724,31 @@
     <path d="M7 3.5H3.5a1 1 0 0 0-1 1v8a1 1 0 0 0 1 1h8a1 1 0 0 0 1-1V9" />
     <path d="M9.5 2.5h4v4" />
     <path d="M13.5 2.5 7.5 8.5" />
+  </svg>
+{/snippet}
+
+<!-- Flèche montante depuis une base : celle du bouton Push. -->
+{#snippet pushIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M8 14.25v-7.5" />
+    <path d="M4.75 10 8 6.75 11.25 10" />
+    <path d="M3 2.75h10" />
+  </svg>
+{/snippet}
+
+<!-- Cible : amener ce commit sous HEAD. -->
+{#snippet checkoutIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="8" cy="8" r="2.25" />
+    <path d="M8 1.75v3.5M8 10.75v3.5" />
+  </svg>
+{/snippet}
+
+<!-- Étiquette : un nom posé sur un commit, qui ne bouge pas. -->
+{#snippet tagIcon()}
+  <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M2 2.75a.75.75 0 0 1 .75-.75h4.4a1 1 0 0 1 .7.3l5.9 5.9a1 1 0 0 1 0 1.4l-4.4 4.4a1 1 0 0 1-1.4 0L2.3 8.1a1 1 0 0 1-.3-.7z" />
+    <circle cx="5.25" cy="5.25" r="1" fill="currentColor" stroke="none" />
   </svg>
 {/snippet}
 
@@ -701,6 +907,50 @@
   }
   .stash .ic {
     color: var(--text-faint);
+  }
+  /* Un tag : la ligne d'une branche, sans coche ni compteurs. Même surlignage
+     quand son commit est celui affiché à droite. */
+  .tag {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.25rem 0.5rem 0.25rem var(--row-inset);
+    border-radius: 4px;
+    font-size: 0.82rem;
+    cursor: pointer;
+  }
+  .tag:hover,
+  .tag.active {
+    background: var(--bg-raised);
+  }
+  .tag.selected,
+  .tag.selected:hover {
+    background: var(--accent-bg);
+    color: var(--accent-soft);
+  }
+  .tag .ic {
+    flex: none;
+    width: 13px;
+    height: 13px;
+    color: var(--text-faint);
+  }
+  .tag.selected .ic {
+    color: var(--accent);
+  }
+  .tname {
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .annotated {
+    flex: none;
+    font-size: 0.72rem;
+    color: var(--text-faint);
+  }
+  .tag-menu {
+    min-width: 236px;
   }
   /* Bouton d'actions : discret, révélé au survol / focus / menu ouvert. */
   .kebab {

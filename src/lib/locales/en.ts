@@ -136,6 +136,8 @@ export const en = {
   "graph.columns": "Columns",
   "graph.columns.hint": "Show or hide columns",
   "graph.columns.reset": "Reset columns",
+  // Menu contextuel d'une rangée du graph — une seule entrée.
+  "graph.menu.createTag": "Create tag here…",
 
   // ── Diff ──────────────────────────────────────────────────────────────────
   "diff.pick": "Select a file to show its diff.",
@@ -193,6 +195,7 @@ export const en = {
   "toolbar.status.pushing": "Pushing…",
   "toolbar.status.pulling": "Pulling…",
   "toolbar.status.merging": "Merging…",
+  "toolbar.status.pushingTag": "Pushing the tag…",
 
   // ── Colonne de gauche : branches ──────────────────────────────────────────
   "branches.local": "Local",
@@ -229,6 +232,33 @@ export const en = {
   "stashes.pop": "Pop (apply and drop)",
   "stashes.drop": "Drop",
   "stashes.drop.confirm": "Confirm the drop",
+
+  // ── Colonne de gauche : tags ──────────────────────────────────────────────
+  "tags.title": "Tags",
+  "tags.empty": "No tag.",
+  "tags.hint":
+    "{name} — click to see its commit, double-click to check it out (detached HEAD)",
+  "tags.menu.checkout": "Check out (detached HEAD)",
+  "tags.menu.push": "Push to the remote",
+  "tags.menu.push.hint": "Publishes this tag; refused if the remote holds a different tag of that name",
+  "tags.menu.delete": "Delete locally",
+  "tags.menu.delete.confirm": "Confirm: delete locally",
+  "tags.menu.delete.hint": "Removes the tag from this repository only; the remote keeps it",
+  "tags.menu.deleteRemote": "Delete on the remote",
+  "tags.menu.deleteRemote.confirm": "Confirm: delete on the remote",
+  "tags.menu.deleteRemote.hint":
+    "Removes the tag from the remote, for everyone who fetches from it; the local tag stays",
+  "tags.menu.busy": "A remote operation is already running",
+
+  // ── Dialogue de création d'un tag ─────────────────────────────────────────
+  "tag.dialog.title": "Create a tag",
+  "tag.dialog.on": "On {oid} — {summary}",
+  "tag.dialog.name": "Name",
+  "tag.dialog.message": "Message (optional)",
+  "tag.dialog.message.hint":
+    "With a message, the tag is annotated: it records who tagged, when and why. Without one, it is a lightweight tag — a plain name on the commit.",
+  "tag.dialog.submit": "Create tag",
+  "tag.dialog.busy": "Creating…",
 
   // ── Colonne de gauche : pull requests ─────────────────────────────────────
   "pr.title": "Pull requests",
@@ -348,6 +378,8 @@ export const en = {
   "op.push.forced": "{remote}: {branch} rewritten (force push)",
   "op.push.published.upstream": "{remote}: {branch} published, upstream set",
   "op.push.published.as": "{remote}: {branch} published as {target}, upstream set",
+  "op.tag.pushed": "{remote}: tag {tag} published",
+  "op.tag.deleted": "{remote}: tag {tag} deleted",
   "op.merge.upToDate": "{target} already contains {source}",
   "op.merge.fastForwarded": {
     one: "{source} → {target}: {n} commit (fast-forward)",
@@ -387,6 +419,10 @@ export const en = {
   "error.NoUpstream": "The current branch tracks no remote branch: nothing to pull",
   "error.PushLeaseStale":
     "Force push refused: the remote branch has moved since the last fetch (it is now at {arg}). Fetch and look at what arrived before forcing again.",
+  "error.TagExists": "A tag named {arg} already exists",
+  "error.InvalidTagName": "“{arg}” is not a valid tag name",
+  "error.TagRejected":
+    "Tag push refused by the remote ({arg}). It may already hold a different tag of that name.",
   "error.PushRejected":
     "Push refused: the remote has moved ahead ({arg}). Fetch, then integrate its commits before pushing again.",
 };

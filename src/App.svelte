@@ -14,6 +14,7 @@
   import CommitBox from "./lib/components/CommitBox.svelte";
   import ErrorBanner from "./lib/components/ErrorBanner.svelte";
   import CredentialsDialog from "./lib/components/CredentialsDialog.svelte";
+  import TagDialog from "./lib/components/TagDialog.svelte";
   import MergeBanner from "./lib/components/MergeBanner.svelte";
   import SidebarResizer from "./lib/components/SidebarResizer.svelte";
 
@@ -88,6 +89,9 @@
 
   <!-- Saisie d'identifiants pour un dépôt distant (ne rend rien sans demande). -->
   <CredentialsDialog />
+
+  <!-- Création d'un tag depuis le graph (ne rend rien sans demande). -->
+  <TagDialog />
 
   <!-- Bandeau d'erreur en overlay (ne rend rien s'il n'y a pas d'erreur). -->
   <div class="error-overlay">

@@ -30,6 +30,8 @@ import type {
   SidebarWidths,
   GraphColumnsDto,
   StashEntry,
+  TagEntry,
+  TagPushEvent,
   ThemeMode,
   GraphLineStyle,
 } from "./types";
@@ -126,6 +128,27 @@ export const api = {
    */
   checkoutRemoteBranch: (repoId: string, name: string) =>
     call<RepoInfo>("checkout_remote_branch", { repoId, name }),
+
+  // ── Tags ─────────────────────────────────────────────────────────────────
+  listTags: (repoId: string) => call<TagEntry[]>("list_tags", { repoId }),
+  /** Crée un tag sur un commit : annoté avec un message, léger sans. Jamais forcé. */
+  createTag: (repoId: string, name: string, oid: string, message: string | null) =>
+    call<void>("create_tag", { repoId, name, oid, message }),
+  /** Supprime le tag **local** ; le distant n'est pas touché. */
+  deleteTag: (repoId: string, name: string) => call<void>("delete_tag", { repoId, name }),
+  /** Bascule sur le commit du tag, HEAD détaché ; renvoie les infos à jour. */
+  checkoutTag: (repoId: string, name: string) =>
+    call<RepoInfo>("checkout_tag", { repoId, name }),
+  /**
+   * Publie un tag (`delete = false`) ou le supprime du distant (`true`). Même
+   * contrat que `pushBranch` : réponse immédiate, résultat par `onTagPushed`,
+   * et la même réservation réseau que fetch, push et pull.
+   */
+  pushTag: (repoId: string, name: string, remove = false) =>
+    call<void>("push_tag", { repoId, name, delete: remove }),
+  onTagPushed: (handler: (event: TagPushEvent) => void): Promise<UnlistenFn> =>
+    listen<TagPushEvent>("repo://tag-pushed", (e) => handler(e.payload)),
+
   // ── Dépôt distant ────────────────────────────────────────────────────────
   /**
    * Lance un fetch et rend la main immédiatement : le backend l'exécute sur un

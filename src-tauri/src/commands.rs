@@ -19,6 +19,7 @@ use crate::dto::{
     FileSource, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
+    TagEntry, TagPushEvent,
     GraphColumns, GraphLineStyle,
     ThemeMode,
 };
@@ -238,6 +239,113 @@ pub fn checkout_remote_branch(
     let backend = guard.backend(&repo_id)?;
     backend.checkout_remote_branch(&name)?;
     backend.info()
+}
+
+// ── Tags ────────────────────────────────────────────────────────────────────
+
+#[tauri::command]
+pub fn list_tags(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<TagEntry>, AppError> {
+    lock(&state)?.backend(&repo_id)?.tags()
+}
+
+/// Crée un tag sur un commit — annoté si un message est donné, léger sinon.
+#[tauri::command]
+pub fn create_tag(
+    repo_id: String,
+    name: String,
+    oid: String,
+    message: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?
+        .backend(&repo_id)?
+        .create_tag(&name, &oid, message.as_deref())
+}
+
+/// Supprime un tag local. Le distant n'est pas touché.
+#[tauri::command]
+pub fn delete_tag(
+    repo_id: String,
+    name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.backend(&repo_id)?.delete_tag(&name)
+}
+
+/// Bascule sur le commit d'un tag, HEAD détaché. Renvoie les infos à jour du
+/// dépôt, comme `checkout_branch`.
+#[tauri::command]
+pub fn checkout_tag(
+    repo_id: String,
+    name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<RepoInfo, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    backend.checkout_tag(&name)?;
+    backend.info()
+}
+
+/// Nom de l'événement portant le résultat d'un push de tag (voir `src/lib/api.ts`).
+const TAG_PUSH_EVENT: &str = "repo://tag-pushed";
+
+/// Publie un tag (`delete = false`) ou le supprime du distant (`delete = true`),
+/// **en tâche de fond**.
+///
+/// Mêmes contraintes que [`push_branch`] : appel réseau bloquant, thread dédié,
+/// backend rouvert depuis le chemin, et la **même** réservation — une seule
+/// opération distante à la fois par dépôt, c'est ce qui grise les trois boutons
+/// de la barre ensemble.
+#[tauri::command]
+pub fn push_tag(
+    repo_id: String,
+    name: String,
+    delete: bool,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    {
+        let mut guard = lock(&state)?;
+        guard.backend(&repo_id)?;
+        if !guard.begin_network(&repo_id) {
+            return Err(AppError::NetworkBusy);
+        }
+    }
+
+    let path = PathBuf::from(&repo_id);
+    std::thread::spawn(move || {
+        let outcome = crate::git::open_repository(&path).and_then(|backend| {
+            if delete {
+                backend.delete_remote_tag(&name)
+            } else {
+                backend.push_tag(&name)
+            }
+        });
+
+        if let Some(state) = app.try_state::<Mutex<AppState>>() {
+            if let Ok(mut guard) = state.lock() {
+                guard.end_network(&repo_id);
+            }
+        }
+
+        let (report, error) = match outcome {
+            Ok(report) => (Some(report), None),
+            Err(e) => (None, Some(e)),
+        };
+        let _ = app.emit(
+            TAG_PUSH_EVENT,
+            TagPushEvent {
+                repo_id,
+                report,
+                error,
+            },
+        );
+    });
+
+    Ok(())
 }
 
 // ── Dépôt distant ───────────────────────────────────────────────────────────
