@@ -5,7 +5,7 @@
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
-  import { groupRefs } from "../graph/refs";
+  import { groupRefs, type RefBadge } from "../graph/refs";
   import {
     MESSAGE,
     dropIndex,
@@ -86,6 +86,45 @@
   let viewportH = $state(0);
   /** Largeur utile des rangées (barre de défilement exclue). */
   let tableW = $state(0);
+  let graphEl = $state<HTMLDivElement | null>(null);
+
+  /*
+    Pastille survolée dont le nom ne tient pas : on en montre une copie entière,
+    posée exactement sur elle et libre de déborder sur les colonnes voisines.
+
+    Une copie plutôt que la pastille elle-même élargie : la cellule et la
+    rangée rognent ce qui dépasse (`overflow: hidden`), et c'est ce qui garde le
+    tableau aligné — les lever, même le temps d'un survol, ferait déborder
+    toutes les autres. La copie vit donc au niveau du graph, au-dessus du canvas
+    et de l'en-tête, et ne capte pas la souris : c'est la vraie pastille, restée
+    dessous, qui décide quand elle disparaît.
+  */
+  let peek = $state<{
+    badge: RefBadge;
+    lane: string;
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  } | null>(null);
+
+  function onBadgeEnter(e: MouseEvent, badge: RefBadge, lane: string) {
+    const el = e.currentTarget as HTMLElement;
+    const name = el.querySelector<HTMLElement>(".bname");
+    const cell = el.closest<HTMLElement>(".cell");
+    if (!graphEl || !name || !cell) return;
+    const r = el.getBoundingClientRect();
+    const c = cell.getBoundingClientRect();
+    // Tronquée par son ellipse, ou coupée par le bord de sa colonne.
+    const hidden = name.scrollWidth > name.clientWidth || r.left < c.left || r.right > c.right;
+    if (!hidden) return;
+    const g = graphEl.getBoundingClientRect();
+    // Alignées à droite, les pastilles d'une colonne trop étroite débordent
+    // par la **gauche** : la copie repart alors du bord de la colonne, pour
+    // toujours s'étendre vers la droite, jamais hors du tableau.
+    const left = Math.max(r.left, c.left);
+    peek = { badge, lane, x: left - g.left, y: r.top - g.top, width: r.right - left, height: r.height };
+  }
   /** Onglet dont l'historique est actuellement affiché (détection de bascule). */
   let shownRepoId: string | null = null;
   /** Vrai le temps de rétablir le défilement après un changement d'onglet. */
@@ -502,6 +541,8 @@
     // ramenant la position dans les bornes du nouvel historique (souvent plus
     // court). L'enregistrer écraserait la position mémorisée de cet onglet.
     if (restoring) return;
+    // La copie est posée en coordonnées fixes : elle ne suivrait pas la rangée.
+    peek = null;
     scrollTop = scroller.scrollTop;
     repo.graphScrollTop = scrollTop;
     maybeLoadMore();
@@ -596,7 +637,7 @@
   });
 </script>
 
-<div class="graph">
+<div class="graph" bind:this={graphEl}>
   {#if !repo.repoInfo}
     <p class="placeholder">{t("common.noRepo")}</p>
   {:else if layout.rows.length === 0}
@@ -703,6 +744,19 @@
         {/each}
       </div>
     </div>
+
+    <!-- Copie entière de la pastille survolée, quand la sienne est tronquée. -->
+    {#if peek}
+      <span
+        class="ref peek"
+        class:head={peek.badge.isHead}
+        class:remote={!peek.badge.local}
+        style="--lane: {peek.lane}; left: {peek.x}px; top: {peek.y}px; min-width: {peek.width}px; height: {peek.height}px"
+        aria-hidden="true"
+      >
+        {@render badgeBody(peek.badge)}
+      </span>
+    {/if}
   {/if}
 </div>
 
@@ -762,44 +816,17 @@
         </span>
       {/if}
       {#each badges.slice(0, MAX_REFS) as b (b.key)}
+        <!-- svelte-ignore a11y_no_static_element_interactions -->
         <span
           class="ref"
           class:head={b.isHead}
           class:remote={!b.local}
           style="--lane: {lanes[row.color]}"
           title={b.title}
+          onmouseenter={(e) => onBadgeEnter(e, b, lanes[row.color])}
+          onmouseleave={() => (peek = null)}
         >
-          {#if b.isHead}<span class="mark" aria-hidden="true">✓</span>{/if}
-          <span class="bname">{b.name}</span>
-          {#if b.local}
-            <svg
-              class="ic"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linejoin="round"
-            >
-              <title>{t("graph.ref.local")}</title>
-              <rect x="2.25" y="3.25" width="11.5" height="8" rx="1.2" />
-              <path d="M5.5 13.75h5" stroke-linecap="round" />
-            </svg>
-          {/if}
-          {#if b.remotes.length > 0}
-            <svg
-              class="ic"
-              viewBox="0 0 16 16"
-              fill="none"
-              stroke="currentColor"
-              stroke-width="1.5"
-              stroke-linejoin="round"
-            >
-              <title>{b.remotes.join(", ")}</title>
-              <path
-                d="M4.6 11.6A2.2 2.2 0 0 1 4.9 7.3 3.3 3.3 0 0 1 11.2 7.6 2.1 2.1 0 0 1 11.4 11.6Z"
-              />
-            </svg>
-          {/if}
+          {@render badgeBody(b)}
         </span>
       {/each}
     </span>
@@ -813,6 +840,43 @@
     <span class="cell date">{formatDate(row.commit.timestamp)}</span>
   {:else}
     <span class="cell oid">{row.commit.shortOid}</span>
+  {/if}
+{/snippet}
+
+<!-- Contenu d'une pastille : la coche de HEAD, le nom, puis l'écran (« ici »)
+     et le nuage (« sur le serveur »). Partagé par la pastille et sa copie
+     entière au survol. -->
+{#snippet badgeBody(b: RefBadge)}
+  {#if b.isHead}<span class="mark" aria-hidden="true">✓</span>{/if}
+  <span class="bname">{b.name}</span>
+  {#if b.local}
+    <svg
+      class="ic"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linejoin="round"
+    >
+      <title>{t("graph.ref.local")}</title>
+      <rect x="2.25" y="3.25" width="11.5" height="8" rx="1.2" />
+      <path d="M5.5 13.75h5" stroke-linecap="round" />
+    </svg>
+  {/if}
+  {#if b.remotes.length > 0}
+    <svg
+      class="ic"
+      viewBox="0 0 16 16"
+      fill="none"
+      stroke="currentColor"
+      stroke-width="1.5"
+      stroke-linejoin="round"
+    >
+      <title>{b.remotes.join(", ")}</title>
+      <path
+        d="M4.6 11.6A2.2 2.2 0 0 1 4.9 7.3 3.3 3.3 0 0 1 11.2 7.6 2.1 2.1 0 0 1 11.4 11.6Z"
+      />
+    </svg>
   {/if}
 {/snippet}
 
@@ -1125,6 +1189,19 @@
   .ref.remote {
     border-style: dashed;
     opacity: 0.85;
+  }
+  /* Copie entière d'une pastille tronquée, au survol : aucune limite de
+     largeur, au-dessus du canvas (3) et de l'en-tête (4). Opaque, y compris pour
+     une référence distante — sinon le texte de la colonne voisine transparaîtrait
+     à travers. Elle ne capte pas la souris : la vraie pastille, dessous, reste
+     celle qu'on survole. */
+  .ref.peek {
+    position: absolute;
+    z-index: 6;
+    max-width: none;
+    opacity: 1;
+    box-shadow: 0 2px 8px var(--shadow-color);
+    pointer-events: none;
   }
   /* Résumé du prochain commit : un champ, mais qui se lit comme le texte des
      autres rangées — ni fond ni bordure tant qu'on ne le vise pas. Le liseré au
