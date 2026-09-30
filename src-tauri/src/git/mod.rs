@@ -127,6 +127,19 @@ pub trait GitBackend: Send {
     /// checkoutée telle quelle : la rattraper sur la distante serait un pull.
     fn checkout_remote_branch(&self, name: &str) -> Result<(), AppError>;
 
+    /// Crée une branche locale sur le commit `oid` — HEAD s'il est absent — et
+    /// bascule dessus, comme `git switch -c <nom> [<commit>]`.
+    ///
+    /// Le working directory est mis à jour **avant** que la branche existe,
+    /// stratégie SAFE : un commit de départ qui écraserait des modifications
+    /// locales fait tout échouer en [`AppError::CheckoutConflict`], sans laisser
+    /// de branche à moitié créée derrière lui. Depuis HEAD, rien ne bouge sur le
+    /// disque et les modifications en cours suivent sur la nouvelle branche.
+    ///
+    /// Aucun suivi n'est posé, même depuis une branche distante : le premier
+    /// push demandera où publier, par la barre d'upstream.
+    fn create_branch(&self, name: &str, oid: Option<&str>) -> Result<(), AppError>;
+
     /// Fusionne la branche locale `source` dans la branche locale `target`
     /// (glisser-déposer et menu contextuel de la section LOCAL).
     ///

@@ -310,12 +310,13 @@
   }
 
   // ── Menu d'une rangée ──────────────────────────────────────────────────────
-  // Une seule entrée, et c'est délibéré : le graph reste en lecture seule —
-  // aucun checkout, reset ni branche d'ici. Poser un tag n'écrit qu'une
-  // référence, sans toucher au working directory ni à l'historique.
+  // Deux entrées, et pas davantage : le graph reste en lecture seule — aucun
+  // checkout, reset ni revert d'ici. Poser un tag n'écrit qu'une référence ;
+  // créer une branche en écrit une et bascule dessus, ce qui passe par la barre
+  // de saisie et par la même bascule SAFE que partout ailleurs.
   let rowMenu = $state<{ x: number; y: number; commit: GraphCommit } | null>(null);
   const ROW_MENU_W = 240;
-  const ROW_MENU_H = 80;
+  const ROW_MENU_H = 112;
 
   /**
    * Clic droit sur une rangée de commit. La sélection ne change pas : le menu
@@ -331,6 +332,12 @@
       y: Math.max(8, Math.min(e.clientY, window.innerHeight - ROW_MENU_H - 8)),
       commit: row.commit,
     };
+  }
+
+  function createBranchHere() {
+    const commit = rowMenu?.commit;
+    rowMenu = null;
+    if (commit) repo.askBranch({ oid: commit.oid, from: commit.shortOid });
   }
 
   function createTagHere() {
@@ -1002,7 +1009,7 @@
   </div>
 {/if}
 
-<!-- Menu d'une rangée de commit : poser un tag, rien d'autre. -->
+<!-- Menu d'une rangée de commit : une branche ou un tag, rien d'autre. -->
 {#if rowMenu}
   <button
     class="ctx-overlay"
@@ -1019,6 +1026,21 @@
     role="menu"
   >
     <p class="ctx-head">{rowMenu.commit.shortOid} · {rowMenu.commit.summary}</p>
+    <button
+      class="ctx-item"
+      role="menuitem"
+      disabled={repo.checkingOut || repo.busy}
+      onclick={createBranchHere}
+    >
+      <svg class="menu-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+        <circle cx="4.5" cy="3.5" r="1.75" />
+        <circle cx="4.5" cy="12.5" r="1.75" />
+        <circle cx="11.5" cy="5" r="1.75" />
+        <path d="M4.5 5.25v5.5" />
+        <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" />
+      </svg>
+      <span>{t("graph.menu.createBranch")}</span>
+    </button>
     <button class="ctx-item" role="menuitem" onclick={createTagHere}>
       <svg class="menu-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
         <path d="M2 2.75a.75.75 0 0 1 .75-.75h4.4a1 1 0 0 1 .7.3l5.9 5.9a1 1 0 0 1 0 1.4l-4.4 4.4a1 1 0 0 1-1.4 0L2.3 8.1a1 1 0 0 1-.3-.7z" />

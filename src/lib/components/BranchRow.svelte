@@ -48,22 +48,28 @@
   }
 
   /**
-   * Clic droit sur une branche locale : propose de fusionner la branche
-   * **courante** dans celle-ci — le même sens que le dépôt, la ligne visée
-   * reçoit la fusion.
+   * Clic droit sur une branche locale : le menu de la branche — en partir pour
+   * une nouvelle, la tirer, et y fusionner la branche **courante**, le même
+   * sens que le dépôt : la ligne visée reçoit la fusion.
    *
-   * Rien à proposer sur la branche courante elle-même. La source se lit dans la
-   * liste des branches et non dans `repoInfo.branch`, qui nomme aussi une branche
-   * **non encore née** — sans référence, donc rien à fusionner ; un HEAD détaché
-   * tombe du même coup, aucune branche n'y portant `isHead`.
+   * La source se lit dans la liste des branches et non dans `repoInfo.branch`,
+   * qui nomme aussi une branche **non encore née** — sans référence, donc rien
+   * à fusionner. Sans branche courante (HEAD détaché, ou non né), la source
+   * vaut la cible : le menu s'ouvre quand même, sans ses entrées de fusion.
    *
    * Le menu natif est refusé dans tous les cas : une ligne de branche
    * n'appartient pas au webview.
    */
   function askMerge(e: MouseEvent, target: string) {
     e.preventDefault();
-    const source = repo.branches.find((b) => b.isHead)?.name;
-    if (source) branchMerge.ask(source, target, e.clientX, e.clientY);
+    const source = repo.branches.find((b) => b.isHead)?.name ?? target;
+    branchMerge.ask(source, target, e.clientX, e.clientY);
+  }
+
+  /** Clic droit sur une branche distante : seule la création en part. */
+  function askRemote(e: MouseEvent, name: string) {
+    e.preventDefault();
+    branchMerge.ask(name, name, e.clientX, e.clientY, false, true);
   }
 
   /**
@@ -112,7 +118,7 @@
     ondblclick={() => checkout(node.branch)}
     onkeydown={(e) => (e.key === "Enter" ? checkout(node.branch) : undefined)}
     onpointerdown={local ? (e) => branchMerge.startDrag(local.name, e) : undefined}
-    oncontextmenu={local ? (e) => askMerge(e, local.name) : undefined}
+    oncontextmenu={(e) => (local ? askMerge(e, local.name) : askRemote(e, node.branch.name))}
   >
     <span class="mark">{current ? "✓" : ""}</span>
     <svg class="ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5">

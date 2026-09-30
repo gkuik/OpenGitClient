@@ -549,6 +549,40 @@ impl GitBackend for Libgit2Backend {
         Ok(())
     }
 
+    fn create_branch(&self, name: &str, oid: Option<&str>) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let name = name.trim();
+        let refname = format!("refs/heads/{name}");
+        // Validé ici, comme pour un tag : l'erreur de libgit2 ne dit pas quel
+        // nom elle refuse, et un nom vide passerait pour une branche sans nom.
+        if name.is_empty() || !Reference::is_valid_name(&refname) {
+            return Err(AppError::InvalidBranchName(name.to_string()));
+        }
+        if repo.find_branch(name, BranchType::Local).is_ok() {
+            return Err(AppError::BranchExists(name.to_string()));
+        }
+        let commit = match oid {
+            Some(oid) => find_commit(&repo, oid)?,
+            // HEAD non né : aucun commit où poser la branche.
+            None => repo
+                .head()
+                .and_then(|h| h.peel_to_commit())
+                .map_err(|_| AppError::CommitNotFound)?,
+        };
+
+        // L'ordre compte, comme pour `checkout_remote_branch` : le working
+        // directory d'abord, la branche ensuite. Un conflit interrompt donc
+        // tout sans laisser de branche derrière lui. Depuis HEAD, l'arbre visé
+        // est celui déjà en place : SAFE n'y touche rien, et les modifications
+        // en cours suivent sur la nouvelle branche.
+        let mut opts = CheckoutBuilder::new();
+        repo.checkout_tree(commit.as_object(), Some(&mut opts))
+            .map_err(map_checkout_error)?;
+        repo.branch(name, &commit, false)?;
+        repo.set_head(&refname)?;
+        Ok(())
+    }
+
     fn merge_branches(
         &self,
         source: &str,
@@ -4000,6 +4034,111 @@ mod tests {
         ]);
 
         assert_eq!(kept, vec![workdir.join("src/main.rs")]);
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Création de branche ─────────────────────────────────────────────────
+
+    #[test]
+    fn create_branch_at_head_switches_and_keeps_local_changes() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let head = git.info().unwrap().head.unwrap();
+        fs::write(dir.join("a.txt"), "en cours\n").unwrap();
+
+        git.create_branch("feature/x", None).unwrap();
+
+        let info = git.info().unwrap();
+        assert_eq!(info.branch.as_deref(), Some("feature/x"));
+        assert_eq!(info.head.as_deref(), Some(head.as_str()));
+        // Les modifications en cours ont suivi.
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "en cours\n");
+        let created = git
+            .local_branches()
+            .unwrap()
+            .into_iter()
+            .find(|b| b.name == "feature/x")
+            .unwrap();
+        assert!(created.upstream.is_none(), "aucun suivi n'est posé");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_branch_from_a_commit_checks_it_out() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+
+        git.create_branch("hotfix", Some(&first)).unwrap();
+
+        let info = git.info().unwrap();
+        assert_eq!(info.branch.as_deref(), Some("hotfix"));
+        assert_eq!(info.head.as_deref(), Some(first.as_str()));
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "1\n");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_branch_that_would_overwrite_changes_creates_nothing() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+        let before = git.info().unwrap();
+        fs::write(dir.join("a.txt"), "local\n").unwrap();
+
+        assert!(matches!(
+            git.create_branch("hotfix", Some(&first)),
+            Err(AppError::CheckoutConflict)
+        ));
+        assert!(git.local_branches().unwrap().iter().all(|b| b.name != "hotfix"));
+        assert_eq!(git.info().unwrap().branch, before.branch);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_branch_refuses_a_duplicate_or_an_invalid_name() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let current = git.info().unwrap().branch.unwrap();
+
+        assert!(matches!(
+            git.create_branch(&current, None),
+            Err(AppError::BranchExists(name)) if name == current
+        ));
+        assert!(matches!(
+            git.create_branch("bad name", None),
+            Err(AppError::InvalidBranchName(_))
+        ));
+        assert!(matches!(
+            git.create_branch("", None),
+            Err(AppError::InvalidBranchName(_))
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn create_branch_on_a_detached_head_reattaches_it() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &first, None).unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+        git.checkout_tag("v1").unwrap();
+        assert!(git.info().unwrap().is_detached);
+
+        git.create_branch("from-v1", None).unwrap();
+
+        let info = git.info().unwrap();
+        assert!(!info.is_detached);
+        assert_eq!(info.branch.as_deref(), Some("from-v1"));
+        assert_eq!(info.head.as_deref(), Some(first.as_str()));
+
         fs::remove_dir_all(&dir).ok();
     }
 

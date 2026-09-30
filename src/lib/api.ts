@@ -128,6 +128,12 @@ export const api = {
    */
   checkoutRemoteBranch: (repoId: string, name: string) =>
     call<RepoInfo>("checkout_remote_branch", { repoId, name }),
+  /**
+   * Crée une branche sur `oid` (HEAD si `null`) et bascule dessus. Rien n'est
+   * créé si la bascule écraserait des modifications locales.
+   */
+  createBranch: (repoId: string, name: string, oid: string | null) =>
+    call<RepoInfo>("create_branch", { repoId, name, oid }),
 
   // ── Tags ─────────────────────────────────────────────────────────────────
   listTags: (repoId: string) => call<TagEntry[]>("list_tags", { repoId }),

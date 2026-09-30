@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -302,6 +302,37 @@ Remote rows behave like local ones: click selects the tip commit — which lands
 
 `RepoStore.checkoutRemoteBranch` has no "already on this branch" guard, unlike its local twin: only the backend knows the local name, and re-checking out costs nothing. Both share `runCheckout()`, since what a checkout invalidates doesn't depend on where the branch came from — and `refs/remotes/**` is untouched, so the REMOTE section is not reloaded.
 
+### Creating a branch: a name, a start, and a switch
+
+`create_branch(name, oid?)` is `git switch -c <name> [<commit>]`: HEAD when
+`oid` is absent. Three places open it, all through **one input bar**
+(`BranchPrompt.svelte`, `RepoStore.branchPrompt`) that covers `RepoBar` exactly
+as the upstream bar does — they share the spot, so opening one closes the other:
+
+- the **Branch** button of the repository bar — always from HEAD (the bar says
+  from which branch, or `HEAD` when detached; it is greyed on an unborn HEAD,
+  which has no commit to start from);
+- **Create branch here…** in a commit row's context menu in the graph;
+- **Create branch from here…** in a branch's context menu, local or remote.
+
+What the backend does, and why in that order:
+
+- **The worktree is checked out before the branch exists** (SAFE), the rule of
+  `checkout_remote_branch`: a start point that would overwrite local changes
+  fails as `CheckoutConflict` and leaves **no branch behind**. From HEAD the
+  target tree is the one in place, so nothing moves on disk and uncommitted
+  work follows onto the new branch. From a detached HEAD it reattaches it.
+- **No upstream is ever set**, not even from a remote branch (unlike Git's
+  `autoSetupMerge`): a branch named differently from what it tracks would
+  push somewhere unexpected. Its first push asks, through the upstream bar.
+- **Names are checked first** (`Reference::is_valid_name` on `refs/heads/…`),
+  giving `InvalidBranchName` / `BranchExists` with the name — libgit2's own
+  error doesn't say which. The bar greys Submit on an empty or spaced name and
+  **stays open on failure**, so a taken name is fixed in place.
+
+The frontend side is `runCheckout` — the same reload as any switch — which now
+returns whether it succeeded, so the bar knows when to close.
+
 ### Tags: a name on a commit, and nothing moves it
 
 `TagEntry.oid` is the **commit**, never the tag object: an annotated tag is
@@ -418,8 +449,12 @@ the merge entries: it runs `repo.pull(mode, branch)` on the clicked branch with
 the Pull button's mode (except *Fetch every remote*, which is not a pull and
 falls back to fast-forward-or-merge). Right-clicking the *current* branch opens
 the menu too (it used to be refused as a self-merge): Pull alone, the merge
-entries being dropped when source and target coincide. A drop keeps the early
-return and never shows Pull.
+entries being dropped when source and target coincide — and with no current
+branch at all (detached or unborn HEAD), the source falls back to the target,
+so the menu still opens without its merge entries. A drop keeps the early
+return and never shows Pull. **Create branch from here…** sits on top of every
+right-click menu, local rows and remote rows alike; a remote row's menu holds
+nothing else (`MergeRequest.remote`), since neither pull nor merge applies to it.
 
 **Pulling a branch that is not checked out** is `pull(Some(branch), mode)`, and
 it borrows `merge_branches`' rule rather than the HEAD path's: the branch's own
@@ -821,7 +856,7 @@ The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Te
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
-**The repository bar** (`RepoBar`, under the tab bar and over the three columns) holds Pull / Push / Fetch, all three working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters. It is a `1fr auto 1fr` grid — repository name, then the buttons, then the report of the last operation — so the buttons sit at the middle of the *window* whatever the length of the name or of the message; `justify-content` on one row would shift them as soon as either grew. It renders only for a repository tab: the welcome screen, the new-tab page and Settings have no bar, which is why it lives in a `.repo` wrapper inside `App.svelte` rather than as a third row of `.app` — a row declared but empty would move those three views down.
+**The repository bar** (`RepoBar`, under the tab bar and over the three columns) holds Pull / Push / Fetch, then — past a thin divider, because it is local — **Branch**. The three remote ones are all working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters. It is a `1fr auto 1fr` grid — repository name, then the buttons, then the report of the last operation — so the buttons sit at the middle of the *window* whatever the length of the name or of the message; `justify-content` on one row would shift them as soon as either grew. It renders only for a repository tab: the welcome screen, the new-tab page and Settings have no bar, which is why it lives in a `.repo` wrapper inside `App.svelte` rather than as a third row of `.app` — a row declared but empty would move those three views down.
 
 **A remote operation is visible from start to end.** `RepoStore.runningOp` names the one that runs (the backend allows one per repository), so only its button stays lit — accent background and outline, still disabled — with its icon moving the way it acts: Fetch spins, Pull bobs down, Push bobs up; the other two just grey out. A 2px indeterminate bar slides just under the bar's bottom border while anything remote (or a merge) runs. On completion, `finish()` sets `flash` — the button's icon is replaced for `FLASH_MS` (1.5 s) by a check (done, or nothing to do), a `!` (needs a look: conflict, divergence, credentials to enter) or a cross (failed), its frame tinted to match — and the report on the right takes the tone of the outcome (`opTone`: green when something moved, grey when there was nothing to do, amber when it needs attention; failures still go to the error banner). A tab carries a spinner while its repository runs a remote operation, and **a coloured dot when one finished while the tab was hidden** (`unseenOutcome`, set by `TabsStore` when it routes the event to a tab that isn't active, cleared by `activate()`). `prefers-reduced-motion` keeps the colours and drops the motion.
 
@@ -838,10 +873,11 @@ The mode is a global preference in `prefs.json`, not per-repository. The menu li
 right-clicked — fast-forwarding without a checkout when it can, switching to the
 target when it must, and leaving a conflict in the worktree for the same
 resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
-(`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branch *creation*, renaming and deletion are
-still nowhere, and nothing rebases.
+(`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branches are **created** (see
+*Creating a branch* above); renaming and deletion are still nowhere, and nothing
+rebases.
 
-The graph is **read-only** but for one entry: no checkout-from-commit, branch creation or reset from it. The exception is a commit row's context menu, whose only entry creates a tag — it writes one ref, and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
+The graph is **read-only** but for two entries: no checkout-from-commit, reset or revert from it. The exception is a commit row's context menu, whose two entries create a branch there (through the branch bar, then the same SAFE switch as anywhere else) or a tag — a tag writes one ref and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 

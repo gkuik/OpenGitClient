@@ -320,6 +320,13 @@ export class RepoStore {
    * backend est la même pour les quatre, d'où sa place dans `busyRemote`.
    */
   pushingTag = $state(false);
+  /**
+   * Création d'une branche demandée : non nul = la barre de saisie recouvre
+   * la barre du dépôt. `oid` nul = HEAD (le bouton Branch) ; sinon le commit
+   * ou la tête de branche d'où partir (menus du graph et des branches).
+   * `from` est ce que la barre affiche pour dire d'où part la branche.
+   */
+  branchPrompt = $state<{ oid: string | null; from: string } | null>(null);
   checkingOut = $state(false);
   /**
    * Fusion de branche à branche en cours. Distinct de `checkingOut` : elle en
@@ -906,8 +913,8 @@ export class RepoStore {
    * Corps commun aux deux bascules : ce qu'un checkout invalide est le même,
    * qu'il vienne d'une branche locale ou distante.
    */
-  private async runCheckout(call: () => Promise<RepoInfo>) {
-    if (this.checkingOut || this.busy) return;
+  private async runCheckout(call: () => Promise<RepoInfo>): Promise<boolean> {
+    if (this.checkingOut || this.busy) return false;
     this.checkingOut = true;
     this.error = null;
     try {
@@ -921,11 +928,53 @@ export class RepoStore {
       // Les commits ne changent pas, mais les pastilles se déplacent — et une
       // bascule distante en ajoute une, celle de la branche locale créée.
       await this.loadGraph();
+      return true;
     } catch (e) {
       this.error = e as AppError;
+      return false;
     } finally {
       this.checkingOut = false;
     }
+  }
+
+  // ── Création de branche ─────────────────────────────────────────────────────
+
+  /**
+   * Ouvre la barre de création d'une branche. Sans argument, elle part de
+   * HEAD — le bouton Branch de la barre du dépôt ; les menus du graph et des
+   * branches passent le commit d'où partir et le nom à afficher.
+   *
+   * Elle occupe la place de la barre d'upstream : les deux ne peuvent pas être
+   * ouvertes ensemble.
+   */
+  askBranch(start?: { oid: string; from: string }) {
+    this.upstreamPrompt = null;
+    this.branchPrompt = start ?? {
+      oid: null,
+      from: this.repoInfo?.branch ?? "HEAD",
+    };
+  }
+
+  cancelBranch() {
+    this.branchPrompt = null;
+  }
+
+  /**
+   * Crée la branche et bascule dessus. Même rechargement qu'une bascule, d'où
+   * `runCheckout`. En cas d'échec — nom pris, nom invalide, modifications qui
+   * seraient écrasées — la barre reste ouverte : le nom se corrige sur place,
+   * et le bandeau dit pourquoi.
+   */
+  async createBranch(name: string) {
+    const prompt = this.branchPrompt;
+    if (!prompt) return;
+    const branch = name.trim();
+    const ok = await this.runCheckout(() =>
+      api.createBranch(this.repoId, branch, prompt.oid),
+    );
+    if (!ok) return;
+    this.branchPrompt = null;
+    this.setOpStatus(t("op.branch.created", { branch }), "ok");
   }
 
   // ── Tags ────────────────────────────────────────────────────────────────────
@@ -1139,6 +1188,7 @@ export class RepoStore {
         /* le push dira ce qui manque */
       }
       if (remotes.length > 0) {
+        this.branchPrompt = null;
         this.upstreamPrompt = { branch: head.name, remotes, mode };
         return;
       }
