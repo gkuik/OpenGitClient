@@ -2,11 +2,12 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { font, FONT_SIZES } from "../font.svelte";
+  import { graphLines, GRAPH_LINE_STYLES } from "../graphLines.svelte";
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import RichText from "./RichText.svelte";
-  import type { AppError, Profile, ThemeMode } from "../types";
+  import type { AppError, GraphLineStyle, Profile, ThemeMode } from "../types";
 
   /** Les trois thèmes proposés, dans l'ordre d'affichage du segmenté. */
   const THEMES: { mode: ThemeMode; label: string }[] = $derived([
@@ -14,6 +15,14 @@
     { mode: "dark", label: t("settings.theme.dark") },
     { mode: "system", label: t("settings.theme.system") },
   ]);
+
+  /** Libellés des tracés du graph, dans l'ordre du segmenté. */
+  const LINE_LABELS = $derived<Record<GraphLineStyle, string>>({
+    rounded: t("settings.graph.rounded"),
+    sharp: t("settings.graph.sharp"),
+    curve: t("settings.graph.curve"),
+    diagonal: t("settings.graph.diagonal"),
+  });
 
   /** Profil en cours d'édition. `id` à null = création. */
   type Draft = { id: string | null; label: string; name: string; email: string };
@@ -254,6 +263,41 @@
             onclick={() => font.set(size)}
           >
             {t("settings.font.size", { size })}
+          </button>
+        {/each}
+      </div>
+    </section>
+
+    <!-- Tracé des lignes du graph. Chaque bouton montre son coude en petit :
+         le nom seul ne dirait pas grand-chose de la différence. -->
+    <section>
+      <h2>{t("settings.graph")}</h2>
+      <p class="intro">
+        <RichText
+          key="settings.graph.intro"
+          params={{ rounded: { text: t("settings.graph.rounded"), tag: "strong" } }}
+        />
+      </p>
+
+      <div class="seg" role="group" aria-label={t("settings.graph.aria")}>
+        {#each GRAPH_LINE_STYLES as style (style)}
+          <button
+            class:active={graphLines.style === style}
+            aria-pressed={graphLines.style === style}
+            onclick={() => graphLines.set(style)}
+          >
+            <svg class="line-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              {#if style === "rounded"}
+                <path d="M3 2v7.5a3 3 0 0 0 3 3h7" />
+              {:else if style === "sharp"}
+                <path d="M3 2v10.5h10" />
+              {:else if style === "curve"}
+                <path d="M3 2c0 7 10 5 10 12" />
+              {:else}
+                <path d="M3 2v4l10 8" />
+              {/if}
+            </svg>
+            {LINE_LABELS[style]}
           </button>
         {/each}
       </div>
@@ -543,6 +587,17 @@
   }
   .seg button + button {
     border-left: 1px solid var(--border);
+  }
+  /* Tracés du graph : le coude dessiné devant le nom. */
+  .seg button:has(.line-ic) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .line-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
   }
   .seg button:hover:not(.active) {
     color: var(--text);

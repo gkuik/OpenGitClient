@@ -394,6 +394,29 @@ pub enum ThemeMode {
     Dark,
 }
 
+/// Tracé des lignes du graph quand elles changent de colonne (merge, départ
+/// ou retour d'une branche). Préférence globale, persistée dans `prefs.json`.
+///
+/// Une énumération, mais qui ne peut pas faire échouer la lecture du fichier :
+/// une valeur inconnue — un style retiré par une version ultérieure, ou tapé à
+/// la main — retombe sur `Rounded` grâce à `#[serde(other)]`, au lieu
+/// d'emporter le thème et le reste des préférences avec elle.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum GraphLineStyle {
+    /// Angle droit vif.
+    Sharp,
+    /// Courbe en S qui traverse la rangée en biais.
+    Curve,
+    /// Segment droit en biais, façon `git log --graph`.
+    Diagonal,
+    /// Angle droit, arrondi dans l'angle — le tracé par défaut, façon GitKraken.
+    /// En dernier parce que `#[serde(other)]` l'exige.
+    #[default]
+    #[serde(other)]
+    Rounded,
+}
+
 /// Taille du corps de texte, en **points** — l'unité des recommandations
 /// d'Apple, et celle du pixel CSS à l'échelle 1× de macOS. 13 pt est la taille
 /// du texte système sur macOS, donc le défaut ici.
@@ -764,6 +787,19 @@ pub struct PullRequestEvent {
     pub repo_id: String,
     pub report: Option<PullRequestReport>,
     pub error: Option<AppError>,
+}
+
+#[cfg(test)]
+mod graph_line_style_tests {
+    use super::GraphLineStyle;
+
+    #[test]
+    fn unknown_style_falls_back_to_rounded() {
+        let known: GraphLineStyle = serde_json::from_str("\"diagonal\"").unwrap();
+        assert_eq!(known, GraphLineStyle::Diagonal);
+        let unknown: GraphLineStyle = serde_json::from_str("\"zigzag\"").unwrap();
+        assert_eq!(unknown, GraphLineStyle::Rounded);
+    }
 }
 
 #[cfg(test)]

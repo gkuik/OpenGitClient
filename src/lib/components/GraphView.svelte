@@ -14,6 +14,7 @@
     type PlacedColumn,
   } from "../graph/columns";
   import { graphColumns } from "../graphColumns.svelte";
+  import { graphLines } from "../graphLines.svelte";
   import { bucketLabel, bucketStarts, type TimeBucket } from "../graph/timeBuckets";
   import type { TreeCounts } from "../tree";
 
@@ -407,9 +408,10 @@
   const ELBOW_R = 8;
 
   /*
-    Passage d'une colonne à l'autre : à angle droit, avec un arrondi dans
-    l'angle — comme GitKraken, plutôt qu'une courbe en S qui traversait la
-    rangée en biais. Le sens du coude dépend du segment :
+    Passage d'une colonne à l'autre, dans le tracé choisi dans les paramètres
+    (`graphLines`) : angle droit arrondi (par défaut, comme GitKraken), angle
+    droit vif, courbe en S, ou diagonale droite. Pour les deux angles droits, le
+    sens du coude dépend du segment :
 
     - `vertical-first` : la ligne descend dans sa colonne, puis tourne pour
       rejoindre le point à l'horizontale — une branche qui **arrive** sur le
@@ -430,11 +432,18 @@
     y2: number,
     turn: "vertical-first" | "horizontal-first",
   ) {
-    if (x1 === x2) {
+    const style = graphLines.style;
+    if (x1 === x2 || style === "diagonal") {
       ctx.lineTo(x2, y2);
       return;
     }
-    const r = Math.min(ELBOW_R, Math.abs(x2 - x1), Math.abs(y2 - y1));
+    if (style === "curve") {
+      const my = (y1 + y2) / 2;
+      ctx.bezierCurveTo(x1, my, x2, my, x2, y2);
+      return;
+    }
+    // Angle droit : arrondi, ou vif — un rayon nul, que `arcTo` trace en angle.
+    const r = style === "sharp" ? 0 : Math.min(ELBOW_R, Math.abs(x2 - x1), Math.abs(y2 - y1));
     if (turn === "vertical-first") ctx.arcTo(x1, y2, x2, y2, r);
     else ctx.arcTo(x2, y1, x2, y2, r);
     ctx.lineTo(x2, y2);

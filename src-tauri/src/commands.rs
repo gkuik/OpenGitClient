@@ -19,7 +19,7 @@ use crate::dto::{
     FileSource, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
-    GraphColumns,
+    GraphColumns, GraphLineStyle,
     ThemeMode,
 };
 use crate::error::AppError;
@@ -458,6 +458,21 @@ pub fn set_sidebar_widths(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
     lock(&state)?.set_sidebar_widths(widths)
+}
+
+/// Tracé des lignes du graph (préférence globale, persistée). Comme la taille
+/// du texte, rien à faire côté natif : c'est le canvas qui le lit.
+#[tauri::command]
+pub fn get_graph_lines(state: State<'_, Mutex<AppState>>) -> Result<GraphLineStyle, AppError> {
+    Ok(lock(&state)?.graph_lines())
+}
+
+#[tauri::command]
+pub fn set_graph_lines(
+    style: GraphLineStyle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.set_graph_lines(style)
 }
 
 /// Disposition du tableau du graph (préférence globale, persistée). Le backend
