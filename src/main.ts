@@ -4,6 +4,7 @@ import App from "./App.svelte";
 import { font } from "./lib/font.svelte";
 import { i18n } from "./lib/i18n.svelte";
 import { graphColumns } from "./lib/graphColumns.svelte";
+import { graphLines } from "./lib/graphLines.svelte";
 import { layout } from "./lib/layout.svelte";
 import { theme } from "./lib/theme.svelte";
 
@@ -21,6 +22,8 @@ font.init();
 layout.init();
 // Disposition du tableau du graph : défaut d'abord, préférence ensuite.
 graphColumns.init();
+// Tracé des lignes du graph : même chose.
+graphLines.init();
 
 const app = mount(App, {
   target: document.getElementById("app")!,

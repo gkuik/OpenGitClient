@@ -31,6 +31,7 @@ import type {
   GraphColumnsDto,
   StashEntry,
   ThemeMode,
+  GraphLineStyle,
 } from "./types";
 
 // ── Point d'accès UNIQUE au backend Rust ──────────────────────────────────
@@ -210,6 +211,12 @@ export const api = {
    * passage l'apparence de la fenêtre native, que le webview ne peut pas peindre.
    */
   getTheme: () => call<ThemeMode>("get_theme"),
+  /** Tracé des lignes du graph (préférence globale, persistée). */
+  getGraphLines: () => call<GraphLineStyle>("get_graph_lines"),
+  setGraphLines: (style: GraphLineStyle) => call<void>("set_graph_lines", { style }),
+  /** Arrondi des tracés arrondi et courbe, en pourcentage (0 → 100). */
+  getGraphRoundness: () => call<number>("get_graph_roundness"),
+  setGraphRoundness: (roundness: number) => call<void>("set_graph_roundness", { roundness }),
   setTheme: (mode: ThemeMode) => call<void>("set_theme", { theme: mode }),
 
   /**

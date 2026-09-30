@@ -247,6 +247,13 @@ export type PushMode = "normal" | "forceWithLease" | "force";
 export type ThemeMode = "system" | "light" | "dark";
 
 /**
+ * Tracé des lignes du graph quand elles changent de colonne (miroir de
+ * `GraphLineStyle`, `dto.rs`). Une valeur inconnue côté Rust retombe sur
+ * `"rounded"`.
+ */
+export type GraphLineStyle = "rounded" | "sharp" | "curve" | "diagonal";
+
+/**
  * Largeurs des deux colonnes latérales, en **rem** — l'unité de toutes les
  * longueurs de l'interface, donc solidaires de la taille du texte. Le
  * glissement se mesure en pixels : c'est `layout.svelte.ts` qui convertit.

@@ -2,11 +2,17 @@
   import { onMount } from "svelte";
   import { api } from "../api";
   import { font, FONT_SIZES } from "../font.svelte";
+  import {
+    graphLines,
+    GRAPH_LINE_STYLES,
+    GRAPH_ROUNDNESS_DEFAULT,
+    hasRoundness,
+  } from "../graphLines.svelte";
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import RichText from "./RichText.svelte";
-  import type { AppError, Profile, ThemeMode } from "../types";
+  import type { AppError, GraphLineStyle, Profile, ThemeMode } from "../types";
 
   /** Les trois thèmes proposés, dans l'ordre d'affichage du segmenté. */
   const THEMES: { mode: ThemeMode; label: string }[] = $derived([
@@ -14,6 +20,14 @@
     { mode: "dark", label: t("settings.theme.dark") },
     { mode: "system", label: t("settings.theme.system") },
   ]);
+
+  /** Libellés des tracés du graph, dans l'ordre du segmenté. */
+  const LINE_LABELS = $derived<Record<GraphLineStyle, string>>({
+    rounded: t("settings.graph.rounded"),
+    sharp: t("settings.graph.sharp"),
+    curve: t("settings.graph.curve"),
+    diagonal: t("settings.graph.diagonal"),
+  });
 
   /** Profil en cours d'édition. `id` à null = création. */
   type Draft = { id: string | null; label: string; name: string; email: string };
@@ -256,6 +270,69 @@
             {t("settings.font.size", { size })}
           </button>
         {/each}
+      </div>
+    </section>
+
+    <!-- Tracé des lignes du graph. Chaque bouton montre son coude en petit :
+         le nom seul ne dirait pas grand-chose de la différence. -->
+    <section>
+      <h2>{t("settings.graph")}</h2>
+      <p class="intro">
+        <RichText
+          key="settings.graph.intro"
+          params={{ rounded: { text: t("settings.graph.rounded"), tag: "strong" } }}
+        />
+      </p>
+
+      <div class="seg" role="group" aria-label={t("settings.graph.aria")}>
+        {#each GRAPH_LINE_STYLES as style (style)}
+          <button
+            class:active={graphLines.style === style}
+            aria-pressed={graphLines.style === style}
+            onclick={() => graphLines.set(style)}
+          >
+            <svg class="line-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+              {#if style === "rounded"}
+                <path d="M3 2v7.5a3 3 0 0 0 3 3h7" />
+              {:else if style === "sharp"}
+                <path d="M3 2v10.5h10" />
+              {:else if style === "curve"}
+                <path d="M3 2c0 7 10 5 10 12" />
+              {:else}
+                <path d="M3 2v4l10 8" />
+              {/if}
+            </svg>
+            {LINE_LABELS[style]}
+          </button>
+        {/each}
+      </div>
+
+      <!-- Arrondi : grisé pour les deux tracés qui n'en ont pas, plutôt que
+           masqué — sa place ne saute pas d'un choix à l'autre. Un `div` et non
+           un `label` : il porte aussi le bouton de remise à zéro, qu'un label
+           ne doit pas contenir à côté de son champ. -->
+      <div class="slider" class:off={!hasRoundness(graphLines.style)}>
+        <span>{t("settings.graph.roundness")}</span>
+        <input
+          aria-label={t("settings.graph.roundness")}
+          type="range"
+          min="0"
+          max="100"
+          step="5"
+          value={graphLines.roundness}
+          disabled={!hasRoundness(graphLines.style)}
+          title={hasRoundness(graphLines.style) ? undefined : t("settings.graph.roundness.hint")}
+          oninput={(e) => graphLines.setRoundness(Number(e.currentTarget.value))}
+        />
+        <span class="value">{graphLines.roundness} %</span>
+        <button
+          class="ghost"
+          disabled={!hasRoundness(graphLines.style) || graphLines.roundness === GRAPH_ROUNDNESS_DEFAULT}
+          title={t("settings.graph.roundness.reset.hint", { n: GRAPH_ROUNDNESS_DEFAULT })}
+          onclick={() => graphLines.resetRoundness()}
+        >
+          {t("settings.graph.roundness.reset")}
+        </button>
       </div>
     </section>
 
@@ -544,6 +621,48 @@
   .seg button + button {
     border-left: 1px solid var(--border);
   }
+  /* Arrondi des tracés du graph. */
+  /* Le curseur, sa valeur et sa remise à zéro, sur une ligne. La règle `input`
+     plus bas donne bordure et rembourrage aux champs : rien de tout ça ne va à
+     un curseur. */
+  .slider {
+    display: flex;
+    flex-direction: row;
+    align-items: center;
+    gap: 0.75rem;
+    margin: -0.4rem 0 1.2rem;
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .slider input {
+    width: 14rem;
+    padding: 0;
+    border: none;
+    background: none;
+    accent-color: var(--accent);
+  }
+  .slider .value {
+    min-width: 3rem;
+    color: var(--text-dim);
+    font-variant-numeric: tabular-nums;
+  }
+  .slider.off {
+    color: var(--text-faint);
+  }
+  .slider.off .value {
+    color: var(--text-faint);
+  }
+  /* Tracés du graph : le coude dessiné devant le nom. */
+  .seg button:has(.line-ic) {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+  .line-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
   .seg button:hover:not(.active) {
     color: var(--text);
   }
@@ -686,6 +805,11 @@
   }
   .ghost:hover:not(:disabled) {
     color: var(--text);
+  }
+  /* Déjà au défaut, ou tracé sans arrondi : rien à remettre à zéro. */
+  .slider .ghost:disabled {
+    opacity: 0.45;
+    cursor: default;
   }
   .primary {
     background: var(--accent);

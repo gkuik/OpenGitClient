@@ -14,6 +14,7 @@
     type PlacedColumn,
   } from "../graph/columns";
   import { graphColumns } from "../graphColumns.svelte";
+  import { graphLines } from "../graphLines.svelte";
   import { bucketLabel, bucketStarts, type TimeBucket } from "../graph/timeBuckets";
   import type { TreeCounts } from "../tree";
 
@@ -28,7 +29,7 @@
   // inchangée tant qu'on ne touche pas au réglage. Le canvas se redessine tout
   // seul, `draw` lisant ces dérivées.
   const ROW_H = $derived(Math.round(font.rootPx * 1.625));
-  const LANE_W = 14;
+  const LANE_W = 20;
   const DOT_R = 5;
   /** Épaisseur des lignes de lanes, et du cercle WIP. */
   const LINE_W = 1.6;
@@ -403,20 +404,53 @@
     return PAD_X + lane * LANE_W + LANE_W / 2;
   }
 
-  /** Courbe en S entre deux colonnes ; ligne droite si la colonne ne change pas. */
+  /*
+    Passage d'une colonne à l'autre, dans le tracé choisi dans les paramètres
+    (`graphLines`) : angle droit arrondi (par défaut, comme GitKraken), angle
+    droit vif, courbe en S, ou diagonale droite. Pour les deux angles droits, le
+    sens du coude dépend du segment :
+
+    - `vertical-first` : la ligne descend dans sa colonne, puis tourne pour
+      rejoindre le point à l'horizontale — une branche qui **arrive** sur le
+      commit dont elle part (segment `in`) ;
+    - `horizontal-first` : la ligne part du point à l'horizontale jusqu'à sa
+      colonne, puis descend — un merge vers son second parent, ou une branche
+      qui **repart** (segment `out`).
+
+    Les horizontales sont donc toujours à la hauteur d'un point : c'est là
+    qu'une rangée n'a qu'un seul nœud, et qu'aucun autre ne peut se trouver sur
+    le trajet. Même colonne : ligne droite.
+  */
   function link(
     ctx: CanvasRenderingContext2D,
     x1: number,
     y1: number,
     x2: number,
     y2: number,
+    turn: "vertical-first" | "horizontal-first",
   ) {
-    if (x1 === x2) {
+    const style = graphLines.style;
+    if (x1 === x2 || style === "diagonal") {
       ctx.lineTo(x2, y2);
       return;
     }
-    const my = (y1 + y2) / 2;
-    ctx.bezierCurveTo(x1, my, x2, my, x2, y2);
+    // L'arrondi choisi dans les paramètres, de 0 à 1.
+    const k = graphLines.roundness / 100;
+    if (style === "curve") {
+      // Tension : les poignées partent des extrémités vers l'autre bout, d'une
+      // fraction `k` de la hauteur. 0 : quasi droite ; ½ : le S d'origine ; 1 :
+      // un S qui ne quitte sa colonne qu'au milieu.
+      const dy = y2 - y1;
+      ctx.bezierCurveTo(x1, y1 + k * dy, x2, y2 - k * dy, x2, y2);
+      return;
+    }
+    // Angle droit : l'arrondi va du vif (0) au quart de cercle (1), borné par
+    // le plus court des deux côtés du coude. Vif : un rayon nul, que `arcTo`
+    // trace en angle.
+    const r = style === "sharp" ? 0 : k * Math.min(Math.abs(x2 - x1), Math.abs(y2 - y1));
+    if (turn === "vertical-first") ctx.arcTo(x1, y2, x2, y2, r);
+    else ctx.arcTo(x2, y1, x2, y2, r);
+    ctx.lineTo(x2, y2);
   }
 
   /**
@@ -481,11 +515,11 @@
         } else if (edge.kind === "in") {
           // Descend du haut de la rangée jusqu'au point du commit.
           ctx.moveTo(x1, top);
-          link(ctx, x1, top, x2, mid);
+          link(ctx, x1, top, x2, mid, "vertical-first");
         } else {
           // Repart du point vers la rangée suivante.
           ctx.moveTo(x1, outY);
-          link(ctx, x1, outY, x2, top + ROW_H);
+          link(ctx, x1, outY, x2, top + ROW_H, "horizontal-first");
         }
         ctx.stroke();
         if (edge.dashed) ctx.setLineDash([]);

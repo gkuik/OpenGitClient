@@ -278,6 +278,18 @@ export const en = {
   "settings.font.intro":
     "The body text size, in points — Apple's unit. {default} is the size of the macOS system text, and OpenGitClient's default. The rest of the interface is expressed in proportion: headings, secondary mentions and spacings follow the text.",
   "settings.font.size": "{size} pt",
+  "settings.graph": "Graph",
+  "settings.graph.intro":
+    "How a line is drawn when it changes column — a merge, or a branch leaving and joining another. The default is {rounded}.",
+  "settings.graph.aria": "Graph line style",
+  "settings.graph.rounded": "Rounded corners",
+  "settings.graph.sharp": "Sharp corners",
+  "settings.graph.curve": "Curves",
+  "settings.graph.diagonal": "Diagonals",
+  "settings.graph.roundness": "Roundness",
+  "settings.graph.roundness.hint": "Only for rounded corners and curves",
+  "settings.graph.roundness.reset": "Reset",
+  "settings.graph.roundness.reset.hint": "Back to the default roundness, {n} %",
   "settings.profiles": "Profiles",
   "settings.profiles.intro":
     "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right. {note}, their identity living in their own configuration.",

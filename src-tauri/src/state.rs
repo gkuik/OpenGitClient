@@ -13,8 +13,9 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    GraphColumns, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths, ThemeMode,
-    FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN,
+    GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
+    ThemeMode, FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT,
+    GRAPH_ROUNDNESS_MAX,
 };
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
@@ -264,6 +265,29 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Tracé des lignes du graph.
+    pub fn graph_lines(&self) -> GraphLineStyle {
+        self.prefs.graph_lines
+    }
+
+    /// Change le tracé des lignes du graph et le persiste.
+    pub fn set_graph_lines(&mut self, style: GraphLineStyle) -> Result<(), AppError> {
+        self.prefs.graph_lines = style;
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
+    /// Arrondi du tracé du graph, en pourcentage — ramené dans ses bornes à la
+    /// lecture comme à l'écriture, le fichier pouvant avoir été édité à la main.
+    pub fn graph_roundness(&self) -> u8 {
+        self.prefs.graph_roundness.min(GRAPH_ROUNDNESS_MAX)
+    }
+
+    /// Change l'arrondi du tracé du graph et le persiste.
+    pub fn set_graph_roundness(&mut self, roundness: u8) -> Result<(), AppError> {
+        self.prefs.graph_roundness = roundness.min(GRAPH_ROUNDNESS_MAX);
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -376,6 +400,10 @@ struct Prefs {
     sidebars: SidebarWidths,
     /// Disposition du tableau du graph : ordre, colonnes masquées, largeurs.
     graph_columns: GraphColumns,
+    /// Tracé des lignes du graph quand elles changent de colonne.
+    graph_lines: GraphLineStyle,
+    /// Arrondi de ce tracé, en pourcentage (tracés arrondi et courbe).
+    graph_roundness: u8,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -389,6 +417,8 @@ impl Default for Prefs {
             font_size: FONT_SIZE_DEFAULT,
             sidebars: SidebarWidths::default(),
             graph_columns: GraphColumns::default(),
+            graph_lines: GraphLineStyle::default(),
+            graph_roundness: GRAPH_ROUNDNESS_DEFAULT,
         }
     }
 }
