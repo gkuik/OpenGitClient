@@ -65,12 +65,23 @@
 </header>
 
 <style>
+  /*
+    Hauteur **fixe**, la même pour toutes les sections des deux colonnes. Avec
+    un rembourrage vertical, c'était le contenu qui la décidait : un en-tête qui
+    porte des boutons (« Stage all », le filtre des PR) grandissait de plusieurs
+    pixels et décalait tout ce qui suit. Les actions se centrent désormais dans
+    la hauteur, sans pouvoir l'étirer. En rem, pour suivre la taille du texte ;
+    le filet du haut est compris dedans (`border-box`), si bien que la première
+    section, qui n'en a pas, a exactement la même hauteur que les autres.
+  */
   header {
     display: flex;
     align-items: center;
     gap: 0.5rem;
     flex: none;
-    padding: 0.5rem var(--sec-gutter);
+    box-sizing: border-box;
+    height: 2rem;
+    padding: 0 var(--sec-gutter);
     border-top: 1px solid var(--border);
     background: var(--bg);
   }

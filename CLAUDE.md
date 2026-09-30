@@ -652,6 +652,12 @@ into the label on the right, bold title one side and dim uppercase the other,
 separator line owned by a differently-named class in each file. A new section now
 has no style to reinvent.
 
+- **Every header has the same fixed height** (`height: 2rem`, `border-box`, no
+  vertical padding). With padding, the content decided: a header carrying
+  buttons (« Stage all », the PR filter) grew by several pixels and shifted
+  everything below it. Actions are centred in that height and cannot stretch
+  it; the top line sits inside it, so the `first` header, which has none, is
+  exactly as tall as the others.
 - **The separator belongs to the header, not to the section.** The header *is*
   the section's first child, so a `border-top` there lands exactly where the
   section starts, and the caller never has to know it exists. `first` removes it
