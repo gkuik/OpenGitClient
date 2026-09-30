@@ -15,7 +15,7 @@
   */
   import type { Snippet } from "svelte";
   import { t } from "../i18n.svelte";
-  import { repo, tabs } from "../stores/repo.svelte";
+  import { repo, tabs, type Outcome, type RemoteOp } from "../stores/repo.svelte";
   import type { PullMode, PushMode } from "../types";
 
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
@@ -109,6 +109,13 @@
   */
   const unavailable = $derived(repo.busyRemote || !repo.repoInfo);
 
+  /**
+   * Couleur du compte rendu : l'issue de la dernière opération. Pendant qu'une
+   * opération tourne, le texte reste neutre — c'est le bouton et la barre de
+   * progression qui travaillent.
+   */
+  const tone = $derived(repo.runningOp || repo.mergingBranches ? null : repo.opTone);
+
   /** Compte rendu de la dernière opération distante, ou de la fusion en cours. */
   const status = $derived(
     repo.fetching
@@ -136,11 +143,22 @@
 />
 
 <div class="repobar">
+  <!-- Barre de progression indéterminée, juste sous le filet du bas : visible
+       où qu'on regarde dans la fenêtre, tant qu'une opération distante — ou
+       une fusion — tourne. Toujours dans le DOM, pour que son apparition et sa
+       disparition se fassent en fondu plutôt qu'en saut. -->
+  <div
+    class="progress"
+    class:on={repo.busyRemote || repo.mergingBranches}
+    aria-hidden="true"
+  ></div>
+
   <span class="name" title={repo.repoId}>{repo.repoInfo?.name ?? "…"}</span>
 
   <div class="actions">
     {@render action({
       label: "Pull",
+      op: "pull",
       icon: pullIcon,
       hint: currentPull.hint,
       run: currentPull.mode ? () => repo.pull(currentPull.mode!) : undefined,
@@ -150,6 +168,7 @@
     })}
     {@render action({
       label: t("toolbar.push"),
+      op: "push",
       icon: pushIcon,
       hint: t("toolbar.push.hint"),
       run: () => repo.push(),
@@ -159,6 +178,7 @@
     })}
     {@render action({
       label: t("toolbar.fetch"),
+      op: "fetch",
       icon: fetchIcon,
       hint: t("toolbar.fetch.hint"),
       run: () => repo.fetch(),
@@ -171,7 +191,23 @@
        rien n'aurait aucun effet visible, la section REMOTE restant identique.
        Le `<p>` est là même vide : `aria-live` n'annonce que ce qui change dans
        un élément déjà présent. -->
-  <p class="status" aria-live="polite" title={status ?? ""}>{status ?? ""}</p>
+  <!-- La couleur dit l'issue (vert : quelque chose a bougé, gris : rien à
+       faire, ambre : à regarder) ; pendant l'opération, le texte reste neutre,
+       c'est le bouton et la barre qui travaillent. -->
+  <p
+    class="status"
+    class:ok={tone === "ok"}
+    class:warn={tone === "warn"}
+    aria-live="polite"
+    title={status ?? ""}
+  >
+    {#if status && tone === "ok"}
+      {@render outcomeIcon("ok", "status-ic")}
+    {:else if status && tone === "warn"}
+      {@render outcomeIcon("warn", "status-ic")}
+    {/if}
+    <span class="status-text">{status ?? ""}</span>
+  </p>
 </div>
 
 <!-- Menu du bouton Pull : superposition qui referme, position en coordonnées
@@ -302,6 +338,8 @@
 -->
 {#snippet action(a: {
   label: string;
+  /** L'opération que le bouton lance : c'est elle qu'il anime, et elle seule. */
+  op: RemoteOp;
   icon: Snippet;
   hint: string;
   run?: () => void;
@@ -311,6 +349,8 @@
   menu?: { hint: string; open: (x: number, y: number) => void };
 })}
   {@const disabled = !a.run || a.busy}
+  {@const running = repo.runningOp === a.op}
+  {@const flash = repo.flash?.op === a.op ? repo.flash.outcome : null}
   {@const hint = a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
   <!--
     Le cadre porte l'infobulle et le clic droit ; le bouton ne porte que
@@ -326,7 +366,12 @@
   <!-- svelte-ignore a11y_no_static_element_interactions -->
   <div
     class="split"
-    class:disabled
+    class:disabled={disabled && !running}
+    class:running
+    class:flash-ok={flash === "ok"}
+    class:flash-neutral={flash === "neutral"}
+    class:flash-warn={flash === "warn"}
+    class:flash-danger={flash === "danger"}
     title={a.menu ? `${hint}\n${a.menu.hint}` : hint}
     oncontextmenu={a.menu
       ? (e) => {
@@ -337,7 +382,10 @@
   >
     <button
       class="action"
+      class:running
+      data-op={a.op}
       {disabled}
+      aria-busy={running}
       aria-haspopup={a.menu ? "menu" : undefined}
       onclick={a.run}
       onkeydown={a.menu
@@ -350,13 +398,37 @@
           }
         : undefined}
     >
-      {@render a.icon()}
+      <!-- L'éclair de fin remplace l'icône le temps de `FLASH_MS` ; `#key`
+           rejoue son apparition si deux opérations s'enchaînent. -->
+      {#key repo.flash}
+        {#if flash}
+          {@render outcomeIcon(flash, "action-ic flash-ic")}
+        {:else}
+          {@render a.icon()}
+        {/if}
+      {/key}
       <span>{a.label}</span>
       {#if a.count}
         <span class="badge">{a.count}</span>
       {/if}
     </button>
   </div>
+{/snippet}
+
+<!-- Issue d'une opération : coche (fait, ou rien à faire), point d'exclamation
+     (à regarder), croix (échec). Partagé par l'éclair du bouton et le compte
+     rendu. -->
+{#snippet outcomeIcon(outcome: Outcome, cls: string)}
+  <svg class={cls} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+    {#if outcome === "danger"}
+      <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+    {:else if outcome === "warn"}
+      <path d="M8 3.5v5.5" />
+      <path d="M8 12.25v.25" />
+    {:else}
+      <path d="M3.5 8.5l3 3 6-7" />
+    {/if}
+  </svg>
 {/snippet}
 
 {#snippet pullIcon()}
@@ -393,6 +465,8 @@
     dépôt ou le message s'allonge.
   */
   .repobar {
+    /* Ancre la barre de progression. */
+    position: relative;
     flex: none;
     display: grid;
     grid-template-columns: 1fr auto 1fr;
@@ -419,16 +493,83 @@
     display: flex;
     gap: 0.4rem;
   }
-  /* Compte rendu de la dernière opération ; s'efface tout seul. */
+  /* Compte rendu de la dernière opération ; s'efface tout seul. Un peu plus
+     grand qu'avant, et coloré selon l'issue : en 0.72rem gris, un compte rendu
+     de fin passait inaperçu. */
   .status {
     margin: 0;
     min-width: 0;
-    font-size: 0.72rem;
+    display: flex;
+    align-items: center;
+    justify-content: flex-end;
+    gap: 0.35rem;
+    font-size: 0.78rem;
     color: var(--text-dim);
-    text-align: right;
+  }
+  .status.ok {
+    color: var(--ok);
+  }
+  .status.warn {
+    color: var(--warn);
+  }
+  .status-text {
+    min-width: 0;
     white-space: nowrap;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+  .status-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+  }
+
+  /*
+    Barre de progression : 2px sous le filet du bas, un segment qui glisse de
+    gauche à droite. Indéterminée — le backend ne remonte pas (encore) de
+    progression chiffrée —, elle ne dit que « ça travaille », mais le dit
+    partout à la fois.
+  */
+  /* Accrochée **sous** le filet (`top: 100%` : juste après la bordure, qui
+     fait partie de la boîte), elle mord donc sur le haut des trois colonnes —
+     d'où le `z-index`, au-dessus du graph (canvas 3, en-tête 4, copie de
+     pastille 6) mais sous les menus (50). */
+  .progress {
+    position: absolute;
+    left: 0;
+    right: 0;
+    top: 100%;
+    z-index: 10;
+    height: 2px;
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 0;
+    transition: opacity 200ms ease;
+  }
+  .progress.on {
+    opacity: 1;
+  }
+  .progress::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    bottom: 0;
+    width: 30%;
+    background: var(--accent);
+    border-radius: 1px;
+    animation: progress-slide 1.2s ease-in-out infinite;
+  }
+  /* Invisible, la barre n'a pas à calculer d'animation. */
+  .progress:not(.on)::before {
+    animation: none;
+  }
+  @keyframes progress-slide {
+    from {
+      left: -30%;
+    }
+    to {
+      left: 100%;
+    }
   }
   /* Le cadre du bouton : il porte le fond, la bordure et le survol, et reçoit le
      clic droit à la place du bouton quand celui-ci est désactivé. */
@@ -440,7 +581,9 @@
     border: 1px solid transparent;
     border-radius: 6px;
   }
-  .split:hover:not(.disabled) {
+  /* Ni le bouton en cours ni celui qui affiche son issue ne prennent le survol :
+     leur couleur dit quelque chose, le survol l'effacerait. */
+  .split:hover:not(.disabled):not(.running):not([class*="flash-"]) {
     background: var(--bg-raised);
     border-color: var(--border);
   }
@@ -473,6 +616,100 @@
   .action-ic {
     width: 20px;
     height: 20px;
+  }
+
+  /*
+    Le bouton qui a lancé l'opération reste allumé pendant qu'elle tourne —
+    fond et liseré d'accent — alors que les deux autres se grisent : c'est ce
+    qui dit *laquelle* est en cours. Il reste désactivé (un second clic
+    n'aurait rien à faire), d'où la couleur reprise sur `:disabled`.
+  */
+  .split.running {
+    background: var(--accent-bg);
+    border-color: var(--accent);
+  }
+  .action.running:disabled {
+    color: var(--accent-soft);
+  }
+  /* Et son icône bouge, dans le sens de ce qu'elle fait : la flèche du fetch
+     tourne, celle du pull descend, celle du push monte. */
+  .action.running[data-op="fetch"] .action-ic {
+    animation: spin 1s linear infinite;
+  }
+  .action.running[data-op="pull"] .action-ic {
+    animation: bob-down 0.9s ease-in-out infinite;
+  }
+  .action.running[data-op="push"] .action-ic {
+    animation: bob-up 0.9s ease-in-out infinite;
+  }
+  @keyframes spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  @keyframes bob-down {
+    50% {
+      transform: translateY(3px);
+    }
+  }
+  @keyframes bob-up {
+    50% {
+      transform: translateY(-3px);
+    }
+  }
+
+  /* Éclair de fin : l'icône d'issue, et le cadre teinté de sa couleur. */
+  .split.flash-ok,
+  .split.flash-neutral {
+    border-color: var(--ok-border);
+  }
+  .split.flash-ok {
+    background: var(--ok-bg);
+  }
+  .split.flash-warn {
+    background: var(--warn-bg);
+    border-color: var(--warn-border);
+  }
+  .split.flash-danger {
+    background: var(--danger-bg);
+    border-color: var(--danger-border);
+  }
+  .split.flash-ok .action,
+  .split.flash-neutral .action {
+    color: var(--ok);
+  }
+  .split.flash-warn .action {
+    color: var(--warn);
+  }
+  .split.flash-danger .action {
+    color: var(--danger);
+  }
+  .split[class*="flash-"] {
+    transition: background 400ms ease, border-color 400ms ease;
+  }
+  .flash-ic {
+    animation: pop 220ms ease-out;
+  }
+  @keyframes pop {
+    from {
+      transform: scale(0.4);
+      opacity: 0;
+    }
+  }
+
+  /* Qui a demandé moins de mouvement garde les couleurs, pas les animations :
+     la barre reste pleine plutôt que de glisser. */
+  @media (prefers-reduced-motion: reduce) {
+    .action.running .action-ic,
+    .flash-ic {
+      animation: none !important;
+    }
+    .progress::before {
+      animation: none;
+      left: 0;
+      width: 100%;
+      opacity: 0.6;
+    }
   }
   /* Compteur d'écart. Sa couleur est fixée ici, sinon il hériterait du gris de
      `.action:disabled` — Pull et Push étant justement désactivés. */

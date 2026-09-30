@@ -52,6 +52,11 @@ export const en = {
   "tabbar.newTab": "New tab",
   "tabbar.closeTab": "Close tab",
   "tabbar.settings": "Settings",
+  "tabbar.busy": "A remote operation is running in this repository",
+  "tabbar.unseen.ok": "A remote operation finished while you were away",
+  "tabbar.unseen.neutral": "A remote operation finished while you were away",
+  "tabbar.unseen.warn": "A remote operation finished while you were away, and needs a look",
+  "tabbar.unseen.danger": "A remote operation failed while you were away",
 
   // ── Bandeau de fusion ─────────────────────────────────────────────────────
   "merge.banner.title": "Merge in progress.",
