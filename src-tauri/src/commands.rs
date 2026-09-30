@@ -241,6 +241,21 @@ pub fn checkout_remote_branch(
     backend.info()
 }
 
+/// Crée une branche sur un commit (HEAD s'il est absent) et bascule dessus.
+/// Renvoie les infos à jour du dépôt, comme les autres bascules.
+#[tauri::command]
+pub fn create_branch(
+    repo_id: String,
+    name: String,
+    oid: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<RepoInfo, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    backend.create_branch(&name, oid.as_deref())?;
+    backend.info()
+}
+
 // ── Tags ────────────────────────────────────────────────────────────────────
 
 #[tauri::command]

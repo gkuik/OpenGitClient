@@ -51,6 +51,7 @@ pub fn run() {
             commands::list_remote_branches,
             commands::checkout_branch,
             commands::checkout_remote_branch,
+            commands::create_branch,
             commands::list_tags,
             commands::create_tag,
             commands::delete_tag,

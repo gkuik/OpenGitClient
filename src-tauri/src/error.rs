@@ -85,6 +85,12 @@ pub enum AppError {
     #[error("Force push refused: the remote branch has moved since the last fetch (it is now at {0}). Fetch and look at what arrived before forcing again.")]
     PushLeaseStale(String),
 
+    #[error("A branch named {0} already exists")]
+    BranchExists(String),
+
+    #[error("{0} is not a valid branch name")]
+    InvalidBranchName(String),
+
     #[error("A tag named {0} already exists")]
     TagExists(String),
 
@@ -131,6 +137,8 @@ impl AppError {
             AppError::NoUpstream => "NoUpstream",
             AppError::PushRejected(_) => "PushRejected",
             AppError::PushLeaseStale(_) => "PushLeaseStale",
+            AppError::BranchExists(_) => "BranchExists",
+            AppError::InvalidBranchName(_) => "InvalidBranchName",
             AppError::TagExists(_) => "TagExists",
             AppError::InvalidTagName(_) => "InvalidTagName",
             AppError::TagRejected(_) => "TagRejected",
@@ -150,6 +158,8 @@ impl AppError {
             | AppError::ForgeNotFound(arg)
             | AppError::PushRejected(arg)
             | AppError::PushLeaseStale(arg)
+            | AppError::BranchExists(arg)
+            | AppError::InvalidBranchName(arg)
             | AppError::TagExists(arg)
             | AppError::InvalidTagName(arg)
             | AppError::TagRejected(arg) => Some(arg),
