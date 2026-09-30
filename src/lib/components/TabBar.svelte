@@ -247,6 +247,23 @@
       >
         {#if tab.kind === "settings"}
           {@render gear("tab-ic")}
+        {:else if tab.kind === "repo" && tab.busyRemote}
+          <!-- Une opération distante tourne dans ce dépôt — utile surtout quand
+               on l'a quitté pour un autre onglet entre-temps. -->
+          <span class="spinner" role="status" aria-label={t("tabbar.busy")} title={t("tabbar.busy")}></span>
+        {:else if tab.kind === "repo" && tab.unseenOutcome && !active}
+          <!-- Elle s'est terminée pendant qu'on était ailleurs : la couleur en
+               dit l'issue, jusqu'à ce qu'on revienne sur l'onglet. -->
+          {@const outcome = tab.unseenOutcome}
+          <span
+            class="unseen"
+            class:ok={outcome === "ok" || outcome === "neutral"}
+            class:warn={outcome === "warn"}
+            class:danger={outcome === "danger"}
+            role="status"
+            aria-label={t(`tabbar.unseen.${outcome}`)}
+            title={t(`tabbar.unseen.${outcome}`)}
+          ></span>
         {/if}
         <span class="name" class:blank={tab.kind === "new"}>{label}</span>
         <button
@@ -447,6 +464,44 @@
     width: 14px;
     height: 14px;
     color: var(--text-dim);
+  }
+  /* Opération distante en cours dans ce dépôt : un anneau qui tourne, de la
+     taille d'une icône d'onglet. */
+  .spinner {
+    flex: none;
+    width: 11px;
+    height: 11px;
+    border: 1.5px solid var(--border);
+    border-top-color: var(--accent);
+    border-radius: 50%;
+    animation: tab-spin 0.8s linear infinite;
+  }
+  @keyframes tab-spin {
+    to {
+      transform: rotate(360deg);
+    }
+  }
+  /* Issue d'une opération terminée hors de vue : une pastille pleine. */
+  .unseen {
+    flex: none;
+    width: 7px;
+    height: 7px;
+    border-radius: 50%;
+  }
+  .unseen.ok {
+    background: var(--ok);
+  }
+  .unseen.warn {
+    background: var(--warn);
+  }
+  .unseen.danger {
+    background: var(--danger);
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .spinner {
+      animation: none;
+      border-color: var(--accent);
+    }
   }
   /* Un onglet sans dépôt ne nomme rien : son libellé se fait discret. */
   .name.blank {

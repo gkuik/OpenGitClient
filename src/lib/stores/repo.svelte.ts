@@ -38,8 +38,24 @@ import type {
 
 export type ViewMode = "tree" | "path";
 
-/** Opération distante ayant déclenché une demande d'identifiants. */
-type RemoteOp = "fetch" | "push" | "pull" | "tag";
+/** Opération distante — celle en cours, ou celle qui a demandé des identifiants. */
+export type RemoteOp = "fetch" | "push" | "pull" | "tag";
+
+/**
+ * Teneur d'un compte rendu, qui en décide la couleur : `ok` quand quelque
+ * chose a bougé comme prévu, `neutral` quand il n'y avait rien à faire,
+ * `warn` quand l'opération a abouti mais demande de l'attention (conflit,
+ * divergence, identifiants à saisir). Les échecs, eux, vont au bandeau
+ * d'erreur ; ils n'ont une teneur que pour l'éclair du bouton et l'onglet.
+ */
+export type OpTone = "ok" | "neutral" | "warn";
+export type Outcome = OpTone | "danger";
+
+/** Un compte rendu, et la couleur qui va avec. */
+interface OpReport {
+  text: string;
+  tone: OpTone;
+}
 
 /**
  * Ce que montre le visualiseur de diff : un fichier du working directory, ou un
@@ -60,6 +76,12 @@ const GRAPH_PAGE_SIZE = 500;
 const OP_STATUS_MS = 6000;
 
 /**
+ * Durée de l'éclair ✓ / ! / ✗ sur le bouton qui a lancé l'opération. Court :
+ * il dit « c'est fini, et voilà comment », le compte rendu dit le reste.
+ */
+const FLASH_MS = 1500;
+
+/**
  * Délai avant de réessayer d'appliquer un changement détecté sur le disque
  * pendant qu'une opération de l'application tourne encore.
  *
@@ -70,7 +92,26 @@ const OP_STATUS_MS = 6000;
 const CHANGE_RETRY_MS = 400;
 
 /** Compte rendu d'un pull, en une ligne. */
-function pullStatus(report: PullReport): string {
+function pullStatus(report: PullReport): OpReport {
+  return { text: pullText(report), tone: pullTone(report) };
+}
+
+/** Rien n'a bougé : neutre ; conflit ou divergence : à regarder. */
+function pullTone(report: PullReport): OpTone {
+  switch (report.outcome.kind) {
+    case "fetchedOnly":
+      return report.updated.length === 0 ? "neutral" : "ok";
+    case "upToDate":
+      return "neutral";
+    case "conflicted":
+    case "diverged":
+      return "warn";
+    default:
+      return "ok";
+  }
+}
+
+function pullText(report: PullReport): string {
   const where = report.remotes.join(", ");
   const o = report.outcome;
   // Une branche tirée sans être la courante est nommée : le compte rendu doit
@@ -101,18 +142,21 @@ function pullStatus(report: PullReport): string {
 }
 
 /** Compte rendu d'une fusion de branche à branche, en une ligne. */
-function mergeStatus(report: MergeReport): string {
+function mergeStatus(report: MergeReport): OpReport {
   const { source, target } = report;
   const o = report.outcome;
   switch (o.kind) {
     case "upToDate":
-      return t("op.merge.upToDate", { source, target });
+      return { text: t("op.merge.upToDate", { source, target }), tone: "neutral" };
     case "fastForwarded":
-      return t("op.merge.fastForwarded", { source, target, n: o.commits });
+      return {
+        text: t("op.merge.fastForwarded", { source, target, n: o.commits }),
+        tone: "ok",
+      };
     case "merged":
-      return t("op.merge.merged", { source, target, n: o.commits });
+      return { text: t("op.merge.merged", { source, target, n: o.commits }), tone: "ok" };
     case "conflicted":
-      return t("op.pull.conflicted", { n: o.files.length });
+      return { text: t("op.pull.conflicted", { n: o.files.length }), tone: "warn" };
   }
 }
 
@@ -209,7 +253,25 @@ export class RepoStore {
    * sur une branche inactive ne déplace qu'une pastille dans le graph.
    */
   opStatus = $state<string | null>(null);
+  /** Couleur du compte rendu affiché. */
+  opTone = $state<OpTone>("neutral");
   private opStatusTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Éclair de fin sur le bouton qui a lancé l'opération (Pull, Push ou Fetch) :
+   * une coche, un point d'exclamation ou une croix, le temps de `FLASH_MS`.
+   * Sans lui, un fetch qui ne ramène rien se terminait sans aucun signe.
+   */
+  flash = $state<{ op: RemoteOp; outcome: Outcome } | null>(null);
+  private flashTimer: ReturnType<typeof setTimeout> | null = null;
+  /** Issue de la dernière opération distante — ce que l'onglet retient. */
+  private lastOutcome: Outcome | null = null;
+  /**
+   * Une opération distante s'est terminée pendant que l'onglet était caché :
+   * sa pastille le dit, dans la couleur de l'issue, jusqu'à ce qu'on y revienne.
+   * Les événements sont routés vers leur onglet quel qu'il soit, et sans cette
+   * marque un fetch lancé avant de changer d'onglet aboutissait en silence.
+   */
+  unseenOutcome = $state<Outcome | null>(null);
   /**
    * Demande d'identifiants en cours. Non nul = le dialogue de saisie est ouvert.
    * `refused` distingue « on n'avait rien » de « ce qu'on avait a été refusé »,
@@ -494,6 +556,8 @@ export class RepoStore {
    * les branches dont les pastilles du graph dépendent.
    */
   async activate() {
+    // On y est : ce qui s'est terminé en notre absence est vu.
+    this.unseenOutcome = null;
     if (!this.loaded) {
       await this.load();
       return;
@@ -957,6 +1021,7 @@ export class RepoStore {
     } catch (e) {
       this.pushingTag = false;
       this.error = e as AppError;
+      this.finish("tag", "danger");
     }
   }
 
@@ -969,16 +1034,21 @@ export class RepoStore {
     if (event.error) {
       if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
         void this.askCredentials(event.error.kind === "RemoteAuth", "tag");
+        // Pas un échec, mais pas un succès : une saisie attend.
+        this.finish("tag", "warn");
         return;
       }
       this.error = event.error;
+      this.finish("tag", "danger");
       return;
     }
     if (!event.report) return;
     const { remote, tag, deleted } = event.report;
     this.setOpStatus(
       deleted ? t("op.tag.deleted", { remote, tag }) : t("op.tag.pushed", { remote, tag }),
+      "ok",
     );
+    this.finish("tag", "ok");
   }
 
   // ── Profil d'auteur ─────────────────────────────────────────────────────────
@@ -1036,6 +1106,7 @@ export class RepoStore {
       // événement ne suivra, c'est donc ici qu'il faut relâcher l'état.
       this.fetching = false;
       this.error = e as AppError;
+      this.finish("fetch", "danger");
     }
   }
 
@@ -1100,12 +1171,26 @@ export class RepoStore {
     } catch (e) {
       this.pushing = false;
       this.error = e as AppError;
+      this.finish("push", "danger");
     }
   }
 
   /** Une opération distante est en cours : la seconde attendrait de toute façon. */
   get busyRemote(): boolean {
     return this.fetching || this.pushing || this.pulling || this.pushingTag;
+  }
+
+  /**
+   * L'opération distante qui tourne, s'il y en a une. Le backend n'en laisse
+   * passer qu'une à la fois par dépôt : c'est ce qui permet de n'animer que le
+   * bouton qui l'a lancée, les deux autres se grisant simplement.
+   */
+  get runningOp(): RemoteOp | null {
+    if (this.fetching) return "fetch";
+    if (this.pushing) return "push";
+    if (this.pulling) return "pull";
+    if (this.pushingTag) return "tag";
+    return null;
   }
 
   /** Fusion en cours : le bandeau de sortie de secours est affiché. */
@@ -1129,6 +1214,7 @@ export class RepoStore {
     } catch (e) {
       this.pulling = false;
       this.error = e as AppError;
+      this.finish("pull", "danger");
     }
   }
 
@@ -1146,14 +1232,19 @@ export class RepoStore {
     if (event.error) {
       if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
         void this.askCredentials(event.error.kind === "RemoteAuth", "pull");
+        // Pas un échec, mais pas un succès : une saisie attend.
+        this.finish("pull", "warn");
         return;
       }
       this.error = event.error;
+      this.finish("pull", "danger");
       return;
     }
     if (!event.report) return;
 
-    this.setOpStatus(pullStatus(event.report));
+    const report = pullStatus(event.report);
+    this.setOpStatus(report.text, report.tone);
+    this.finish("pull", report.tone);
 
     // Un pull touche à tout : références distantes, branche courante, working
     // directory, index. On recharge donc aussi le statut, contrairement au
@@ -1208,7 +1299,8 @@ export class RepoStore {
     this.setOpStatus(null);
     try {
       const report = await api.mergeBranches(this.repoId, source, target, mode);
-      this.setOpStatus(mergeStatus(report));
+      const status = mergeStatus(report);
+      this.setOpStatus(status.text, status.tone);
       // Le working directory a changé sous la sélection dès que HEAD a bougé ou
       // que des conflits sont apparus : le fichier ouvert n'est plus celui-là.
       if (report.switched || report.outcome.kind === "conflicted") {
@@ -1252,20 +1344,26 @@ export class RepoStore {
       // une saisie. Le bandeau d'erreur ne servirait qu'à faire écran au dialogue.
       if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
         void this.askCredentials(event.error.kind === "RemoteAuth", "fetch");
+        // Pas un échec, mais pas un succès : une saisie attend.
+        this.finish("fetch", "warn");
         return;
       }
       this.error = event.error;
+      this.finish("fetch", "danger");
       return;
     }
     if (!event.report) return;
 
     const { remote, updated } = event.report;
     const n = updated.length;
+    const tone: OpTone = n === 0 ? "neutral" : "ok";
     this.setOpStatus(
       n === 0
         ? t("op.fetch.upToDate", { where: remote })
         : t("op.fetch.updated", { where: remote, n }),
+      tone,
     );
+    this.finish("fetch", tone);
 
     // Un fetch ne touche que `refs/remotes/**`, mais la sidebar comme le graph
     // en dépendent désormais. Rien à faire si rien n'a bougé.
@@ -1281,9 +1379,12 @@ export class RepoStore {
       // car il n'y a rien à ressaisir pour le résoudre.
       if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
         void this.askCredentials(event.error.kind === "RemoteAuth", "push");
+        // Pas un échec, mais pas un succès : une saisie attend.
+        this.finish("push", "warn");
         return;
       }
       this.error = event.error;
+      this.finish("push", "danger");
       return;
     }
     if (!event.report) return;
@@ -1301,7 +1402,9 @@ export class RepoStore {
           : upstreamSet
             ? t("op.push.published.upstream", { remote, branch })
             : t("op.push.published", { remote, branch }),
+      "ok",
     );
+    this.finish("push", "ok");
 
     // Le push a fait avancer `refs/remotes/**` (libgit2 met les tips à jour) :
     // c'est exactement ce que recharge le chemin du fetch, pastille `↑` de la
@@ -1386,7 +1489,7 @@ export class RepoStore {
       void this.selectCommit(remote.oid);
       return;
     }
-    this.setOpStatus(t("pr.branchMissing", { branch: pr.sourceBranch }));
+    this.setOpStatus(t("pr.branchMissing", { branch: pr.sourceBranch }), "warn");
   }
 
   /** Ouvre la page web de la PR dans le navigateur du système. */
@@ -1466,9 +1569,10 @@ export class RepoStore {
   }
 
   /** Affiche un compte rendu qui s'efface tout seul (voir `opStatus`). */
-  private setOpStatus(message: string | null) {
+  private setOpStatus(message: string | null, tone: OpTone = "neutral") {
     if (this.opStatusTimer !== null) clearTimeout(this.opStatusTimer);
     this.opStatus = message;
+    this.opTone = tone;
     this.opStatusTimer =
       message === null
         ? null
@@ -1476,6 +1580,28 @@ export class RepoStore {
             this.opStatus = null;
             this.opStatusTimer = null;
           }, OP_STATUS_MS);
+  }
+
+  /**
+   * Fin d'une opération distante : l'éclair sur son bouton, et l'issue que
+   * l'onglet retiendra s'il n'est pas affiché (voir `markUnseen`).
+   */
+  private finish(op: RemoteOp, outcome: Outcome) {
+    this.lastOutcome = outcome;
+    if (this.flashTimer !== null) clearTimeout(this.flashTimer);
+    this.flash = { op, outcome };
+    this.flashTimer = setTimeout(() => {
+      this.flash = null;
+      this.flashTimer = null;
+    }, FLASH_MS);
+  }
+
+  /**
+   * Appelé par `TabsStore` quand le résultat d'une opération distante arrive
+   * sur un onglet caché : la pastille de l'onglet reprend son issue.
+   */
+  markUnseen() {
+    if (this.lastOutcome !== null) this.unseenOutcome = this.lastOutcome;
   }
 
   // ── Actions Git ─────────────────────────────────────────────────────────────
@@ -1813,28 +1939,36 @@ class TabsStore {
     // L'abonnement dure toute la vie de l'application, d'où l'absence d'unlisten.
     api
       .onFetched((event) => {
-        this.repoTabs.find((t) => t.repoId === event.repoId)?.onFetched(event);
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onFetched(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
       })
       .catch(() => {
         /* sans abonnement, le fetch reste lançable mais muet */
       });
     api
       .onPushed((event) => {
-        this.repoTabs.find((t) => t.repoId === event.repoId)?.onPushed(event);
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onPushed(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
       })
       .catch(() => {
         /* idem pour le push */
       });
     api
       .onPulled((event) => {
-        this.repoTabs.find((t) => t.repoId === event.repoId)?.onPulled(event);
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onPulled(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
       })
       .catch(() => {
         /* idem pour le pull */
       });
     api
       .onTagPushed((event) => {
-        this.repoTabs.find((t) => t.repoId === event.repoId)?.onTagPushed(event);
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onTagPushed(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
       })
       .catch(() => {
         /* idem pour les tags */
