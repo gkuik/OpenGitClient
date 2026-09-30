@@ -62,6 +62,24 @@ npm test
 
 Vite is pinned to port 1420 with `strictPort` (Tauri expects it) — a stale dev server on that port makes `npm run dev` fail.
 
+## Branching: git flow
+
+**Never commit directly on `main` or `develop`.** `main` only receives releases
+and hotfixes; `develop` is the integration branch, and it only receives merges.
+
+- **Feature / fix**: branch off `develop` as `feature/<name>` (or `bugfix/<name>`),
+  commit there, then merge back into `develop` with `--no-ff` and delete the
+  branch. The merge commit keeps the feature visible as one unit in the history.
+- **Release**: `release/<x.y.z>` off `develop`; bump the version in the three
+  places that carry it (`package.json`, `src-tauri/Cargo.toml`,
+  `src-tauri/tauri.conf.json`), then merge into `main` (`--no-ff`, tag `v<x.y.z>`)
+  **and** back into `develop`.
+- **Hotfix**: `hotfix/<x.y.z>` off `main`, merged into `main` (tagged) and `develop`.
+
+The `gitflow.*` keys are set in the local Git config (`main` / `develop`, the usual
+prefixes, tag prefix `v`), so the `git flow` CLI works as is if installed
+(`brew install git-flow`) — but nothing requires it; plain `git` does the same.
+
 ## Architecture
 
 ### The Git abstraction is the central extension point
