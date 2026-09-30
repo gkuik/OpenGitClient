@@ -634,11 +634,11 @@ inside itself.
   to shrink below its whole list and the sidebar overflows again — which is the
   exact bug this layout replaced. The real floor becomes the header; `minmax(0,
   1fr)` is what lets the body go under its intrinsic height, i.e. scroll.
-- **Collapsed sections sink to the bottom** via `order: 1`, and the *first* of
-  them carries `margin-top: auto` — one auto margin per collapsed section would
-  split the free space and scatter them. That free space only exists when every
-  open section is frozen on its content, which is precisely when the gap should
-  be there.
+- **Sections always keep the same order.** A collapsed section is its header
+  alone (`flex: none`) and **stays where it is**, even between two open ones —
+  it used to sink to the bottom (`order: 1` + `margin-top: auto`), which made
+  the column reshuffle under the cursor on every fold. The free space left when
+  every open section is frozen on its content simply stays at the bottom.
 - Section heights are **not** draggable, unlike the sidebar widths; if that ever
   changes, it belongs on `SidebarResizer`'s model, not on a new one.
 
@@ -680,15 +680,12 @@ has no style to reinvent.
   0.6rem there — and the header's switch to a path made the mismatch plain. Its
   size is in **rem**, unlike the section icons: a chevron marks a fold *in text*
   and follows that text, where a category icon is a fixed badge.
-- **Which section is "first" is computed in the component, not in CSS.** The left
-  column's collapsed sections are moved to the bottom by `order`, so a
-  `section + section` rule would put the line on the wrong one. `firstVisual` is
-  the first *open* section — or, if everything is collapsed, the first one at all.
-  Both it and `firstClosed` read a list of the sections actually **rendered** and
-  name them by id, never by a fixed index: REMOTE is dropped when the repository
-  has no remote branch, and an index would keep counting a section that isn't
-  there — the separator and the collapsed block's margin would both land one
-  section off.
+- **Which section is "first" is computed in the component, not in CSS.** PULL
+  REQUESTS is a component of its own, which a scoped `section + section` rule
+  would not reach. `firstVisual` is the first section actually **rendered**,
+  named by id, never by a fixed index: REMOTE is dropped when the repository has
+  no remote branch, and an index would keep counting a section that isn't
+  there — the separator would land one section off.
 - **Icons are sized from the wrapper, globally.** A snippet keeps the style scope
   of the component that *defined* it, not of the one that renders it, so
   `SectionHeader` reaches its icon through `.ic-slot :global(svg)`. That is what

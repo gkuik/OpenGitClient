@@ -28,9 +28,10 @@
   // chemin à proposer (voir `RepoStore.prSupported`).
   const hasPullRequests = $derived(repo.prSupported);
 
-  // Les sections **rendues**, dans l'ordre du DOM. Les deux repères ci-dessous
-  // se lisent dessus plutôt que sur des indices figés : avec un indice, une
-  // section masquée continuerait de compter et les deux tomberaient à côté.
+  // Les sections **rendues**, dans l'ordre du DOM — qui est aussi l'ordre
+  // affiché : une section repliée reste à sa place. Le repère ci-dessous se lit
+  // dessus plutôt que sur un indice figé : avec un indice, une section masquée
+  // continuerait de compter et il tomberait à côté.
   const shown = $derived([
     { id: "local", open: localOpen },
     ...(hasRemotes ? [{ id: "remotes", open: remotesOpen }] : []),
@@ -38,16 +39,10 @@
     { id: "stashes", open: stashesOpen },
   ]);
 
-  // Les sections repliées descendent en bas de la colonne (`order` en CSS) ;
-  // la **première** d'entre elles porte la marge automatique qui les y colle —
-  // une marge par section repliée se partagerait l'espace libre et les
-  // éparpillerait.
-  const firstClosed = $derived(shown.find((s) => !s.open)?.id ?? null);
-  // Le trait de séparation se calcule ici et pas en CSS : `order` dissocie
-  // l'ordre du DOM de l'ordre affiché, donc un `section + section` désignerait
-  // la mauvaise. La section en tête de colonne est la première ouverte — ou, si
-  // tout est replié, la première tout court.
-  const firstVisual = $derived((shown.find((s) => s.open) ?? shown[0]).id);
+  // Le trait de séparation se calcule ici et pas en CSS : PULL REQUESTS est un
+  // composant à part, qu'un `section + section` scopé n'atteindrait pas. La
+  // section en tête de colonne est simplement la première rendue.
+  const firstVisual = $derived(shown[0].id);
 
   const nodes = $derived(buildBranchTree(repo.branches));
   // Un niveau de plus que LOCAL : le distant, puis son arborescence.
@@ -195,7 +190,7 @@
     <p class="empty">{t("common.noRepo")}</p>
   {:else}
     <div class="sections">
-      <section class:open={localOpen} class:pinned={firstClosed === "local"}>
+      <section class:open={localOpen}>
         <SectionHeader
           label={t("branches.local")}
           icon={branchIcon}
@@ -217,7 +212,7 @@
       </section>
 
       {#if hasRemotes}
-        <section class:open={remotesOpen} class:pinned={firstClosed === "remotes"}>
+        <section class:open={remotesOpen}>
           <SectionHeader
             label={t("branches.remote")}
             icon={remoteIcon}
@@ -261,19 +256,18 @@
       <!-- La `<section>` est portée par le composant : elle est donc fille
            directe de `.sections`, au même titre que les trois autres, et c'est
            lui qui reprend à son compte les règles de répartition (part de
-           hauteur, renvoi en bas quand elle est repliée) — les règles d'ici
+           hauteur, en-tête seul quand elle est repliée) — les règles d'ici
            sont scopées et ne l'atteindraient pas. -->
       {#if hasPullRequests}
         <PullRequestSection
           open={prOpen}
           onToggle={() => (prOpen = !prOpen)}
           first={firstVisual === "pulls"}
-          pinned={firstClosed === "pulls"}
           onMenu={openPrMenu}
         />
       {/if}
 
-      <section class:open={stashesOpen} class:pinned={firstClosed === "stashes"}>
+      <section class:open={stashesOpen}>
         <SectionHeader
           label={t("stashes.title")}
           icon={stashIcon}
@@ -637,17 +631,11 @@
     min-height: 0;
     max-height: max-content;
   }
-  /* Repliée : rien que son en-tête, et rejetée en fin de colonne. */
+  /* Repliée : rien que son en-tête, **à sa place**. Les sections gardent
+     toujours le même ordre ; l'espace que laissent des sections ouvertes gelées
+     sur leur contenu reste simplement en bas de la colonne. */
   section:not(.open) {
     flex: none;
-    order: 1;
-  }
-  /* Colle le bloc des sections repliées en bas : la marge automatique absorbe
-     l'espace libre, lequel n'existe justement que lorsque toutes les sections
-     ouvertes sont gelées sur leur contenu. Le trait qui les sépare du dessus
-     vient de `SectionHeader`, comme celui de toutes les autres sections. */
-  section.pinned {
-    margin-top: auto;
   }
   /* L'en-tête vit dans `SectionHeader` — y compris son trait de séparation : il
      est le premier enfant de la section, donc la bordure tombe au bon endroit.

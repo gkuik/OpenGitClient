@@ -31,15 +31,11 @@
     open,
     onToggle,
     first = false,
-    pinned = false,
     onMenu,
   }: {
     open: boolean;
     onToggle: () => void;
     first?: boolean;
-    /** Première section repliée : c'est elle qui colle le bloc en bas de colonne
-     * (voir la note de `BranchSidebar` — une marge par section les éparpillerait). */
-    pinned?: boolean;
     /** Ouvre le menu contextuel d'une PR (rendu par `BranchSidebar`, comme les
      * deux autres menus de la colonne). */
     onMenu: (pr: PullRequestEntry, x: number, y: number) => void;
@@ -118,7 +114,7 @@
   }}
 />
 
-<section class:open class:pinned>
+<section class:open>
   <SectionHeader
     label={t("pr.title")}
     icon={prIcon}
@@ -332,10 +328,6 @@
   }
   section:not(.open) {
     flex: none;
-    order: 1;
-  }
-  section.pinned {
-    margin-top: auto;
   }
   .sec-body {
     min-height: 0;
