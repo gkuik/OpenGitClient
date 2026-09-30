@@ -31,13 +31,15 @@ import type {
   RepoInfo,
   RepoStatus,
   StashEntry,
+  TagEntry,
+  TagPushEvent,
   Upstream,
 } from "../types";
 
 export type ViewMode = "tree" | "path";
 
 /** Opération distante ayant déclenché une demande d'identifiants. */
-type RemoteOp = "fetch" | "push" | "pull";
+type RemoteOp = "fetch" | "push" | "pull" | "tag";
 
 /**
  * Ce que montre le visualiseur de diff : un fichier du working directory, ou un
@@ -238,6 +240,24 @@ export class RepoStore {
    */
   remoteBranches = $state<RemoteBranchEntry[]>([]);
   stashes = $state<StashEntry[]>([]);
+  /**
+   * Tags du dépôt (section TAGS). Comme les branches, ils ne bougent que par
+   * un geste d'ici, un fetch — qui en ramène — ou un autre outil.
+   */
+  tags = $state<TagEntry[]>([]);
+  /**
+   * Création d'un tag demandée depuis le graph : non nul = le dialogue est
+   * ouvert sur ce commit. Le résumé n'est là que pour que le dialogue dise
+   * *quel* commit reçoit le tag.
+   */
+  tagPrompt = $state<{ oid: string; shortOid: string; summary: string } | null>(null);
+  creatingTag = $state(false);
+  /**
+   * Publication ou suppression distante d'un tag en cours. Comme fetch, push
+   * et pull, le résultat revient par un événement ; la réservation réseau du
+   * backend est la même pour les quatre, d'où sa place dans `busyRemote`.
+   */
+  pushingTag = $state(false);
   checkingOut = $state(false);
   /**
    * Fusion de branche à branche en cours. Distinct de `checkingOut` : elle en
@@ -452,6 +472,7 @@ export class RepoStore {
       await this.refreshStatus();
       await this.loadBranches();
       await this.loadRemoteBranches();
+      await this.loadTags();
       await this.loadStashes();
       await this.loadIdentity();
       await this.loadGraph();
@@ -486,6 +507,7 @@ export class RepoStore {
     await this.refreshStatus();
     await this.loadBranches();
     await this.loadRemoteBranches();
+    await this.loadTags();
     // La config du dépôt a pu changer sur le disque pendant qu'on était ailleurs.
     await this.loadIdentity();
 
@@ -575,12 +597,14 @@ export class RepoStore {
   /**
    * Ce qu'un mouvement de références impose de relire : les deux listes de
    * branches — dont les pastilles d'écart se mesurent sur `refs/remotes/**` —,
-   * les stashes (`refs/stash` en est une) et le graph, dont la pagination n'est
-   * stable que tant que les références ne bougent pas, d'où le retour page 0.
+   * les tags, les stashes (`refs/stash` en est une) et le graph, dont la
+   * pagination n'est stable que tant que les références ne bougent pas, d'où le
+   * retour page 0.
    */
   private async reloadAfterRefs() {
     await this.loadBranches();
     await this.loadRemoteBranches();
+    await this.loadTags();
     await this.loadStashes();
     await this.loadGraph();
   }
@@ -601,6 +625,8 @@ export class RepoStore {
       this.busy ||
       this.committing ||
       this.stashing ||
+      this.creatingTag ||
+      this.pushingTag ||
       this.checkingOut ||
       this.mergingBranches ||
       this.fetching ||
@@ -838,6 +864,123 @@ export class RepoStore {
     }
   }
 
+  // ── Tags ────────────────────────────────────────────────────────────────────
+
+  async loadTags() {
+    if (!this.repoInfo) return;
+    try {
+      this.tags = await api.listTags(this.repoId);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+  }
+
+  /**
+   * Ouvre le dialogue de création d'un tag sur ce commit — l'entrée du menu
+   * contextuel d'une rangée du graph, seul endroit d'où l'action part.
+   */
+  askTag(commit: GraphCommit) {
+    this.tagPrompt = {
+      oid: commit.oid,
+      shortOid: commit.shortOid,
+      summary: commit.summary,
+    };
+  }
+
+  cancelTag() {
+    this.tagPrompt = null;
+  }
+
+  /**
+   * Crée le tag demandé par le dialogue : annoté si un message est donné, léger
+   * sinon. Renvoie `false` en cas d'échec, le dialogue restant alors ouvert —
+   * un nom déjà pris se corrige sur place, sans tout ressaisir.
+   *
+   * Aucun commit ne bouge : seuls la liste des tags et les pastilles du graph
+   * sont à relire, et le graph repart de la page 0 comme après tout mouvement
+   * de références.
+   */
+  async createTag(name: string, message: string): Promise<boolean> {
+    const prompt = this.tagPrompt;
+    if (!prompt || this.creatingTag) return false;
+    this.creatingTag = true;
+    this.error = null;
+    try {
+      const text = message.trim();
+      await api.createTag(this.repoId, name.trim(), prompt.oid, text.length > 0 ? text : null);
+      this.tagPrompt = null;
+      await this.loadTags();
+      await this.loadGraph();
+      return true;
+    } catch (e) {
+      this.error = e as AppError;
+      return false;
+    } finally {
+      this.creatingTag = false;
+    }
+  }
+
+  /** Supprime un tag **local** (menu contextuel, confirmé dans le menu même). */
+  async deleteTag(name: string) {
+    await this.run(() => api.deleteTag(this.repoId, name));
+    await this.loadTags();
+    await this.loadGraph();
+  }
+
+  /**
+   * Bascule sur le commit d'un tag, HEAD détaché (double-clic dans la section
+   * TAGS). Ce qu'un checkout invalide ne dépend pas de ce qui l'a demandé :
+   * même corps que pour une branche.
+   */
+  async checkoutTag(name: string) {
+    await this.runCheckout(() => api.checkoutTag(this.repoId, name));
+  }
+
+  /**
+   * Tag en cours de publication ou de suppression distante, retenu pour le
+   * relancer après une saisie d'identifiants — comme le mode d'un pull.
+   */
+  private tagPush: { name: string; remove: boolean } | null = null;
+
+  /**
+   * Publie un tag sur le distant, ou l'en supprime (`remove`). Le résultat
+   * revient par `repo://tag-pushed`, comme celui d'un push.
+   */
+  async pushTag(name: string, remove = false) {
+    if (this.busyRemote || !this.repoInfo) return;
+    this.tagPush = { name, remove };
+    this.pushingTag = true;
+    this.error = null;
+    this.setOpStatus(null);
+    try {
+      await api.pushTag(this.repoId, name, remove);
+    } catch (e) {
+      this.pushingTag = false;
+      this.error = e as AppError;
+    }
+  }
+
+  /**
+   * Résultat d'un push de tag, reçu par événement. Rien à recharger : aucune
+   * référence locale n'a bougé, le tag local est tel qu'il était.
+   */
+  onTagPushed(event: TagPushEvent) {
+    this.pushingTag = false;
+    if (event.error) {
+      if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
+        void this.askCredentials(event.error.kind === "RemoteAuth", "tag");
+        return;
+      }
+      this.error = event.error;
+      return;
+    }
+    if (!event.report) return;
+    const { remote, tag, deleted } = event.report;
+    this.setOpStatus(
+      deleted ? t("op.tag.deleted", { remote, tag }) : t("op.tag.pushed", { remote, tag }),
+    );
+  }
+
   // ── Profil d'auteur ─────────────────────────────────────────────────────────
 
   async loadIdentity() {
@@ -962,7 +1105,7 @@ export class RepoStore {
 
   /** Une opération distante est en cours : la seconde attendrait de toute façon. */
   get busyRemote(): boolean {
-    return this.fetching || this.pushing || this.pulling;
+    return this.fetching || this.pushing || this.pulling || this.pushingTag;
   }
 
   /** Fusion en cours : le bandeau de sortie de secours est affiché. */
@@ -1176,6 +1319,8 @@ export class RepoStore {
   private async reloadRemoteRefs() {
     await this.loadRemoteBranches();
     await this.loadBranches();
+    // Un fetch ramène aussi les tags qui désignent des commits récupérés.
+    await this.loadTags();
     await this.loadGraph();
     // Une PR a pu être ouverte ou fusionnée entre-temps. C'est le seul moment
     // où on la redemande sans que personne ne l'ait cliqué : quelqu'un vient
@@ -1306,7 +1451,9 @@ export class RepoStore {
         ? this.push()
         : prompt.op === "pull"
           ? this.pull(this.pullMode, this.pullBranch)
-          : this.fetch());
+          : prompt.op === "tag" && this.tagPush
+            ? this.pushTag(this.tagPush.name, this.tagPush.remove)
+            : this.fetch());
     } catch (e) {
       this.error = e as AppError;
     } finally {
@@ -1684,6 +1831,13 @@ class TabsStore {
       })
       .catch(() => {
         /* idem pour le pull */
+      });
+    api
+      .onTagPushed((event) => {
+        this.repoTabs.find((t) => t.repoId === event.repoId)?.onTagPushed(event);
+      })
+      .catch(() => {
+        /* idem pour les tags */
       });
     api
       .onPullRequests((event) => {

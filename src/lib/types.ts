@@ -139,10 +139,35 @@ export interface RemoteBranchEntry {
 }
 
 /**
- * Nature d'une référence pointant sur un commit du graph. Les tags ne sont pas
- * encore lus par le backend ; branches locales et distantes le sont.
+ * Tag (`refs/tags/**`), léger ou annoté. `oid` est le **commit** désigné, pas
+ * l'objet tag : c'est ce que le graph sélectionne et ce qu'un checkout amène
+ * sous HEAD.
  */
-export type GraphRefKind = "head" | "localBranch" | "remoteBranch";
+export interface TagEntry {
+  /** Nom court ("v1.2.0"), clé de toutes les commandes sur les tags. */
+  name: string;
+  oid: string;
+  /** Message d'un tag annoté ; null pour un tag léger. */
+  message: string | null;
+}
+
+/** Résultat d'un push de tag : publication, ou suppression sur le distant. */
+export interface TagPushReport {
+  remote: string;
+  tag: string;
+  /** Le tag a été **supprimé** du distant plutôt que publié. */
+  deleted: boolean;
+}
+
+/** Charge utile de `repo://tag-pushed`, jumelle de `PushEvent`. */
+export interface TagPushEvent {
+  repoId: string;
+  report: TagPushReport | null;
+  error: AppError | null;
+}
+
+/** Nature d'une référence pointant sur un commit du graph. */
+export type GraphRefKind = "head" | "localBranch" | "remoteBranch" | "tag";
 
 export interface GraphRef {
   name: string;
