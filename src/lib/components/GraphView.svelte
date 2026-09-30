@@ -404,7 +404,7 @@
   }
 
   /** Rayon de l'arrondi dans l'angle d'un coude. */
-  const ELBOW_R = 5;
+  const ELBOW_R = 8;
 
   /*
     Passage d'une colonne à l'autre : à angle droit, avec un arrondi dans
