@@ -184,16 +184,55 @@ pub struct RemoteBranchEntry {
     pub oid: String,
 }
 
+/// Tag (`refs/tags/**`), léger ou annoté.
+///
+/// `oid` est le **commit** désigné, jamais l'objet tag lui-même : c'est ce que
+/// le graph sélectionne et ce qu'un checkout amène sous HEAD. Un tag qui ne
+/// désigne pas un commit (un arbre, un blob — rare, mais Git le permet) n'est
+/// pas listé : il n'aurait aucune rangée où se montrer.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagEntry {
+    /// Nom court ("v1.2.0"), clé de toutes les commandes sur les tags.
+    pub name: String,
+    /// Commit désigné.
+    pub oid: String,
+    /// Message d'un tag annoté ; `None` pour un tag léger, qui n'en a pas.
+    pub message: Option<String>,
+}
+
+/// Résultat d'un push de tag — publication ou suppression sur le distant.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagPushReport {
+    /// Distant réellement poussé (résolu par le backend).
+    pub remote: String,
+    pub tag: String,
+    /// Vrai si le tag a été **supprimé** du distant plutôt que publié.
+    pub deleted: bool,
+}
+
+/// Charge utile de l'événement `repo://tag-pushed`, jumelle de [`PushEvent`] :
+/// publier ou supprimer un tag distant est un appel réseau, sur un thread dédié.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TagPushEvent {
+    pub repo_id: String,
+    pub report: Option<TagPushReport>,
+    pub error: Option<AppError>,
+}
+
 /// Nature d'une référence pointant sur un commit du graph.
 ///
-/// Les tags ne sont pas encore lus par le backend ; branches locales et
-/// distantes le sont, et se distinguent ici pour que la pastille le montre.
+/// Branches locales, distantes et tags se distinguent ici pour que la pastille
+/// le montre.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub enum GraphRefKind {
     Head,
     LocalBranch,
     RemoteBranch,
+    Tag,
 }
 
 /// Référence (branche, HEAD) attachée à un commit, pour l'affichage des pastilles.

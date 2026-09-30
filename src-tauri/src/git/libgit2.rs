@@ -18,7 +18,8 @@ use crate::dto::{
     FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
     GraphRef, GraphRefKind,
     Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
-    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, Upstream,
+    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry, TagPushReport,
+    Upstream,
 };
 use crate::error::AppError;
 
@@ -669,6 +670,93 @@ impl GitBackend for Libgit2Backend {
         Ok(report(switched, MergeOutcome::Merged { commits: ahead }))
     }
 
+    fn tags(&self) -> Result<Vec<TagEntry>, AppError> {
+        let repo = self.repo()?;
+        tag_entries(&repo)
+    }
+
+    fn create_tag(&self, name: &str, oid: &str, message: Option<&str>) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let name = name.trim();
+        let refname = format!("refs/tags/{name}");
+        // Validé ici plutôt que laissé à libgit2 : son erreur (« invalid
+        // reference name ») ne dit pas lequel, et un nom vide passerait pour un
+        // tag sans nom.
+        if name.is_empty() || !Reference::is_valid_name(&refname) {
+            return Err(AppError::InvalidTagName(name.to_string()));
+        }
+        if repo.find_reference(&refname).is_ok() {
+            return Err(AppError::TagExists(name.to_string()));
+        }
+        let commit = find_commit(&repo, oid)?;
+
+        match message.map(str::trim).filter(|m| !m.is_empty()) {
+            // Annoté : un objet à part entière, signé comme un commit — par
+            // l'identité du dépôt, celle que la boîte de commit a choisie.
+            Some(message) => {
+                let signature = repo.signature().map_err(|_| AppError::MissingSignature)?;
+                repo.tag(name, commit.as_object(), &signature, message, false)?;
+            }
+            None => {
+                repo.tag_lightweight(name, commit.as_object(), false)?;
+            }
+        }
+        Ok(())
+    }
+
+    fn delete_tag(&self, name: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        repo.tag_delete(name)?;
+        Ok(())
+    }
+
+    fn checkout_tag(&self, name: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let commit = repo
+            .find_reference(&format!("refs/tags/{name}"))?
+            .peel_to_commit()?;
+
+        // Même ordre que pour une branche : le working directory d'abord, HEAD
+        // ensuite — un conflit laisse donc HEAD où il était.
+        let mut opts = CheckoutBuilder::new();
+        repo.checkout_tree(commit.as_object(), Some(&mut opts))
+            .map_err(map_checkout_error)?;
+        repo.set_head_detached(commit.id())?;
+        Ok(())
+    }
+
+    fn push_tag(&self, name: &str) -> Result<TagPushReport, AppError> {
+        let repo = self.repo()?;
+        // Échoue tôt, et sans réseau, sur un tag qui n'existe pas en local.
+        repo.find_reference(&format!("refs/tags/{name}"))?;
+        let remote = resolve_remote(&repo, None)?;
+        // Jamais de "+", et plus que ça : écraser un tag publié réécrirait ce
+        // que d'autres ont peut-être déjà récupéré, et aucun geste de
+        // l'interface ne le demande. libgit2 laisserait passer un tag déplacé
+        // en avance rapide ; Git le refuse, et nous aussi.
+        let refspec = format!("refs/tags/{name}:refs/tags/{name}");
+        push_refspec(&repo, &remote, &refspec, Some(PushGuard::NoOverwrite))
+            .map_err(tag_push_error)?;
+        Ok(TagPushReport {
+            remote,
+            tag: name.to_string(),
+            deleted: false,
+        })
+    }
+
+    fn delete_remote_tag(&self, name: &str) -> Result<TagPushReport, AppError> {
+        let repo = self.repo()?;
+        let remote = resolve_remote(&repo, None)?;
+        // Source vide : « ne rien mettre à cet endroit », soit une suppression.
+        let refspec = format!(":refs/tags/{name}");
+        push_refspec(&repo, &remote, &refspec, None).map_err(tag_push_error)?;
+        Ok(TagPushReport {
+            remote,
+            tag: name.to_string(),
+            deleted: true,
+        })
+    }
+
     fn stashes(&self) -> Result<Vec<StashEntry>, AppError> {
         // `stash_foreach` exige un emprunt mutable ; on possède le Repository
         // (ré-ouvert à chaque appel), donc un `mut` local suffit.
@@ -764,6 +852,11 @@ impl GitBackend for Libgit2Backend {
         // vide, ce qui donne une page vide plutôt qu'une erreur.
         let _ = walk.push_glob("refs/heads/*");
         let _ = walk.push_glob("refs/remotes/*");
+        // Les tags aussi : un tag posé sur un commit que plus aucune branche ne
+        // porte (une release dont la branche a été supprimée) serait sinon
+        // listé dans la section TAGS sans rangée où le sélectionner. Un tag qui
+        // ne désigne pas un commit est ignoré par le parcours lui-même.
+        let _ = walk.push_glob("refs/tags/*");
         let _ = walk.push_head();
 
         // On demande un élément de plus que `limit` : sa présence suffit à savoir
@@ -894,7 +987,6 @@ impl GitBackend for Libgit2Backend {
             .to_string();
 
         let name = resolve_remote(&repo, remote)?;
-        let mut remote = repo.find_remote(&name).map_err(|_| AppError::NoRemote)?;
         // Nom de la branche côté distant : celui demandé, sinon le nom local.
         // Il sert trois fois — refspec, bail, suivi — et doit être le même
         // aux trois endroits.
@@ -912,72 +1004,19 @@ impl GitBackend for Libgit2Backend {
             .and_then(|b| b.upstream().ok())
             .is_some();
 
-        // Même écueil que dans `fetch` : les callbacks vivent dans les
-        // `PushOptions` jusqu'à la fin de la fonction, donc leur état passe par
-        // des `Rc` pour rester lisible après coup.
-        let rejection = Rc::new(RefCell::new(None::<String>));
-        let cred_state = Rc::new(Cell::new(CredState::Untouched));
-        // Où le dernier fetch a laissé la branche distante. C'est le « bail »
-        // (*lease*) : la promesse qu'on n'écrasera que cet état-là, et pas ce
-        // qu'un autre aurait poussé depuis.
-        let leased = Rc::new(RefCell::new(None::<String>));
-
-        let mut callbacks = RemoteCallbacks::new();
-        {
-            let rejection = Rc::clone(&rejection);
-            callbacks.push_update_reference(move |refname, status| {
-                // **Ce callback n'est pas optionnel.** Un serveur peut refuser
-                // une référence (non-fast-forward, branche protégée, hook) sans
-                // que `push()` échoue pour autant : sans le lire, ce rejet
-                // passerait pour un succès.
-                if let Some(msg) = status {
-                    *rejection.borrow_mut() = Some(format!("{refname} : {msg}"));
-                }
-                Ok(())
-            });
-        }
-        {
-            let state = Rc::clone(&cred_state);
-            let mut attempts = 0u32;
-            callbacks.credentials(move |url, username, allowed| {
-                attempts += 1;
-                credentials(url, username, allowed, attempts, &state)
-            });
-        }
-        if mode == PushMode::ForceWithLease {
-            // Le bail se vérifie **ici** et nulle part ailleurs : ce callback est
-            // le seul endroit où l'on connaisse l'état réel du serveur (`dst`)
-            // avant que le moindre octet ne parte. Le comparer à notre référence
-            // de suivi, c'est exactement ce que fait `--force-with-lease` ; en
-            // renvoyant une erreur, on annule le push avant l'envoi.
-            //
-            // Une branche distante absente donne un `dst` nul, et notre attente
-            // vaut alors nul aussi : créer la branche n'écrase rien.
-            let expected = repo
-                .find_reference(&format!("refs/remotes/{name}/{target}"))
-                .ok()
-                .and_then(|r| r.target())
-                .unwrap_or_else(Oid::zero);
-            let leased = Rc::clone(&leased);
-            callbacks.push_negotiation(move |updates| {
-                for update in updates {
-                    // `src` est l'état **actuel** de la référence sur le serveur,
-                    // `dst` la valeur qu'on veut y écrire — l'inverse de ce que
-                    // les noms suggèrent au premier coup d'œil.
-                    let actual = update.src();
-                    if actual != expected {
-                        *leased.borrow_mut() = Some(short_oid(actual));
-                        return Err(git2::Error::from_str(
-                            "remote branch moved since the last fetch",
-                        ));
-                    }
-                }
-                Ok(())
-            });
-        }
-
-        let mut options = PushOptions::new();
-        options.remote_callbacks(callbacks);
+        // Le bail (*lease*) : où le dernier fetch a laissé la branche distante,
+        // c'est-à-dire la promesse qu'on n'écrasera que cet état-là, et pas ce
+        // qu'un autre aurait poussé depuis. Une branche distante absente donne
+        // un oid nul, et le serveur annonce nul aussi : créer la branche
+        // n'écrase rien.
+        let lease = (mode == PushMode::ForceWithLease).then(|| {
+            PushGuard::Lease(
+                repo.find_reference(&format!("refs/remotes/{name}/{target}"))
+                    .ok()
+                    .and_then(|r| r.target())
+                    .unwrap_or_else(Oid::zero),
+            )
+        });
 
         // Refspec explicite, et non celles configurées pour le distant : on ne
         // pousse **que** la branche courante, jamais toutes les têtes. Le "+" en
@@ -986,35 +1025,7 @@ impl GitBackend for Libgit2Backend {
         let forced = mode != PushMode::Normal;
         let lead = if forced { "+" } else { "" };
         let refspec = format!("{lead}refs/heads/{branch_name}:refs/heads/{target}");
-        let result = remote.push(&[refspec.as_str()], Some(&mut options));
-        // Ne pas laisser de connexion ouverte derrière soi, succès ou non.
-        let _ = remote.disconnect();
-
-        match result {
-            Ok(()) => {}
-            // Bail rompu : c'est notre propre callback qui a interrompu le push,
-            // donc avant tout envoi. Ce cas passe avant les autres, l'erreur
-            // remontée par libgit2 étant celle que nous lui avons donnée.
-            Err(_) if leased.borrow().is_some() => {
-                let actual = leased.borrow().clone().unwrap_or_default();
-                return Err(AppError::PushLeaseStale(actual));
-            }
-            // Rejet côté client : libgit2 compare les références annoncées par le
-            // serveur avant d'envoyer quoi que ce soit, et s'arrête là.
-            Err(e) if e.code() == ErrorCode::NotFastForward => {
-                return Err(AppError::PushRejected(e.message().to_string()))
-            }
-            Err(_) if cred_state.get() == CredState::NothingToOffer => {
-                return Err(AppError::NoCredentials)
-            }
-            Err(_) if cred_state.get() == CredState::Refused => return Err(AppError::RemoteAuth),
-            Err(e) => return Err(fetch_error(e)),
-        }
-
-        // Rejet côté serveur, lui, remonté par le callback.
-        if let Some(reason) = rejection.borrow().clone() {
-            return Err(AppError::PushRejected(reason));
-        }
+        push_refspec(&repo, &name, &refspec, lease)?;
 
         // `push -u`, et seulement après coup : une branche amont posée alors que
         // le push a échoué désignerait une référence qui n'existe pas.
@@ -1384,6 +1395,143 @@ fn fetch_one(repo: &Repository, name: &str) -> Result<Vec<FetchedRef>, AppError>
     }
 }
 
+/// Vérification faite sur l'état réel du serveur, juste avant l'envoi.
+#[derive(Clone, Copy)]
+enum PushGuard {
+    /// `--force-with-lease` : la référence distante doit encore valoir cet oid
+    /// (nul si elle ne doit pas exister).
+    Lease(Oid),
+    /// La référence distante ne doit pas exister, sauf à valoir déjà ce qu'on
+    /// envoie. C'est la règle de Git pour les tags — il refuse d'en déplacer un
+    /// publié, même en avance rapide —, que libgit2 n'applique pas de lui-même :
+    /// il ne connaît que le refus des non-fast-forward.
+    NoOverwrite,
+}
+
+/// Pousse **une** refspec vers le distant `name` : le transport partagé par le
+/// push de branche et celui des tags (publication comme suppression).
+///
+/// `guard` arme une vérification sur l'état du serveur avant l'envoi (voir
+/// [`PushGuard`]).
+///
+/// Le refus d'une référence remonte en [`AppError::PushRejected`], que
+/// l'appelant peut requalifier — un tag refusé n'appelle pas le même conseil
+/// qu'une branche en retard.
+fn push_refspec(
+    repo: &Repository,
+    name: &str,
+    refspec: &str,
+    guard: Option<PushGuard>,
+) -> Result<(), AppError> {
+    let mut remote = repo.find_remote(name).map_err(|_| AppError::NoRemote)?;
+
+    // Même écueil que dans `fetch_one` : les callbacks vivent dans les
+    // `PushOptions` jusqu'à la fin de la fonction, donc leur état passe par des
+    // `Rc` pour rester lisible après coup.
+    let rejection = Rc::new(RefCell::new(None::<String>));
+    let cred_state = Rc::new(Cell::new(CredState::Untouched));
+    let leased = Rc::new(RefCell::new(None::<String>));
+
+    let mut callbacks = RemoteCallbacks::new();
+    {
+        let rejection = Rc::clone(&rejection);
+        callbacks.push_update_reference(move |refname, status| {
+            // **Ce callback n'est pas optionnel.** Un serveur peut refuser une
+            // référence (non-fast-forward, branche protégée, tag existant, hook)
+            // sans que `push()` échoue pour autant : sans le lire, ce rejet
+            // passerait pour un succès.
+            if let Some(msg) = status {
+                *rejection.borrow_mut() = Some(format!("{refname} : {msg}"));
+            }
+            Ok(())
+        });
+    }
+    {
+        let state = Rc::clone(&cred_state);
+        let mut attempts = 0u32;
+        callbacks.credentials(move |url, username, allowed| {
+            attempts += 1;
+            credentials(url, username, allowed, attempts, &state)
+        });
+    }
+    if let Some(guard) = guard {
+        // La garde se vérifie **ici** et nulle part ailleurs : ce callback est
+        // le seul endroit où l'on connaisse l'état réel du serveur avant que le
+        // moindre octet ne parte. En renvoyant une erreur, on annule le push
+        // avant l'envoi.
+        let leased = Rc::clone(&leased);
+        let rejection = Rc::clone(&rejection);
+        callbacks.push_negotiation(move |updates| {
+            for update in updates {
+                // `src` est l'état **actuel** de la référence sur le serveur,
+                // `dst` la valeur qu'on veut y écrire — l'inverse de ce que les
+                // noms suggèrent au premier coup d'œil.
+                let actual = update.src();
+                match guard {
+                    // Le bail : notre référence de suivi, comparée à ce que le
+                    // serveur a vraiment — exactement `--force-with-lease`.
+                    PushGuard::Lease(expected) if actual != expected => {
+                        *leased.borrow_mut() = Some(short_oid(actual));
+                        return Err(git2::Error::from_str(
+                            "remote branch moved since the last fetch",
+                        ));
+                    }
+                    PushGuard::NoOverwrite if !actual.is_zero() && actual != update.dst() => {
+                        let refname = update.dst_refname().unwrap_or_default();
+                        *rejection.borrow_mut() = Some(format!(
+                            "{refname} : already exists at {}",
+                            short_oid(actual)
+                        ));
+                        return Err(git2::Error::from_str("remote reference already exists"));
+                    }
+                    _ => {}
+                }
+            }
+            Ok(())
+        });
+    }
+
+    let mut options = PushOptions::new();
+    options.remote_callbacks(callbacks);
+
+    let result = remote.push(&[refspec], Some(&mut options));
+    // Ne pas laisser de connexion ouverte derrière soi, succès ou non.
+    let _ = remote.disconnect();
+
+    match result {
+        Ok(()) => {}
+        // Bail rompu : c'est notre propre callback qui a interrompu le push,
+        // donc avant tout envoi. Ce cas passe avant les autres, l'erreur
+        // remontée par libgit2 étant celle que nous lui avons donnée.
+        Err(_) if leased.borrow().is_some() => {
+            let actual = leased.borrow().clone().unwrap_or_default();
+            return Err(AppError::PushLeaseStale(actual));
+        }
+        // Même chose pour la garde « pas d'écrasement » : c'est nous qui
+        // refusons, pas le serveur, mais c'est un refus quand même.
+        Err(_) if rejection.borrow().is_some() => {
+            let reason = rejection.borrow().clone().unwrap_or_default();
+            return Err(AppError::PushRejected(reason));
+        }
+        // Rejet côté client : libgit2 compare les références annoncées par le
+        // serveur avant d'envoyer quoi que ce soit, et s'arrête là.
+        Err(e) if e.code() == ErrorCode::NotFastForward => {
+            return Err(AppError::PushRejected(e.message().to_string()))
+        }
+        Err(_) if cred_state.get() == CredState::NothingToOffer => {
+            return Err(AppError::NoCredentials)
+        }
+        Err(_) if cred_state.get() == CredState::Refused => return Err(AppError::RemoteAuth),
+        Err(e) => return Err(fetch_error(e)),
+    }
+
+    // Rejet côté serveur, lui, remonté par le callback.
+    if let Some(reason) = rejection.borrow().clone() {
+        return Err(AppError::PushRejected(reason));
+    }
+    Ok(())
+}
+
 /// Détermine quel dépôt distant interroger quand l'appel n'en nomme aucun :
 /// celui suivi par la branche courante, sinon `origin`, sinon le premier déclaré.
 fn resolve_remote(repo: &Repository, wanted: Option<&str>) -> Result<String, AppError> {
@@ -1603,6 +1751,16 @@ fn collect_refs(repo: &Repository) -> Result<HashMap<Oid, Vec<GraphRef>>, AppErr
         });
     }
 
+    // Les tags en dernier : sur un commit qui porte aussi des branches, ils
+    // passent après elles (le frontend les trie de toute façon en queue).
+    for tag in tag_entries(repo)? {
+        let Ok(oid) = Oid::from_str(&tag.oid) else { continue };
+        map.entry(oid).or_default().push(GraphRef {
+            name: tag.name,
+            kind: GraphRefKind::Tag,
+        });
+    }
+
     // HEAD détaché : aucune branche ne le porte, on l'ajoute explicitement.
     if repo.head_detached().unwrap_or(false) {
         if let Some(oid) = repo.head().ok().and_then(|h| h.target()) {
@@ -1617,6 +1775,49 @@ fn collect_refs(repo: &Repository) -> Result<HashMap<Oid, Vec<GraphRef>>, AppErr
     }
 
     Ok(map)
+}
+
+/// Les tags du dépôt qui désignent un commit, triés par nom.
+///
+/// Partagé par la liste de la section TAGS et par les pastilles du graph, pour
+/// que les deux ne puissent pas diverger sur ce qu'est « le commit d'un tag ».
+/// Un tag annoté est suivi jusqu'à son commit (`peel_to_commit`) ; un tag qui
+/// désigne autre chose qu'un commit est écarté, faute de rangée où le montrer.
+fn tag_entries(repo: &Repository) -> Result<Vec<TagEntry>, AppError> {
+    let mut out = Vec::new();
+    for reference in repo.references_glob("refs/tags/*")? {
+        let reference = reference?;
+        // `name()` est None si le nom n'est pas de l'UTF-8 valide.
+        let Some(name) = reference.name().and_then(|n| n.strip_prefix("refs/tags/")) else {
+            continue;
+        };
+        let Ok(commit) = reference.peel_to_commit() else {
+            continue;
+        };
+        // Un tag annoté est un objet : sa référence désigne le tag, pas le
+        // commit. Un tag léger désigne directement le commit, `find_tag` échoue.
+        let message = reference
+            .target()
+            .and_then(|oid| repo.find_tag(oid).ok())
+            .map(|tag| tag.message().unwrap_or_default().trim().to_string());
+        out.push(TagEntry {
+            name: name.to_string(),
+            oid: commit.id().to_string(),
+            message,
+        });
+    }
+    out.sort_by(|a, b| a.name.cmp(&b.name));
+    Ok(out)
+}
+
+/// Requalifie le refus d'un push de tag : le conseil de [`AppError::PushRejected`]
+/// (récupérer puis intégrer les commits du distant) n'a pas de sens pour un tag,
+/// que le distant refuse parce qu'il en a déjà un autre du même nom.
+fn tag_push_error(e: AppError) -> AppError {
+    match e {
+        AppError::PushRejected(reason) => AppError::TagRejected(reason),
+        other => other,
+    }
 }
 
 fn build_graph_commit(commit: &Commit, refs: &HashMap<Oid, Vec<GraphRef>>) -> GraphCommit {
@@ -3800,5 +4001,181 @@ mod tests {
 
         assert_eq!(kept, vec![workdir.join("src/main.rs")]);
         fs::remove_dir_all(&dir).ok();
+    }
+
+    // ── Tags ────────────────────────────────────────────────────────────────
+
+    #[test]
+    fn tags_are_created_listed_on_their_commit_and_deleted() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+
+        // Léger sur le premier commit, annoté sur le second.
+        git.create_tag("v1", &first, None).unwrap();
+        let head = git.info().unwrap().head.unwrap();
+        git.create_tag("v2", &head, Some("  Release 2\n")).unwrap();
+
+        let tags = git.tags().unwrap();
+        assert_eq!(tags.len(), 2);
+        assert_eq!((tags[0].name.as_str(), tags[0].oid.as_str()), ("v1", first.as_str()));
+        assert!(tags[0].message.is_none(), "un tag léger n'a pas de message");
+        // L'oid est celui du **commit**, pas de l'objet tag annoté.
+        assert_eq!((tags[1].name.as_str(), tags[1].oid.as_str()), ("v2", head.as_str()));
+        assert_eq!(tags[1].message.as_deref(), Some("Release 2"));
+
+        // Les pastilles du graph portent les tags, sur leur commit.
+        let page = git.commit_graph(0, 10).unwrap();
+        let refs_of = |oid: &str| {
+            page.commits
+                .iter()
+                .find(|c| c.oid == oid)
+                .unwrap()
+                .refs
+                .iter()
+                .filter(|r| matches!(r.kind, GraphRefKind::Tag))
+                .map(|r| r.name.clone())
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(refs_of(&first), ["v1"]);
+        assert_eq!(refs_of(&head), ["v2"]);
+
+        git.delete_tag("v1").unwrap();
+        let names: Vec<_> = git.tags().unwrap().into_iter().map(|t| t.name).collect();
+        assert_eq!(names, ["v2"]);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tag_creation_refuses_a_duplicate_or_an_invalid_name() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let head = git.info().unwrap().head.unwrap();
+
+        git.create_tag("v1", &head, None).unwrap();
+        assert!(matches!(
+            git.create_tag("v1", &head, Some("again")),
+            Err(AppError::TagExists(name)) if name == "v1"
+        ));
+        assert!(matches!(
+            git.create_tag("bad name", &head, None),
+            Err(AppError::InvalidTagName(_))
+        ));
+        assert!(matches!(
+            git.create_tag("  ", &head, None),
+            Err(AppError::InvalidTagName(_))
+        ));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn graph_walks_a_commit_that_only_a_tag_holds() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let branch = git.info().unwrap().branch.unwrap();
+
+        // Une branche de release, taguée puis supprimée : seul le tag retient
+        // son commit.
+        let repo = Repository::open(&dir).unwrap();
+        let base = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("release", &base, false).unwrap();
+        git.checkout_branch("release").unwrap();
+        commit_file(&dir, &git, "b.txt", "r\n", "release commit");
+        let released = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &released, None).unwrap();
+        git.checkout_branch(&branch).unwrap();
+        repo.find_branch("release", BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+
+        let page = git.commit_graph(0, 10).unwrap();
+        assert!(page.commits.iter().any(|c| c.oid == released));
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn checkout_tag_detaches_head_on_its_commit() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &first, Some("annotated")).unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+
+        git.checkout_tag("v1").unwrap();
+        let info = git.info().unwrap();
+        assert!(info.is_detached);
+        assert_eq!(info.head.as_deref(), Some(first.as_str()));
+        assert_eq!(fs::read_to_string(dir.join("a.txt")).unwrap(), "1\n");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn checkout_tag_refuses_to_overwrite_local_changes() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &first, None).unwrap();
+        commit_file(&dir, &git, "a.txt", "2\n", "c2");
+        fs::write(dir.join("a.txt"), "local\n").unwrap();
+
+        assert!(matches!(git.checkout_tag("v1"), Err(AppError::CheckoutConflict)));
+        assert!(!git.info().unwrap().is_detached, "HEAD n'a pas bougé");
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn tags_are_pushed_then_deleted_on_the_remote_only() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        commit_file(&local_dir, &git, "a.txt", "1\n", "c1");
+        let head = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &head, Some("Release 1")).unwrap();
+
+        let report = git.push_tag("v1").unwrap();
+        assert_eq!((report.remote.as_str(), report.tag.as_str()), ("origin", "v1"));
+        assert!(!report.deleted);
+        let origin = Repository::open(&origin_dir).unwrap();
+        let pushed = origin.find_reference("refs/tags/v1").unwrap();
+        assert_eq!(pushed.peel_to_commit().unwrap().id().to_string(), head);
+        // Le même tag, poussé une seconde fois, n'écrase rien : pas un refus.
+        git.push_tag("v1").unwrap();
+
+        let report = git.delete_remote_tag("v1").unwrap();
+        assert!(report.deleted);
+        assert!(origin.find_reference("refs/tags/v1").is_err());
+        // Le tag local, lui, est toujours là.
+        assert_eq!(git.tags().unwrap().len(), 1);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn pushing_a_tag_the_remote_holds_elsewhere_is_a_tag_rejection() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        commit_file(&local_dir, &git, "a.txt", "1\n", "c1");
+        let first = git.info().unwrap().head.unwrap();
+        git.create_tag("v1", &first, None).unwrap();
+        git.push_tag("v1").unwrap();
+
+        // Le tag est recréé ailleurs en local : le distant a toujours l'ancien.
+        commit_file(&local_dir, &git, "a.txt", "2\n", "c2");
+        let second = git.info().unwrap().head.unwrap();
+        git.delete_tag("v1").unwrap();
+        git.create_tag("v1", &second, None).unwrap();
+
+        assert!(matches!(git.push_tag("v1"), Err(AppError::TagRejected(_))));
+        let origin = Repository::open(&origin_dir).unwrap();
+        let kept = origin.find_reference("refs/tags/v1").unwrap();
+        assert_eq!(kept.peel_to_commit().unwrap().id().to_string(), first);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
     }
 }
