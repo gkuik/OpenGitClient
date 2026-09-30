@@ -125,8 +125,9 @@ function mergeStatus(report: MergeReport): string {
  */
 export class RepoStore {
   /**
-   * Sorte d'onglet — discriminant du type `Tab`. La barre en accueille deux :
-   * un dépôt ouvert, et la page « Nouvel onglet » (voir `NewTab`).
+   * Sorte d'onglet — discriminant du type `Tab`. La barre en accueille trois :
+   * un dépôt ouvert, la page « Nouvel onglet » (voir `NewTab`) et les
+   * paramètres (voir `SettingsTab`).
    */
   readonly kind = "repo" as const;
 
@@ -1612,8 +1613,22 @@ export class NewTab {
   }
 }
 
-/** Ce que la barre affiche : un dépôt ouvert, ou une page d'accueil. */
-export type Tab = RepoStore | NewTab;
+/**
+ * Onglet des paramètres. Frontend seul, pour la même raison que `NewTab` : il
+ * n'a pas de dépôt, donc pas de chemin à faire connaître au backend, et il n'est
+ * pas restauré au lancement.
+ *
+ * **Un seul à la fois** — d'où un `id` fixe plutôt qu'un compteur : la roue
+ * dentée active celui qui existe au lieu d'en ouvrir un second, comme ouvrir un
+ * dépôt déjà ouvert active son onglet.
+ */
+export class SettingsTab {
+  readonly kind = "settings" as const;
+  readonly id = "settings";
+}
+
+/** Ce que la barre affiche : un dépôt ouvert, une page d'accueil, les paramètres. */
+export type Tab = RepoStore | NewTab | SettingsTab;
 
 /**
  * Collection des dépôts ouverts — un onglet chacun.
@@ -1633,14 +1648,6 @@ class TabsStore {
   opening = $state(false);
   /** Erreur d'ouverture — celles propres à un dépôt vivent dans son onglet. */
   openError = $state<AppError | null>(null);
-  /**
-   * L'écran Paramètres occupe-t-il le corps de la fenêtre ?
-   *
-   * C'est bien ici que ça vit : `TabsStore` décide déjà de ce qu'affiche le
-   * corps (`hasTabs` fait apparaître `WelcomeScreen`), et les paramètres sont
-   * globaux — les rattacher à un onglet n'aurait aucun sens.
-   */
-  settingsOpen = $state(false);
   /** Profils d'auteur, partagés par tous les onglets. */
   profiles = $state<Profile[]>([]);
   /**
@@ -1673,6 +1680,11 @@ class TabsStore {
   /** Le corps de la fenêtre affiche-t-il la page « Nouvel onglet » ? */
   get activeIsNew(): boolean {
     return this.activeTab?.kind === "new";
+  }
+
+  /** Le corps de la fenêtre affiche-t-il les paramètres ? */
+  get activeIsSettings(): boolean {
+    return this.activeTab?.kind === "settings";
   }
 
   get hasTabs(): boolean {
@@ -1758,12 +1770,14 @@ class TabsStore {
     await this.activate(restored ? session.active! : (this.tabs[0]?.id ?? null));
   }
 
-  toggleSettings() {
-    this.settingsOpen = !this.settingsOpen;
-  }
-
-  closeSettings() {
-    this.settingsOpen = false;
+  /**
+   * Active l'onglet des paramètres, en l'ouvrant en fin de barre s'il n'existe
+   * pas encore. Jamais de second exemplaire : voir `SettingsTab`.
+   */
+  openSettings() {
+    const existing = this.tabs.find((t) => t.kind === "settings");
+    if (!existing) this.tabs = [...this.tabs, new SettingsTab()];
+    void this.activate(existing?.id ?? "settings");
   }
 
   async loadProfiles() {
@@ -1802,8 +1816,6 @@ class TabsStore {
    * s'active comme n'importe quel onglet.
    */
   newTab() {
-    // Ouvrir un onglet, c'est vouloir le voir : les paramètres cèdent la place.
-    this.settingsOpen = false;
     const tab = new NewTab(`new:${this.nextNewTabId++}`);
     this.tabs = [...this.tabs, tab];
     void this.activate(tab.id);
@@ -1818,8 +1830,6 @@ class TabsStore {
   /** Ouvre un dépôt (ou active son onglet s'il l'est déjà). */
   async open(path: string) {
     if (this.opening) return;
-    // Ouvrir un dépôt, c'est vouloir le voir : les paramètres cèdent la place.
-    this.settingsOpen = false;
     // Ouvert depuis une page « Nouvel onglet » : le dépôt prend sa place au lieu
     // de s'ajouter au bout, et la page disparaît — elle a fait son office.
     const active = this.activeTab;
@@ -1847,9 +1857,10 @@ class TabsStore {
 
     // L'onglet est affiché immédiatement ; le rafraîchissement suit.
     this.activeId = id;
-    // Une page d'accueil n'a ni statut à resynchroniser ni dépôt à annoncer : la
-    // session garde le dernier dépôt actif, qui est bien celui à rouvrir.
-    if (tab.kind === "new") return;
+    // Une page d'accueil ou les paramètres n'ont ni statut à resynchroniser ni
+    // dépôt à annoncer : la session garde le dernier dépôt actif, qui est bien
+    // celui à rouvrir.
+    if (tab.kind !== "repo") return;
     api.setActiveRepo(id).catch(() => {
       /* la persistance de la session ne doit jamais bloquer la navigation */
     });
@@ -1876,7 +1887,7 @@ class TabsStore {
 
     // Le backend ne garde l'ordre que pour restaurer la session : un échec de
     // persistance ne doit pas annuler le déplacement déjà fait à l'écran. Il ne
-    // connaît que les dépôts, donc les pages d'accueil sont filtrées — l'ordre
+    // connaît que les dépôts, donc les autres onglets sont filtrés — l'ordre
     // relatif des autres suffit à le renseigner.
     api.setTabOrder(this.repoTabs.map((t) => t.repoId)).catch(() => {
       /* l'ordre reste correct pour cette session */
@@ -1890,8 +1901,8 @@ class TabsStore {
     const tab = this.tabs[index];
 
     this.tabs = this.tabs.filter((t) => t.id !== id);
-    // Une page « Nouvel onglet » n'existe que dans le webview : rien à fermer
-    // en face.
+    // Une page « Nouvel onglet » ou les paramètres n'existent que dans le
+    // webview : rien à fermer en face.
     if (tab.kind === "repo") {
       try {
         await api.closeRepository(id);

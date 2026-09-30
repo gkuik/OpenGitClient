@@ -5,7 +5,6 @@
   import { errorMessage, t } from "../i18n.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
-  import Cross from "./Cross.svelte";
   import RichText from "./RichText.svelte";
   import type { AppError, Profile, ThemeMode } from "../types";
 
@@ -208,22 +207,10 @@
   }
 </script>
 
-<svelte:window
-  onkeydown={(e) => (e.key === "Escape" ? tabs.closeSettings() : undefined)}
-/>
-
 <div class="settings">
   <div class="sheet">
     <header>
       <h1>{t("settings.title")}</h1>
-      <button
-        class="close"
-        title={t("action.close")}
-        aria-label={t("action.close")}
-        onclick={() => tabs.closeSettings()}
-      >
-        <Cross />
-      </button>
     </header>
 
     <section>
@@ -495,36 +482,12 @@
     padding: 1.5rem 1.5rem 3rem;
   }
   header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
     margin-bottom: 1.4rem;
   }
   h1 {
     margin: 0;
     font-size: 1.1rem;
     font-weight: 600;
-  }
-  .close {
-    width: 28px;
-    height: 28px;
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    background: transparent;
-    color: var(--text-dim);
-    font-size: 1rem;
-    line-height: 1;
-    cursor: pointer;
-    /* La croix est un tracé (`Cross`) : le bouton n'a plus qu'à centrer sa boîte,
-       et son remplissage par défaut — l'une des causes du décalage — est ôté. */
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    padding: 0;
-  }
-  .close:hover {
-    color: var(--text);
-    background: var(--bg-raised);
   }
   h2 {
     margin: 0 0 0.5rem;

@@ -27,12 +27,13 @@
   <!-- La barre d'onglets tient lieu de topbar : pas de logo ni de bouton d'ouverture. -->
   <TabBar />
 
-  <!-- Les paramètres occupent tout le corps, par-dessus l'accueil comme par
-       dessus un dépôt ouvert : la barre d'onglets, elle, reste accessible. -->
-  {#if tabs.settingsOpen}
-    <SettingsView />
-  {:else if !tabs.hasTabs}
+  {#if !tabs.hasTabs}
     <WelcomeScreen />
+    <!-- Les paramètres sont un onglet comme un autre : ils prennent la place des
+         trois colonnes, la barre d'onglets restant au-dessus. Démontés dès qu'on
+         change d'onglet, ils relisent la liste des hôtes à chaque retour. -->
+  {:else if tabs.activeIsSettings}
+    <SettingsView />
     <!-- Un onglet sans dépôt : sa page d'accueil prend la place des trois
          colonnes, la barre d'onglets restant au-dessus. -->
   {:else if tabs.activeIsNew}
