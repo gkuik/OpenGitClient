@@ -3,6 +3,7 @@ import "./app.css";
 import App from "./App.svelte";
 import { font } from "./lib/font.svelte";
 import { i18n } from "./lib/i18n.svelte";
+import { graphColumns } from "./lib/graphColumns.svelte";
 import { layout } from "./lib/layout.svelte";
 import { theme } from "./lib/theme.svelte";
 
@@ -18,6 +19,8 @@ font.init();
 // Idem pour les largeurs des colonnes latérales : leur défaut est dans
 // `app.css`, la préférence arrive après.
 layout.init();
+// Disposition du tableau du graph : défaut d'abord, préférence ensuite.
+graphColumns.init();
 
 const app = mount(App, {
   target: document.getElementById("app")!,

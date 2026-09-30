@@ -13,8 +13,8 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths, ThemeMode, FONT_SIZE_DEFAULT,
-    FONT_SIZE_MAX, FONT_SIZE_MIN,
+    GraphColumns, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths, ThemeMode,
+    FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN,
 };
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
@@ -252,6 +252,18 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Disposition du tableau du graph, nettoyée à la lecture comme les
+    /// largeurs : le fichier peut avoir été édité à la main.
+    pub fn graph_columns(&self) -> GraphColumns {
+        self.prefs.graph_columns.clone().sanitized()
+    }
+
+    /// Change la disposition du tableau du graph et la persiste.
+    pub fn set_graph_columns(&mut self, columns: GraphColumns) -> Result<(), AppError> {
+        self.prefs.graph_columns = columns.sanitized();
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -362,6 +374,8 @@ struct Prefs {
     font_size: u8,
     /// Largeurs des deux colonnes latérales, en rem.
     sidebars: SidebarWidths,
+    /// Disposition du tableau du graph : ordre, colonnes masquées, largeurs.
+    graph_columns: GraphColumns,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -374,6 +388,7 @@ impl Default for Prefs {
             theme: ThemeMode::default(),
             font_size: FONT_SIZE_DEFAULT,
             sidebars: SidebarWidths::default(),
+            graph_columns: GraphColumns::default(),
         }
     }
 }

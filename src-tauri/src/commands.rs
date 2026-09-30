@@ -19,6 +19,7 @@ use crate::dto::{
     FileSource, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
+    GraphColumns,
     ThemeMode,
 };
 use crate::error::AppError;
@@ -457,6 +458,21 @@ pub fn set_sidebar_widths(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
     lock(&state)?.set_sidebar_widths(widths)
+}
+
+/// Disposition du tableau du graph (préférence globale, persistée). Le backend
+/// la ramène à quelque chose d'affichable dans les deux sens.
+#[tauri::command]
+pub fn get_graph_columns(state: State<'_, Mutex<AppState>>) -> Result<GraphColumns, AppError> {
+    Ok(lock(&state)?.graph_columns())
+}
+
+#[tauri::command]
+pub fn set_graph_columns(
+    columns: GraphColumns,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.set_graph_columns(columns)
 }
 
 /// Aligne l'apparence de la fenêtre principale sur le thème choisi.
