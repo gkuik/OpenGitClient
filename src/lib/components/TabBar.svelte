@@ -396,7 +396,10 @@
     padding: 0 0.5rem 0 0.75rem;
     border: 1px solid transparent;
     border-radius: 6px;
-    background: var(--bg-raised);
+    /* Seul l'onglet actif a un fond : les autres ne sont que leur libellé,
+       posé sur la barre. Un onglet glissé est toujours l'actif — il s'active
+       au `pointerdown` —, il ne passe donc jamais transparent sur ses voisins. */
+    background: transparent;
     color: var(--text-dim);
     font-size: 0.83rem;
     cursor: pointer;
