@@ -64,6 +64,12 @@ export interface GraphEdge {
   /** Index dans `LANE_COLORS`. */
   color: number;
   kind: GraphEdgeKind;
+  /**
+   * Segment de la ligne qui relie les modifications en cours à HEAD : dessiné
+   * en pointillés, comme le nœud WIP lui-même — ce lien n'est pas encore un
+   * commit. Absent partout ailleurs, plutôt que `false`.
+   */
+  dashed?: true;
 }
 
 /** Géométrie commune à toutes les rangées, commit ou non. */
@@ -158,6 +164,9 @@ export function layoutGraph(
   // Pour chaque colonne : l'oid attendu, ou null si la colonne est libre.
   const lanes: (string | null)[] = [];
   let laneCount = 0;
+  // Colonne qui porte la ligne WIP → HEAD, tant que HEAD n'est pas atteint.
+  // Elle ne bouge jamais : aucune étape ne déplace un oid déjà en attente.
+  let wipLane: number | null = null;
 
   if (wip) {
     // Rien n'attend encore : la colonne allouée est la 0.
@@ -166,7 +175,14 @@ export function layoutGraph(
     // Sans commit (dépôt vierge), le nœud ne descend nulle part.
     if (wip.head !== null) {
       lanes[lane] = wip.head;
-      edges.push({ fromLane: lane, toLane: lane, color: colorOf(lane), kind: "out" });
+      wipLane = lane;
+      edges.push({
+        fromLane: lane,
+        toLane: lane,
+        color: colorOf(lane),
+        kind: "out",
+        dashed: true,
+      });
     }
     rows.push({ kind: "wip", lane, color: colorOf(lane), edges });
     laneCount = Math.max(laneCount, lane + 1);
@@ -209,14 +225,21 @@ export function layoutGraph(
     for (let i = 0; i < before.length; i++) {
       const waiting = before[i];
       if (waiting === null) continue;
-      if (waiting === commit.oid) {
-        edges.push({ fromLane: i, toLane: lane, color: colorOf(i), kind: "in" });
-      } else {
-        // Colonne non concernée : elle traverse la rangée sans changer d'index
-        // (aucune étape ne déplace un oid déjà en attente).
-        edges.push({ fromLane: i, toLane: i, color: colorOf(i), kind: "through" });
-      }
+      const kind: GraphEdgeKind = waiting === commit.oid ? "in" : "through";
+      // Colonne non concernée : elle traverse la rangée sans changer d'index
+      // (aucune étape ne déplace un oid déjà en attente).
+      const edge: GraphEdge = {
+        fromLane: i,
+        toLane: kind === "in" ? lane : i,
+        color: colorOf(i),
+        kind,
+      };
+      if (i === wipLane) edge.dashed = true;
+      edges.push(edge);
     }
+    // HEAD atteint : la ligne WIP s'arrête sur son point, ce qui en repart est
+    // l'historique ordinaire.
+    if (wipLane !== null && before[wipLane] === commit.oid) wipLane = null;
     for (const l of parentLanes) {
       edges.push({ fromLane: lane, toLane: l, color: colorOf(l), kind: "out" });
     }

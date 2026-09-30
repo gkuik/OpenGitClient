@@ -23,6 +23,8 @@
   const DOT_R = 4;
   /** Rayon du cercle « modifications en cours » : plus large que le point d'un commit. */
   const WIP_R = DOT_R + 1.5;
+  /** Motif du nœud WIP et de sa ligne vers HEAD : ni l'un ni l'autre n'est un commit. */
+  const WIP_DASH = [3, 2.5];
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /*
@@ -207,6 +209,14 @@
         const x1 = laneX(edge.fromLane);
         const x2 = laneX(edge.toLane);
         ctx.strokeStyle = lanes[edge.color];
+        // Ligne WIP → HEAD : pointillés, comme le nœud. Le décalage se cale sur
+        // la position **absolue** du segment dans le graph, pas sur la vue :
+        // chaque rangée trace son morceau à part, et sans ça le motif
+        // repartirait de zéro à chaque rangée et glisserait au défilement.
+        if (edge.dashed) {
+          ctx.setLineDash(WIP_DASH);
+          ctx.lineDashOffset = (edge.kind === "out" ? outY : top) + scrollTop;
+        }
         ctx.beginPath();
         if (edge.kind === "through") {
           ctx.moveTo(x1, top);
@@ -221,6 +231,7 @@
           link(ctx, x1, outY, x2, top + ROW_H);
         }
         ctx.stroke();
+        if (edge.dashed) ctx.setLineDash([]);
       }
 
       const x = laneX(row.lane);
@@ -228,7 +239,8 @@
       if (isWip) {
         // Cercle vide en pointillés, dans la couleur de la lane de HEAD : ces
         // modifications sont sur cette branche, mais ne sont pas un commit.
-        ctx.setLineDash([3, 2.5]);
+        ctx.setLineDash(WIP_DASH);
+        ctx.lineDashOffset = 0;
         ctx.beginPath();
         ctx.arc(x, mid, radius, 0, Math.PI * 2);
         ctx.strokeStyle = lanes[row.color];
