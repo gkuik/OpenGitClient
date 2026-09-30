@@ -196,6 +196,20 @@
       // qui écrive déjà le working directory.
       busy: !repo.repoInfo?.head || repo.checkingOut || repo.busy || repo.mergingBranches,
     })}
+    {@render action({
+      label: t("toolbar.stash"),
+      icon: stashIcon,
+      hint: repo.changeCount === 0 ? t("toolbar.stash.nothing") : t("toolbar.stash.hint"),
+      run: () => repo.quickStash(),
+      // Rien à remiser, ou quelque chose écrit déjà le working directory.
+      busy:
+        repo.changeCount === 0 ||
+        repo.stashing ||
+        repo.checkingOut ||
+        repo.busy ||
+        repo.mergingBranches ||
+        !repo.repoInfo,
+    })}
   </div>
 
   <!-- Compte rendu partagé par les trois : le backend ne laisse pas un fetch et
@@ -463,6 +477,14 @@
     <circle cx="11.5" cy="5" r="1.75" />
     <path d="M4.5 5.25v5.5" />
     <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" />
+  </svg>
+{/snippet}
+
+{#snippet stashIcon()}
+  <!-- Le bac de rangement de la section STASHES, agrandi. -->
+  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" />
+    <path d="M1.5 8.75h3.2l1 1.6h4.6l1-1.6h3.2" stroke-linecap="round" />
   </svg>
 {/snippet}
 

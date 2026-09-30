@@ -849,8 +849,8 @@ export class RepoStore {
    * bouge pas — `refs/stash` n'est pas parcouru par le graph — d'où l'absence
    * de rechargement de celui-ci.
    */
-  async stash(): Promise<boolean> {
-    const summary = this.stashSummary.trim();
+  async stash(fallback = ""): Promise<boolean> {
+    const summary = this.stashSummary.trim() || fallback;
     if (summary.length === 0 || this.changeCount === 0) return false;
     this.stashing = true;
     this.error = null;
@@ -859,6 +859,7 @@ export class RepoStore {
       await api.stashSave(this.repoId, summary, body.length > 0 ? body : null);
       this.stashSummary = "";
       this.stashBody = "";
+      this.setOpStatus(t("op.stash.saved", { name: summary }), "ok");
       await this.refreshStatus();
       await this.loadStashes();
       return true;
@@ -868,6 +869,18 @@ export class RepoStore {
     } finally {
       this.stashing = false;
     }
+  }
+
+  /**
+   * Bouton Stash de la barre du dépôt : remise **tout de suite**, sans rien
+   * demander, comme chez GitKraken. Le nom est celui en cours de rédaction dans
+   * l'onglet Stash de la boîte de commit s'il y en a un — qui l'a tapé puis
+   * clique ici veut ce nom-là —, sinon celui que Git donnerait lui-même,
+   * « WIP on <branche> ».
+   */
+  async quickStash() {
+    if (this.stashing || this.changeCount === 0) return;
+    await this.stash(t("stash.default", { branch: this.repoInfo?.branch ?? "HEAD" }));
   }
 
   /**

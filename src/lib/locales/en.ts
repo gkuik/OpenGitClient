@@ -113,6 +113,8 @@ export const en = {
   "stash.nothing": "Nothing to stash.",
   "stash.button": "Stash",
   "stash.button.busy": "Working…",
+  // Nom d'un stash lancé depuis la barre du dépôt sans nom saisi : celui de Git.
+  "stash.default": "WIP on {branch}",
 
   // ── Colonne de droite : détail d'un commit ────────────────────────────────
   "commitDetails.label": "Commit",
@@ -201,6 +203,10 @@ export const en = {
   "branch.create.label": "New branch from {from}",
   "branch.create.name": "Name of the new branch",
   "branch.create.submit": "Create branch",
+  "toolbar.stash": "Stash",
+  "toolbar.stash.hint":
+    "Stash every change, untracked files included — under the name typed in the Stash tab, or “WIP on <branch>”",
+  "toolbar.stash.nothing": "Nothing to stash",
   "toolbar.fetch": "Fetch",
   "toolbar.fetch.hint": "Fetch the refs of the remote",
   "toolbar.status.fetching": "Fetching…",
@@ -391,6 +397,7 @@ export const en = {
   "op.push.forced": "{remote}: {branch} rewritten (force push)",
   "op.push.published.upstream": "{remote}: {branch} published, upstream set",
   "op.push.published.as": "{remote}: {branch} published as {target}, upstream set",
+  "op.stash.saved": "Stashed as “{name}”",
   "op.branch.created": "{branch} created and checked out",
   "op.tag.pushed": "{remote}: tag {tag} published",
   "op.tag.deleted": "{remote}: tag {tag} deleted",
