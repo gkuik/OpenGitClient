@@ -396,7 +396,10 @@
     padding: 0 0.5rem 0 0.75rem;
     border: 1px solid transparent;
     border-radius: 6px;
-    background: var(--bg-raised);
+    /* Seul l'onglet actif a un fond : les autres ne sont que leur libellé,
+       posé sur la barre. Un onglet glissé est toujours l'actif — il s'active
+       au `pointerdown` —, il ne passe donc jamais transparent sur ses voisins. */
+    background: transparent;
     color: var(--text-dim);
     font-size: 0.83rem;
     cursor: pointer;
@@ -404,9 +407,11 @@
   .tab:hover {
     color: var(--text);
   }
+  /* Le fond seul distingue l'onglet actif, sans bordure. Celle, transparente,
+     de `.tab` reste en place : l'onglet garde la même taille qu'il soit actif
+     ou non. */
   .tab.active {
     background: var(--accent-bg);
-    border-color: var(--accent);
     color: var(--text);
   }
   /*
