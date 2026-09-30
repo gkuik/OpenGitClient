@@ -36,7 +36,7 @@
       // Rien n'a changé côté dépôt : le sélecteur doit retrouver sa valeur, que
       // l'état dérivé ne réécrira pas puisqu'il n'a pas bougé.
       event.currentTarget.value = selected;
-      tabs.settingsOpen = true;
+      tabs.openSettings();
       return;
     }
     repo.applyProfile(tabs.profiles.find((p) => p.id === id) ?? null);

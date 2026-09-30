@@ -138,7 +138,7 @@
              échecs-là se règlent dans les Réglages, en deux clics. -->
         <p class="note">{errorMessage(repo.prError)}</p>
         {#if repo.prError.kind === "ForgeToken" || repo.prError.kind === "ForgeAuth"}
-          <button class="link" onclick={() => (tabs.settingsOpen = true)}>
+          <button class="link" onclick={() => tabs.openSettings()}>
             {t("pr.settings")}
           </button>
         {:else}

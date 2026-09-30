@@ -6,9 +6,9 @@
   // Cette barre remplace l'ancienne topbar (logo + bouton « Ouvrir un dépôt ») :
   // elle ne contient que les onglets et le « + » qui en ouvre un nouveau.
   //
-  // Un onglet est soit un dépôt ouvert, soit une page « Nouvel onglet » qui
-  // n'en a pas encore (voir `NewTab`) : la barre les traite exactement pareil,
-  // seul le libellé les distingue.
+  // Un onglet est un dépôt ouvert, une page « Nouvel onglet » qui n'en a pas
+  // encore (voir `NewTab`) ou les paramètres (voir `SettingsTab`) : la barre
+  // les traite exactement pareil, seuls le libellé et l'icône les distinguent.
   //
   // Sur macOS la fenêtre est en `titleBarStyle: Overlay` : le contenu passe sous
   // la barre de titre, donc il faut réserver la place des boutons rouge/jaune/vert
@@ -223,7 +223,12 @@
   <div class="tabs" class:reordering={drag !== null} bind:this={strip}>
     {#each tabs.tabs as tab, i (tab.id)}
       {@const active = tab.id === tabs.activeId}
-      {@const label = tab.kind === "new" ? t("tabbar.newTab") : (tab.repoInfo?.name ?? "…")}
+      {@const label =
+        tab.kind === "new"
+          ? t("tabbar.newTab")
+          : tab.kind === "settings"
+            ? t("tabbar.settings")
+            : (tab.repoInfo?.name ?? "…")}
       <div
         class="tab"
         class:active
@@ -232,7 +237,7 @@
         role="tab"
         tabindex="0"
         aria-selected={active}
-        title={tab.kind === "new" ? label : tab.repoId}
+        title={tab.kind === "repo" ? tab.repoId : label}
         onpointerdown={(e) => onPointerDown(e, tab.id)}
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}
@@ -240,6 +245,9 @@
         onauxclick={(e) => onMiddle(e, tab.id)}
         onkeydown={(e) => (e.key === "Enter" ? tabs.activate(tab.id) : undefined)}
       >
+        {#if tab.kind === "settings"}
+          {@render gear("tab-ic")}
+        {/if}
         <span class="name" class:blank={tab.kind === "new"}>{label}</span>
         <button
           class="close"
@@ -268,21 +276,28 @@
     Hors de `.tabs` (qui prend `flex: 1` et défile) : le bouton reste collé au
     bord droit quel que soit le nombre d'onglets, au lieu de partir hors champ
     avec eux. Un `<button>` garde son clic malgré la zone de drag de la barre.
+
+    Il ouvre l'onglet des paramètres, ou l'active s'il existe déjà ; ce n'est
+    plus une bascule — on quitte les paramètres comme n'importe quel onglet.
   -->
   <button
     class="settings"
-    class:on={tabs.settingsOpen}
+    class:on={tabs.activeIsSettings}
     title={t("tabbar.settings")}
     aria-label={t("tabbar.settings")}
-    aria-pressed={tabs.settingsOpen}
-    onclick={() => tabs.toggleSettings()}
+    onclick={() => tabs.openSettings()}
   >
-    <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    {@render gear()}
+  </button>
+</div>
+
+<!-- La roue dentée, partagée par le bouton et par l'onglet qu'il ouvre. -->
+{#snippet gear(cls?: string)}
+  <svg class={cls} viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
       <circle cx="8" cy="8" r="2.1" />
       <path d="M12.9 9.8a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.67 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.67h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.67 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.67h-.06a1.1 1.1 0 0 0-1 .67z" />
     </svg>
-  </button>
-</div>
+{/snippet}
 
 <style>
   .tabbar {
@@ -350,7 +365,7 @@
     background: var(--bg-raised);
     color: var(--text);
   }
-  /* Écran ouvert : le bouton reste allumé, c'est une bascule. */
+  /* Onglet des paramètres affiché : le bouton qui y mène reste allumé. */
   .settings.on {
     background: var(--accent-bg);
     border-color: var(--accent);
@@ -415,6 +430,13 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Icône de l'onglet des paramètres, devant son libellé. */
+  .tab-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
+    color: var(--text-dim);
   }
   /* Un onglet sans dépôt ne nomme rien : son libellé se fait discret. */
   .name.blank {
