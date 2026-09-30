@@ -14,6 +14,7 @@
     type PlacedColumn,
   } from "../graph/columns";
   import { graphColumns } from "../graphColumns.svelte";
+  import { bucketLabel, bucketStarts, type TimeBucket } from "../graph/timeBuckets";
   import type { TreeCounts } from "../tree";
 
   // ── Géométrie ──────────────────────────────────────────────────────────────
@@ -284,6 +285,42 @@
       minute: "2-digit",
     }),
   );
+
+  /*
+    Tranches de temps, comme GitKraken : sur le premier commit de chaque
+    tranche, un trait en haut de la rangée et l'âge (« 3 hours ago ») au bout
+    du message. `now` avance chaque minute — sans lui, « now » le resterait
+    toute la journée.
+  */
+  let now = $state(Math.floor(Date.now() / 1000));
+  $effect(() => {
+    const timer = setInterval(() => (now = Math.floor(Date.now() / 1000)), 60_000);
+    return () => clearInterval(timer);
+  });
+  const relFmt = $derived(new Intl.RelativeTimeFormat(i18n.locale, { numeric: "auto" }));
+  /** Tranche ouverte par chaque rangée, alignée sur `layout.rows` (WIP : `null`). */
+  const bucketAt = $derived.by(() => {
+    const indexes: number[] = [];
+    const stamps: number[] = [];
+    layout.rows.forEach((row, i) => {
+      if (row.kind !== "commit") return;
+      indexes.push(i);
+      stamps.push(row.commit.timestamp);
+    });
+    const starts = bucketStarts(stamps, now);
+    const out: (TimeBucket | null)[] = new Array(layout.rows.length).fill(null);
+    indexes.forEach((rowIndex, k) => (out[rowIndex] = starts[k]));
+    return out;
+  });
+
+  /**
+   * Trait de séparation au-dessus d'une rangée : quand elle ouvre une tranche
+   * et qu'un commit la précède. Le premier commit porte l'étiquette de sa
+   * tranche, mais pas de trait — il n'y a rien au-dessus à séparer de lui.
+   */
+  function separatorAt(index: number): boolean {
+    return bucketAt[index] !== null && layout.rows[index - 1]?.kind === "commit";
+  }
 
   function formatDate(ts: number): string {
     return dateFmt.format(new Date(ts * 1000));
@@ -634,6 +671,7 @@
             class="row"
             class:wip={row.kind === "wip"}
             class:selected={isSelected(row)}
+            class:sep={separatorAt(first + i)}
             style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; grid-template-columns: {template}"
             role="button"
             tabindex="0"
@@ -641,7 +679,7 @@
             onkeydown={(e) => onRowKey(e, row)}
           >
             {#each placed as col (col.id)}
-              {@render cell(row, col.id)}
+              {@render cell(row, col.id, bucketAt[first + i])}
             {/each}
           </div>
         {/each}
@@ -659,7 +697,7 @@
   « // WIP ». Les compteurs reprennent le vocabulaire des dossiers de la liste
   de fichiers (✎ / + / −).
 -->
-{#snippet cell(row: GraphRow, id: ColumnId)}
+{#snippet cell(row: GraphRow, id: ColumnId, bucket: TimeBucket | null)}
   {#if id === "graph"}
     <!-- Vide : le canvas dessine par-dessus. -->
     <span class="cell graph-cell"></span>
@@ -748,7 +786,12 @@
       {/each}
     </span>
   {:else if id === MESSAGE}
-    <span class="cell message summary" title={row.commit.summary}>{row.commit.summary}</span>
+    <!-- L'âge de la tranche au bout du message, sur son premier commit : il
+         reste lisible même quand la colonne Date est masquée. -->
+    <span class="cell message" title={row.commit.summary}>
+      <span class="summary">{row.commit.summary}</span>
+      {#if bucket}<span class="ago">{bucketLabel(bucket, relFmt)}</span>{/if}
+    </span>
   {:else if id === "author"}
     <span class="cell author" title={row.commit.authorName}>{row.commit.authorName}</span>
   {:else if id === "date"}
@@ -1113,9 +1156,31 @@
   .c.del {
     color: var(--danger);
   }
-  /* Un résumé se tronque comme du texte, pas comme un conteneur flex. */
+  /* Le résumé se tronque ; l'âge de la tranche, lui, reste entier. */
   .summary {
-    display: block;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .ago {
+    flex: none;
+    color: var(--text-faint);
+    font-size: 0.72rem;
+  }
+  /* Début d'une tranche de temps : un trait sur toute la largeur de la
+     rangée, graph compris — le canvas, transparent hors de ses lignes, le
+     laisse voir entre les branches. */
+  .row.sep::before {
+    content: "";
+    position: absolute;
+    top: 0;
+    left: 0;
+    right: 0;
+    height: 1px;
+    background: var(--border);
+    pointer-events: none;
   }
   .author {
     color: var(--text-dim);
