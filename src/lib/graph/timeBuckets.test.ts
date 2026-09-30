@@ -8,8 +8,7 @@ const DAY = 86_400;
 
 describe("bucketOf", () => {
   it("élargit les tranches avec l'âge", () => {
-    expect(bucketOf(NOW - 30, NOW)).toEqual({ unit: "minute", n: 0 });
-    expect(bucketOf(NOW - 12 * MIN, NOW)).toEqual({ unit: "minute", n: 12 });
+    expect(bucketOf(NOW - 30, NOW)).toEqual({ unit: "hour", n: 0 });
     expect(bucketOf(NOW - 3 * HOUR - 5 * MIN, NOW)).toEqual({ unit: "hour", n: 3 });
     expect(bucketOf(NOW - 2 * DAY, NOW)).toEqual({ unit: "day", n: 2 });
     expect(bucketOf(NOW - 16 * DAY, NOW)).toEqual({ unit: "week", n: 2 });
@@ -21,8 +20,16 @@ describe("bucketOf", () => {
     expect(bucketOf(NOW - 36 * DAY, NOW)).toEqual({ unit: "month", n: 1 });
   });
 
-  it("traite une date dans le futur comme « à l'instant »", () => {
-    expect(bucketOf(NOW + HOUR, NOW)).toEqual({ unit: "minute", n: 0 });
+  it("ne découpe jamais plus fin que l'heure", () => {
+    // Toute la dernière heure est une seule tranche.
+    expect(bucketOf(NOW - 2 * MIN, NOW)).toEqual({ unit: "hour", n: 0 });
+    expect(bucketOf(NOW - 59 * MIN, NOW)).toEqual({ unit: "hour", n: 0 });
+    const starts = bucketStarts([NOW - 5 * MIN, NOW - 20 * MIN, NOW - 50 * MIN], NOW);
+    expect(starts.map((s) => s !== null)).toEqual([true, false, false]);
+  });
+
+  it("compte une date dans le futur dans la dernière heure", () => {
+    expect(bucketOf(NOW + HOUR, NOW)).toEqual({ unit: "hour", n: 0 });
   });
 });
 
@@ -52,6 +59,6 @@ describe("bucketLabel", () => {
     const en = new Intl.RelativeTimeFormat("en", { numeric: "auto" });
     expect(bucketLabel({ unit: "hour", n: 3 }, en)).toBe("3 hours ago");
     expect(bucketLabel({ unit: "day", n: 1 }, en)).toBe("yesterday");
-    expect(bucketLabel({ unit: "minute", n: 0 }, en)).toBe("now");
+    expect(bucketLabel({ unit: "hour", n: 0 }, en)).toBe("this hour");
   });
 });

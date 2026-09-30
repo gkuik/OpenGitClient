@@ -291,7 +291,7 @@
     différentes, un trait qui porte l'âge de la nouvelle (« 3 hours ago »),
     dans sa continuité. Seulement quand la colonne Date est masquée : affichée,
     elle dit déjà la même chose, rangée par rangée. `now` avance chaque minute
-    — sans lui, « now » le resterait toute la journée.
+    — sans lui, un commit resterait « this hour » toute la journée.
   */
   let now = $state(Math.floor(Date.now() / 1000));
   $effect(() => {

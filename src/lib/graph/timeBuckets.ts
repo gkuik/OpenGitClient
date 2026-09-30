@@ -3,23 +3,23 @@
   étiquette (« 3 hours ago », « yesterday ») sur le premier commit de chaque
   tranche.
 
-  Les tranches s'élargissent avec l'âge — minutes, heures, jours, semaines,
-  mois, années — pour qu'un historique ancien ne soit pas haché d'un
-  séparateur par jour travaillé. Pur et testé ; le libellé lui-même vient de
+  Les tranches s'élargissent avec l'âge — heures, jours, semaines, mois,
+  années — pour qu'un historique ancien ne soit pas haché d'un séparateur par
+  jour travaillé. Jamais plus fines que l'heure : toute la dernière heure est
+  une seule tranche (« this hour »), sans séparateur entre ses commits. Pur et testé ; le libellé lui-même vient de
   `Intl.RelativeTimeFormat`, qui connaît la langue et ses formes (« hier »,
   « la semaine dernière ») sans rien ajouter au catalogue.
 */
 
-export type BucketUnit = "minute" | "hour" | "day" | "week" | "month" | "year";
+export type BucketUnit = "hour" | "day" | "week" | "month" | "year";
 
 export interface TimeBucket {
   unit: BucketUnit;
-  /** Âge dans cette unité, arrondi vers le bas : 0 = « à l'instant ». */
+  /** Âge dans cette unité, arrondi vers le bas : 0 heure = « cette heure-ci ». */
   n: number;
 }
 
-const MINUTE = 60;
-const HOUR = 60 * MINUTE;
+const HOUR = 3600;
 const DAY = 24 * HOUR;
 const WEEK = 7 * DAY;
 /** Mois et année moyens : une tranche n'a pas besoin du calendrier exact. */
@@ -28,11 +28,10 @@ const YEAR = 365.25 * DAY;
 
 /**
  * Tranche d'un commit daté `ts` (secondes Unix), vue depuis `now`. Une date
- * dans le futur — horloge décalée d'un collègue — compte comme « à l'instant ».
+ * dans le futur — horloge décalée d'un collègue — compte dans la dernière heure.
  */
 export function bucketOf(ts: number, now: number): TimeBucket {
   const age = Math.max(0, now - ts);
-  if (age < HOUR) return { unit: "minute", n: Math.floor(age / MINUTE) };
   if (age < DAY) return { unit: "hour", n: Math.floor(age / HOUR) };
   if (age < WEEK) return { unit: "day", n: Math.floor(age / DAY) };
   // Jusqu'à cinq semaines : « 4 weeks ago » se lit mieux que « last month ».
@@ -66,8 +65,5 @@ export function bucketStarts(timestamps: number[], now: number): (TimeBucket | n
 
 /** Libellé d'une tranche dans la langue donnée : « 3 hours ago », « yesterday ». */
 export function bucketLabel(bucket: TimeBucket, fmt: Intl.RelativeTimeFormat): string {
-  // Moins d'une minute : `Intl` dirait « this minute » ; en secondes, zéro se
-  // dit « now », dans chaque langue.
-  if (bucket.unit === "minute" && bucket.n === 0) return fmt.format(0, "second");
   return fmt.format(-bucket.n, bucket.unit);
 }
