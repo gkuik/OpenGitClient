@@ -28,6 +28,7 @@ import type {
   RepoStatus,
   SessionInfo,
   SidebarWidths,
+  GraphColumnsDto,
   StashEntry,
   ThemeMode,
 } from "./types";
@@ -224,6 +225,12 @@ export const api = {
    * glissement. Le backend ramène dans ses bornes ce qui en sort.
    */
   getSidebarWidths: () => call<SidebarWidths>("get_sidebar_widths"),
+  /**
+   * Disposition du tableau du graph (préférence globale, persistée). Le backend
+   * la nettoie dans les deux sens ; `normalizeColumns` fait de même côté front.
+   */
+  getGraphColumns: () => call<GraphColumnsDto>("get_graph_columns"),
+  setGraphColumns: (columns: GraphColumnsDto) => call<void>("set_graph_columns", { columns }),
   setSidebarWidths: (widths: SidebarWidths) =>
     call<void>("set_sidebar_widths", { widths }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */

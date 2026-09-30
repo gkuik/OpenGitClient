@@ -64,6 +64,8 @@ pub fn run() {
             commands::set_font_size,
             commands::get_sidebar_widths,
             commands::set_sidebar_widths,
+            commands::get_graph_columns,
+            commands::set_graph_columns,
             commands::get_remote_info,
             commands::list_remotes,
             commands::set_credentials,

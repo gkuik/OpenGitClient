@@ -3,6 +3,8 @@
 //! Chaque struct est le miroir exact d'un type TS dans `src/lib/types.ts`.
 //! `rename_all = "camelCase"` fait la conversion snake_case → camelCase.
 
+use std::collections::BTreeMap;
+
 use serde::{Deserialize, Serialize};
 
 use crate::error::AppError;
@@ -458,6 +460,75 @@ fn clamp_sidebar(w: f32) -> f32 {
     }
 }
 
+/// Colonnes du tableau du graph, dans leur ordre par défaut.
+///
+/// Des chaînes, pas une énumération : une colonne inconnue — retirée par une
+/// version ultérieure, ou tapée à la main — ferait sinon échouer la lecture de
+/// tout `prefs.json`. Elle est simplement écartée.
+pub const GRAPH_COLUMNS: [&str; 6] = ["refs", "graph", "message", "author", "date", "sha"];
+/// La colonne qu'on ne masque pas et qu'on ne dimensionne pas : elle prend la
+/// largeur que les autres laissent, et un tableau sans elle ne dirait plus rien
+/// de chaque commit.
+pub const GRAPH_MESSAGE_COLUMN: &str = "message";
+/// Bornes d'une largeur de colonne, en rem.
+pub const GRAPH_COL_W_MIN: f32 = 2.5;
+pub const GRAPH_COL_W_MAX: f32 = 40.0;
+
+/// Disposition du tableau du graph — commune à tous les dépôts, persistée dans
+/// `prefs.json`.
+///
+/// `widths` est en rem, comme les colonnes latérales. Une colonne absente de
+/// `widths` garde sa largeur par défaut, que seul le frontend connaît — et pour
+/// le graph, cette absence *est* le réglage : sa largeur suit alors le nombre
+/// de branches.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GraphColumns {
+    pub order: Vec<String>,
+    pub hidden: Vec<String>,
+    pub widths: BTreeMap<String, f32>,
+}
+
+impl GraphColumns {
+    /// Ramène une disposition lue ou reçue à quelque chose d'affichable : les
+    /// colonnes inconnues et les doublons partent, les manquantes reprennent
+    /// leur place par défaut en fin d'ordre, le message n'est jamais masqué ni
+    /// dimensionné, et les largeurs rentrent dans leurs bornes. Même règle que
+    /// les colonnes latérales : le fichier s'édite à la main, et une colonne de
+    /// 400 rem cacherait tout le reste, menu compris.
+    pub fn sanitized(self) -> Self {
+        let known = |id: &String| GRAPH_COLUMNS.contains(&id.as_str());
+        let mut order: Vec<String> = Vec::new();
+        for id in self.order.into_iter().filter(known) {
+            if !order.contains(&id) {
+                order.push(id);
+            }
+        }
+        for id in GRAPH_COLUMNS {
+            if !order.iter().any(|o| o == id) {
+                order.push(id.to_string());
+            }
+        }
+        let mut hidden: Vec<String> = Vec::new();
+        for id in self.hidden.into_iter().filter(known) {
+            if id != GRAPH_MESSAGE_COLUMN && !hidden.contains(&id) {
+                hidden.push(id);
+            }
+        }
+        let widths = self
+            .widths
+            .into_iter()
+            .filter(|(id, w)| known(id) && id != GRAPH_MESSAGE_COLUMN && w.is_finite())
+            .map(|(id, w)| (id, w.clamp(GRAPH_COL_W_MIN, GRAPH_COL_W_MAX)))
+            .collect();
+        Self {
+            order,
+            hidden,
+            widths,
+        }
+    }
+}
+
 /// Résultat d'un pull : ce qui a été récupéré, puis ce qui en a été fait.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -693,4 +764,53 @@ pub struct PullRequestEvent {
     pub repo_id: String,
     pub report: Option<PullRequestReport>,
     pub error: Option<AppError>,
+}
+
+#[cfg(test)]
+mod graph_columns_tests {
+    use super::*;
+
+    fn cols(order: &[&str], hidden: &[&str], widths: &[(&str, f32)]) -> GraphColumns {
+        GraphColumns {
+            order: order.iter().map(|s| s.to_string()).collect(),
+            hidden: hidden.iter().map(|s| s.to_string()).collect(),
+            widths: widths.iter().map(|(k, v)| (k.to_string(), *v)).collect(),
+        }
+    }
+
+    #[test]
+    fn empty_layout_gets_the_default_order() {
+        let c = GraphColumns::default().sanitized();
+        assert_eq!(c.order, GRAPH_COLUMNS);
+        assert!(c.hidden.is_empty() && c.widths.is_empty());
+    }
+
+    #[test]
+    fn unknown_and_duplicate_columns_are_dropped_missing_ones_appended() {
+        let c = cols(&["sha", "bogus", "sha", "message"], &[], &[]).sanitized();
+        assert_eq!(
+            c.order,
+            ["sha", "message", "refs", "graph", "author", "date"]
+        );
+    }
+
+    #[test]
+    fn message_is_never_hidden_nor_sized() {
+        let c = cols(&[], &["message", "date", "date"], &[("message", 10.0)]).sanitized();
+        assert_eq!(c.hidden, ["date"]);
+        assert!(c.widths.is_empty());
+    }
+
+    #[test]
+    fn widths_are_clamped_and_non_finite_ones_dropped() {
+        let c = cols(
+            &[],
+            &[],
+            &[("author", 400.0), ("date", 0.1), ("sha", f32::NAN)],
+        )
+        .sanitized();
+        assert_eq!(c.widths.get("author"), Some(&GRAPH_COL_W_MAX));
+        assert_eq!(c.widths.get("date"), Some(&GRAPH_COL_W_MIN));
+        assert!(!c.widths.contains_key("sha"));
+    }
 }

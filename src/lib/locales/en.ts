@@ -125,6 +125,17 @@ export const en = {
   "graph.counts.added": "{n} added",
   "graph.counts.deleted": "{n} deleted",
   "graph.ref.local": "local",
+  "graph.col.refs": "Branch / Tag",
+  "graph.col.graph": "Graph",
+  "graph.col.message": "Commit message",
+  "graph.col.author": "Author",
+  "graph.col.date": "Date",
+  "graph.col.sha": "SHA",
+  "graph.col.move": "Drag to move the column",
+  "graph.col.resize": "Drag to resize — double-click to restore the default width",
+  "graph.columns": "Columns",
+  "graph.columns.hint": "Show or hide columns",
+  "graph.columns.reset": "Reset columns",
 
   // ── Diff ──────────────────────────────────────────────────────────────────
   "diff.pick": "Select a file to show its diff.",

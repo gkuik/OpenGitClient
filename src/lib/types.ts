@@ -257,6 +257,18 @@ export interface SidebarWidths {
 }
 
 /**
+ * Disposition du tableau du graph (miroir de `GraphColumns`, `dto.rs`). Sur le
+ * fil, les colonnes sont de simples chaînes ; `normalizeColumns`
+ * (`graph/columns.ts`) les ramène au type `ColumnId` à la lecture.
+ */
+export interface GraphColumnsDto {
+  order: string[];
+  hidden: string[];
+  /** En rem. */
+  widths: Partial<Record<string, number>>;
+}
+
+/**
  * Ce qu'un pull a fait localement. Une divergence et un conflit ne sont pas des
  * erreurs : le fetch qui précède a réussi et déplacé des références.
  */
