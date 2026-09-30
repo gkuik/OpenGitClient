@@ -306,7 +306,7 @@
     padding: 0.35rem 0.5rem;
     min-height: 42px;
     border-bottom: 1px solid var(--border);
-    background: var(--bg);
+    background: var(--bg-raised);
     min-width: 0;
     /*
       Rien n'est sélectionnable dans la barre : le nom d'un onglet n'est pas du
@@ -362,7 +362,7 @@
     height: 16px;
   }
   .settings:hover {
-    background: var(--bg-raised);
+    background: var(--bg);
     color: var(--text);
   }
   /* Onglet des paramètres affiché : le bouton qui y mène reste allumé. */
@@ -407,11 +407,16 @@
   .tab:hover {
     color: var(--text);
   }
+  /* Un onglet inactif survolé s'éclaircit à mi-chemin du fond de l'actif : il
+     annonce qu'on peut y aller, sans se confondre avec celui où l'on est. */
+  .tab:hover:not(.active) {
+    background: color-mix(in srgb, var(--bg) 55%, transparent);
+  }
   /* Le fond seul distingue l'onglet actif, sans bordure. Celle, transparente,
      de `.tab` reste en place : l'onglet garde la même taille qu'il soit actif
      ou non. */
   .tab.active {
-    background: var(--accent-bg);
+    background: var(--bg);
     color: var(--text);
   }
   /*
@@ -473,7 +478,7 @@
     opacity: 1;
   }
   .close:hover {
-    background: var(--bg);
+    background: var(--bg-raised);
     color: var(--text);
   }
   /* Même gabarit qu'un onglet, en plus étroit : il en est la continuation. */
@@ -494,7 +499,7 @@
     cursor: pointer;
   }
   .add:hover {
-    background: var(--bg-raised);
+    background: var(--bg);
     color: var(--text);
   }
 </style>
