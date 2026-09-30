@@ -283,8 +283,7 @@ export const api = {
    * Une erreur levée ici signale un échec de lancement (onglet fermé, aucun
    * distant configuré) : aucun événement ne suivra.
    */
-  loadPullRequests: (repoId: string, includeClosed: boolean) =>
-    call<void>("load_pull_requests", { repoId, includeClosed }),
+  loadPullRequests: (repoId: string) => call<void>("load_pull_requests", { repoId }),
   onPullRequests: (handler: (event: PullRequestEvent) => void): Promise<UnlistenFn> =>
     listen<PullRequestEvent>("repo://pull-requests", (e) => handler(e.payload)),
   /**

@@ -89,7 +89,7 @@ impl GitHub {
 }
 
 impl ForgeBackend for GitHub {
-    fn pull_requests(&self, include_closed: bool) -> Result<PullRequestReport, AppError> {
+    fn pull_requests(&self) -> Result<PullRequestReport, AppError> {
         let agent = self.agent();
 
         // L'identité du jeton, et non le nom d'utilisateur enregistré à côté :
@@ -98,9 +98,8 @@ impl ForgeBackend for GitHub {
         let api = &self.remote.api;
         let viewer: Account = self.get(&agent, &format!("{api}/user"))?;
 
-        let state = if include_closed { "all" } else { "open" };
         let url = format!(
-            "{api}/repos/{}/pulls?state={state}&per_page={PER_PAGE}&sort=updated&direction=desc",
+            "{api}/repos/{}/pulls?state=open&per_page={PER_PAGE}&sort=updated&direction=desc",
             self.remote.slug()
         );
         let raw: Vec<PullRequest> = self.get(&agent, &url)?;

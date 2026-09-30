@@ -23,7 +23,6 @@ import type {
   PullReport,
   PullRequestEntry,
   PullRequestEvent,
-  PullRequestReport,
   PushEvent,
   RecentRepo,
   RemoteBranchEntry,
@@ -287,9 +286,6 @@ export class RepoStore {
   // Elles ne viennent pas du dépôt mais de l'API d'une forge : rien ici n'est
   // relu du disque, et rien n'est rechargé tout seul — voir `loadPullRequests`.
   pullRequests = $state<PullRequestEntry[]>([]);
-  /** Dépôt et identité auxquels la liste se rapporte ; `null` avant le premier
-   * chargement réussi. */
-  prReport = $state<PullRequestReport | null>(null);
   prLoading = $state(false);
   /** Un chargement s'est terminé, avec ou sans succès. */
   prLoaded = $state(false);
@@ -300,10 +296,6 @@ export class RepoStore {
    * une fonctionnalité qui n'a rien empêché.
    */
   prError = $state<AppError | null>(null);
-  /** Filtres du menu en entonnoir. Les brouillons se cachent sur place ; les
-   * fermées, elles, doivent être redemandées à la forge. */
-  prIncludeClosed = $state(false);
-  prIncludeDrafts = $state(true);
   /** Groupes repliés (les trois sont dépliés par défaut, comme les dossiers). */
   private collapsedPrGroups = new SvelteSet<string>();
 
@@ -405,15 +397,6 @@ export class RepoStore {
   get prSupported(): boolean {
     const kind = this.prError?.kind;
     return kind !== "ForgeUnsupported" && kind !== "NoRemote";
-  }
-
-  /**
-   * Pull requests après le filtre de l'entonnoir : les brouillons si on les
-   * veut. Les fermées ne se filtrent pas ici — elles sont dans la charge utile
-   * ou n'y sont pas, selon ce qui a été demandé à la forge.
-   */
-  get prFiltered(): PullRequestEntry[] {
-    return this.pullRequests.filter((pr) => this.prIncludeDrafts || !pr.draft);
   }
 
   isPrGroupOpen(id: string): boolean {
@@ -1219,7 +1202,7 @@ export class RepoStore {
     this.prLoading = true;
     this.prError = null;
     try {
-      await api.loadPullRequests(this.repoId, this.prIncludeClosed);
+      await api.loadPullRequests(this.repoId);
     } catch (e) {
       // Échec au *lancement* (aucun distant configuré, onglet fermé) : aucun
       // événement ne suivra, c'est donc ici qu'il faut relâcher l'état.
@@ -1239,22 +1222,7 @@ export class RepoStore {
       return;
     }
     if (!event.report) return;
-    this.prReport = event.report;
     this.pullRequests = event.report.pullRequests;
-  }
-
-  /**
-   * Bascule le filtre « fermées et fusionnées ». Il est le seul des deux à
-   * repasser par le réseau : les brouillons sont déjà dans la réponse, alors
-   * qu'une PR fermée n'a même pas été demandée.
-   */
-  async togglePrClosed() {
-    this.prIncludeClosed = !this.prIncludeClosed;
-    await this.loadPullRequests();
-  }
-
-  togglePrDrafts() {
-    this.prIncludeDrafts = !this.prIncludeDrafts;
   }
 
   /**

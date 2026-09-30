@@ -775,7 +775,6 @@ const PR_EVENT: &str = "repo://pull-requests";
 #[tauri::command]
 pub fn load_pull_requests(
     repo_id: String,
-    include_closed: bool,
     app: AppHandle,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
@@ -788,7 +787,7 @@ pub fn load_pull_requests(
         let outcome = crate::forge::detect(&url)
             .ok_or(AppError::ForgeUnsupported)
             .and_then(|remote| crate::forge::open(&remote))
-            .and_then(|forge| forge.pull_requests(include_closed));
+            .and_then(|forge| forge.pull_requests());
 
         let (report, error) = match outcome {
             Ok(report) => (Some(report), None),

@@ -451,9 +451,10 @@ error for hosts that never had pull requests.
 **Nothing polls.** The watcher knows nothing about PRs — they never touch the
 disk — and interrogating the API on a timer would burn the token's quota for a
 column nobody is necessarily looking at. Loads happen on tab open, after a fetch
-or a push (`reloadRemoteRefs`: someone just asked for news of the remote), on the
-section's ↻, and when the « closed » filter changes — that one alone goes back to
-the network, drafts being already in the payload.
+or a push (`reloadRemoteRefs`: someone just asked for news of the remote), and on
+the error message's *Retry*. The section header carries no action — no filter,
+no reload button: it lists the **open** pull requests, drafts included, and
+nothing else (`ForgeBackend::pull_requests` takes no argument).
 
 Two things the failure path decides, and they are not the same decision:
 
@@ -634,11 +635,11 @@ inside itself.
   to shrink below its whole list and the sidebar overflows again — which is the
   exact bug this layout replaced. The real floor becomes the header; `minmax(0,
   1fr)` is what lets the body go under its intrinsic height, i.e. scroll.
-- **Collapsed sections sink to the bottom** via `order: 1`, and the *first* of
-  them carries `margin-top: auto` — one auto margin per collapsed section would
-  split the free space and scatter them. That free space only exists when every
-  open section is frozen on its content, which is precisely when the gap should
-  be there.
+- **Sections always keep the same order.** A collapsed section is its header
+  alone (`flex: none`) and **stays where it is**, even between two open ones —
+  it used to sink to the bottom (`order: 1` + `margin-top: auto`), which made
+  the column reshuffle under the cursor on every fold. The free space left when
+  every open section is frozen on its content simply stays at the bottom.
 - Section heights are **not** draggable, unlike the sidebar widths; if that ever
   changes, it belongs on `SidebarResizer`'s model, not on a new one.
 
@@ -652,6 +653,12 @@ into the label on the right, bold title one side and dim uppercase the other,
 separator line owned by a differently-named class in each file. A new section now
 has no style to reinvent.
 
+- **Every header has the same fixed height** (`height: 2rem`, `border-box`, no
+  vertical padding). With padding, the content decided: a header carrying
+  buttons (« Stage all », the PR filter) grew by several pixels and shifted
+  everything below it. Actions are centred in that height and cannot stretch
+  it; the top line sits inside it, so the `first` header, which has none, is
+  exactly as tall as the others.
 - **The separator belongs to the header, not to the section.** The header *is*
   the section's first child, so a `border-top` there lands exactly where the
   section starts, and the caller never has to know it exists. `first` removes it
@@ -680,15 +687,12 @@ has no style to reinvent.
   0.6rem there — and the header's switch to a path made the mismatch plain. Its
   size is in **rem**, unlike the section icons: a chevron marks a fold *in text*
   and follows that text, where a category icon is a fixed badge.
-- **Which section is "first" is computed in the component, not in CSS.** The left
-  column's collapsed sections are moved to the bottom by `order`, so a
-  `section + section` rule would put the line on the wrong one. `firstVisual` is
-  the first *open* section — or, if everything is collapsed, the first one at all.
-  Both it and `firstClosed` read a list of the sections actually **rendered** and
-  name them by id, never by a fixed index: REMOTE is dropped when the repository
-  has no remote branch, and an index would keep counting a section that isn't
-  there — the separator and the collapsed block's margin would both land one
-  section off.
+- **Which section is "first" is computed in the component, not in CSS.** PULL
+  REQUESTS is a component of its own, which a scoped `section + section` rule
+  would not reach. `firstVisual` is the first section actually **rendered**,
+  named by id, never by a fixed index: REMOTE is dropped when the repository has
+  no remote branch, and an index would keep counting a section that isn't
+  there — the separator would land one section off.
 - **Icons are sized from the wrapper, globally.** A snippet keeps the style scope
   of the component that *defined* it, not of the one that renders it, so
   `SectionHeader` reaches its icon through `.ic-slot :global(svg)`. That is what
@@ -751,7 +755,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), filterable on drafts and closed PRs from the funnel in the section header, and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
