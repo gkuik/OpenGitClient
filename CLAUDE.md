@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, commit graph with commit inspection and an uncommitted-changes row at its top).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -54,7 +54,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `tree.ts`, `markdown.ts` and `i18n.svelte.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `tree.ts`, `tags.ts`, `markdown.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -222,9 +222,11 @@ The backend returns raw commits (`oid`, `parents`, `refs`) — **lane assignment
 
 **One badge per branch, not per ref** — `src/lib/graph/refs.ts`, a pure function with vitest coverage, like the lane layout. The backend sends `main`, `origin/main` and the HEAD mark separately; a branch in sync with its remote said the same thing twice. `groupRefs` merges a remote ref into a local one **when both are on the same commit** — which is exactly what "same level" means, since the grouping happens inside one commit. What is left is the name plus two icons: a screen for "here", a cloud for "on the server". A local branch ahead of (or behind) its remote is on another row by construction, so it keeps its own badge and the icons are what tell the two apart. A `✓` marks the current branch, as in the sidebar.
 
-Two details in there: the remote/local match is on the **suffix** (`origin/feat/x` ends with `/feat/x`), longest wins — splitting on the first `/` would break on a remote name containing one, which is the same reason `remote_branches` asks libgit2 for the remote name. And the badges are **sorted** head → local → remote-only: the column is narrow, so that order decides what survives the `+n` cut.
+Two details in there: the remote/local match is on the **suffix** (`origin/feat/x` ends with `/feat/x`), longest wins — splitting on the first `/` would break on a remote name containing one, which is the same reason `remote_branches` asks libgit2 for the remote name. And the badges are **sorted** head → local → remote-only → tags: the column is narrow, so that order decides what survives the `+n` cut.
 
-Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). The walk pushes `refs/heads/*`, `refs/remotes/*` and HEAD, so a commit reachable only from a remote branch is in the history like any other. Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — and after a fetch that actually moved something — but **not** after stage/unstage, which don't change history.
+**A tag is never merged into anything**: it gets its own badge (`tag: true`, key `t:<name>`) even beside a branch of the same name, and no remote ref attaches to it — `groupRefs` skips `kind === "tag"` in the local pass, where it would otherwise have been taken for a local branch. It is drawn with a leading tag icon, a solid outline (never the remote's dashes) and rounder corners.
+
+Pagination is `skip`/`limit` over a revwalk rebuilt on every call (a `Revwalk` borrows the `Repository`, which is re-opened per call). The walk pushes `refs/heads/*`, `refs/remotes/*`, `refs/tags/*` and HEAD, so a commit reachable only from a remote branch — or only from a tag, a release whose branch was deleted — is in the history like any other. Order is stable only while refs don't move, so the frontend reloads from page 0 after commit/checkout/open — and after a fetch that actually moved something — but **not** after stage/unstage, which don't change history.
 
 **The working directory is the graph's first row**, GitKraken-style: a dashed hollow circle, the summary of the commit being written, and the `✎ / + / −` counts, on top of the history. That summary is not a label but **the commit box's own field** — `RepoStore.commitSummary`, edited from either side, showing `// WIP` as a placeholder while it is empty. It is **entirely frontend** — no backend call, no DTO — because everything it needs is already loaded: `repoInfo.head` for the commit it hangs from (detached HEAD included) and `status` for the counts. Those counts go through `countStatuses` — the very function that fills the file tree's per-directory counters — so an untracked file is a `+` in both places instead of being classified twice; `RepoStore.changeCounts` only dedupes the paths first, since a file can be both staged and modified.
 
@@ -299,6 +301,59 @@ Remote rows behave like local ones: click selects the tip commit — which lands
 - **A failing `set_upstream` is swallowed.** It fails on an orphaned ref (deleted remote, no refspec), and the switch has already happened by then — reporting an error for a checkout that worked would be a lie. The upstream only matters to the pull/push that don't exist yet.
 
 `RepoStore.checkoutRemoteBranch` has no "already on this branch" guard, unlike its local twin: only the backend knows the local name, and re-checking out costs nothing. Both share `runCheckout()`, since what a checkout invalidates doesn't depend on where the branch came from — and `refs/remotes/**` is untouched, so the REMOTE section is not reloaded.
+
+### Tags: a name on a commit, and nothing moves it
+
+`TagEntry.oid` is the **commit**, never the tag object: an annotated tag is
+peeled (`peel_to_commit`), which is what the graph selects and what a checkout
+lands on. A tag pointing at something other than a commit is left out of the
+list. `tag_entries()` is the one reader, shared by `tags()` and `collect_refs`,
+so the section and the badges cannot disagree on where a tag is. `message` is
+`Some` exactly for an annotated tag — that is the flag, there is no other.
+
+- **Creation is the graph's one write, and it writes only a ref.** Right-click
+  on a commit row → *Create tag here…* → `TagDialog` (name, optional message;
+  a message makes it annotated, signed by the repository's identity like a
+  commit). The WIP row keeps the native menu, which its summary field needs for
+  copy-paste. The selection doesn't move on right-click: the menu names the
+  commit instead. Creating never forces: an existing name is `TagExists`, an
+  invalid one `InvalidTagName` (checked with `Reference::is_valid_name` first,
+  because libgit2's own error doesn't say which name). The dialog stays open on
+  failure, so a taken name is fixed in place.
+- **The TAGS section** (last in the left column, like GitKraken's) is flat and
+  sorted by `sortTags` (`tags.ts`, pure and tested): descending, numeric
+  segments compared as numbers, so `v1.10.0` sits above `v1.9.0` and the latest
+  release is on top. No semver parsing — tag names are free-form. Click selects
+  the commit; double-click or Enter checks it out; right-click or the
+  `ContextMenu` key opens the menu.
+- **Checkout is detached, deliberately**: `git checkout <tag>`, SAFE strategy,
+  worktree first then `set_head_detached` — a conflict leaves HEAD where it
+  was. It goes through `runCheckout`, like both branch checkouts.
+- **Push and remote deletion are one command** (`push_tag(name, delete)`), on a
+  thread with the **same network reservation** as fetch/push/pull: `pushingTag`
+  is part of `busyRemote`, so the repository bar greys out with it, and the
+  result comes back as `repo://tag-pushed`. The remote is the one a fetch would
+  resolve — no picker. Credentials failures open the same dialog, and the retry
+  remembers which tag and which direction (`tagPush`).
+- **A published tag is never moved — Git's rule, enforced by us.** libgit2 only
+  refuses non-fast-forwards, so a tag re-created further down the same line
+  would silently overwrite the remote one. `PushGuard::NoOverwrite` in
+  `push_negotiation` refuses when the server holds the ref at another oid
+  (re-pushing the identical tag is still a no-op success). A refusal becomes
+  `TagRejected`, not `PushRejected`, whose advice — fetch and integrate — means
+  nothing for a tag.
+- **`push_refspec` is the shared push transport** — credentials, the
+  `push_update_reference` rejection read, and an optional `PushGuard` (`Lease`
+  for the branch's force-with-lease, `NoOverwrite` for tags). The branch push
+  builds its refspec and calls it; nothing about the branch path changed.
+- **Two destructive entries**, in the danger colour and armed by a first click
+  (the stash-drop pattern): *Delete locally* (the remote keeps it) and *Delete
+  on the remote* (`:refs/tags/<t>`, the local tag stays). Neither implies the
+  other; each says so in its tooltip.
+
+Tags are reloaded wherever refs are: `load`, `activate`, `reloadAfterRefs` (the
+watcher sees `refs/tags/**`) and `reloadRemoteRefs` — a fetch brings the tags
+that point at what it downloaded.
 
 ### Pull: fetch, then integrate — and a way back out
 
@@ -647,7 +702,7 @@ inside itself.
 ### Every section in both columns is `border · [icon] title · content`
 
 `SectionHeader.svelte` is the single component that draws a section's header, in
-`BranchSidebar` (LOCAL / REMOTE / PULL REQUESTS / STASHES), `StatusPanel` (non-indexés /
+`BranchSidebar` (LOCAL / REMOTE / PULL REQUESTS / STASHES / TAGS), `StatusPanel` (non-indexés /
 indexés) and `CommitDetailsPanel` (the commit's file list). The two columns had
 drifted apart on every one of these points — icon on the left only, count folded
 into the label on the right, bold title one side and dim uppercase the other,
@@ -756,9 +811,9 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, tags, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
-first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. Tags are still nowhere. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
+first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 
@@ -784,8 +839,8 @@ resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
 (`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branch *creation*, renaming and deletion are
 still nowhere, and nothing rebases.
 
-The graph is **read-only**: no checkout-from-commit, branch creation or reset from it, and no tags in the ref badges (`collect_refs` reads local and remote branches, nothing else). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
+The graph is **read-only** but for one entry: no checkout-from-commit, branch creation or reset from it. The exception is a commit row's context menu, whose only entry creates a tag — it writes one ref, and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. **Three destructive operations exist**, and only three: **Discard all changes** and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, and the **force push** in the Push button's context menu — the first two lose local work, the third can remove commits from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
+AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
