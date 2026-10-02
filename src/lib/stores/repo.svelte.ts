@@ -26,6 +26,7 @@ import type {
   PushEvent,
   RecentRepo,
   RemoteBranchEntry,
+  RemoteEntry,
   RemoteInfo,
   RepoChangedEvent,
   RepoInfo,
@@ -209,6 +210,29 @@ export class RepoStore {
     this.repoId = repoId;
     this.repoInfo = info;
   }
+
+  /**
+   * Nom d'affichage choisi dans les paramètres du dépôt, `null` sans. Connu de
+   * l'application seule (`projects.json`) : le dossier n'est pas renommé.
+   * Écrit par `TabsStore`, qui détient la table des noms.
+   */
+  alias = $state<string | null>(null);
+
+  /** Ce que l'onglet et la barre du dépôt affichent : le nom choisi, sinon celui du dossier. */
+  get displayName(): string | null {
+    return this.alias ?? this.repoInfo?.name ?? null;
+  }
+
+  /**
+   * Les paramètres du dépôt sont-ils affichés à la place des trois colonnes ?
+   * État de l'onglet, comme la sélection : on y revient en revenant sur lui.
+   */
+  settingsOpen = $state(false);
+  /**
+   * Distants déclarés, avec leurs URL. `null` tant que les paramètres n'ont pas
+   * été ouverts : rien d'autre ne les lit, inutile de les charger avant.
+   */
+  remoteEntries = $state<RemoteEntry[] | null>(null);
 
   // Ce qui est actuellement affiché dans le visualiseur de diff.
   diffTarget = $state<DiffTarget | null>(null);
@@ -1150,6 +1174,94 @@ export class RepoStore {
     }
   }
 
+  /**
+   * Écrit une identité saisie à la main dans la config locale du dépôt — celle
+   * d'aucun profil. Renvoie l'erreur plutôt que de la poser dans le bandeau :
+   * le formulaire qui l'a demandée reste ouvert et l'affiche lui-même.
+   */
+  async setCustomIdentity(name: string, email: string): Promise<AppError | null> {
+    try {
+      this.identity = await api.setIdentity(this.repoId, name.trim(), email.trim());
+      return null;
+    } catch (e) {
+      return e as AppError;
+    }
+  }
+
+  // ── Paramètres du dépôt ─────────────────────────────────────────────────────
+
+  /** Affiche les paramètres du dépôt et relit ce qu'ils montrent. */
+  openSettings() {
+    this.settingsOpen = true;
+    // La config a pu être changée par un autre outil depuis la dernière fois :
+    // le surveillant de fichiers ne regarde pas `.git/config`.
+    void this.loadRemoteEntries();
+    void this.loadIdentity();
+  }
+
+  closeSettings() {
+    this.settingsOpen = false;
+  }
+
+  async loadRemoteEntries() {
+    if (!this.repoInfo) return;
+    try {
+      this.remoteEntries = await api.listRemoteEntries(this.repoId);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+  }
+
+  /**
+   * Déclare un distant. Comme toutes les écritures de cette section, renvoie
+   * l'erreur au formulaire plutôt qu'au bandeau : il reste ouvert pour qu'on
+   * corrige un nom pris sur place.
+   */
+  async addRemote(name: string, url: string): Promise<AppError | null> {
+    return this.writeRemotes(() => api.addRemote(this.repoId, name, url));
+  }
+
+  /**
+   * Renomme un distant et/ou change son URL. Le renommage d'abord : l'URL est
+   * ensuite écrite sous le nouveau nom.
+   */
+  async editRemote(name: string, newName: string, url: string): Promise<AppError | null> {
+    const current = this.remoteEntries?.find((r) => r.name === name);
+    return this.writeRemotes(async () => {
+      let entries: RemoteEntry[] | null = null;
+      const target = newName.trim();
+      if (target !== name) entries = await api.renameRemote(this.repoId, name, target);
+      if (url.trim() !== current?.url) {
+        entries = await api.setRemoteUrl(this.repoId, target, url);
+      }
+      return entries ?? this.remoteEntries ?? [];
+    });
+  }
+
+  async deleteRemote(name: string): Promise<AppError | null> {
+    return this.writeRemotes(() => api.deleteRemote(this.repoId, name));
+  }
+
+  /**
+   * Écriture dans les distants, puis ce qu'elle invalide. Renommer ou retirer
+   * un distant déplace `refs/remotes/**` et l'amont des branches locales ; en
+   * ajouter un change la forge derrière les pull requests. C'est exactement ce
+   * que recharge un fetch qui a fait bouger quelque chose.
+   */
+  private async writeRemotes(write: () => Promise<RemoteEntry[]>): Promise<AppError | null> {
+    let error: AppError | null = null;
+    try {
+      this.remoteEntries = await write();
+    } catch (e) {
+      error = e as AppError;
+      // Un renommage réussi suivi d'une URL refusée a tout de même changé la
+      // liste : on la relit plutôt que de garder une version périmée.
+      await this.loadRemoteEntries();
+    }
+    await this.reloadRemoteRefs();
+    return error;
+  }
+
   // ── Dépôt distant ───────────────────────────────────────────────────────────
 
   /**
@@ -1960,6 +2072,12 @@ class TabsStore {
    * stocké dans le webview dans ce projet.
    */
   pullMode = $state<PullMode>("fastForwardOrMerge");
+  /**
+   * Noms d'affichage des dépôts, par chemin canonique. Chargés une fois au
+   * démarrage, avant la restauration des onglets, pour qu'aucun n'apparaisse
+   * d'abord sous le nom de son dossier.
+   */
+  private aliases: Record<string, string> = {};
 
   /** Onglets de dépôt seuls — les seuls que le backend connaisse. */
   get repoTabs(): RepoStore[] {
@@ -2066,6 +2184,11 @@ class TabsStore {
     }
     await this.loadProfiles();
     await this.loadPullMode();
+    try {
+      this.aliases = await api.listAliases();
+    } catch {
+      /* table illisible : les onglets portent le nom de leur dossier */
+    }
 
     let session;
     try {
@@ -2097,6 +2220,40 @@ class TabsStore {
     const existing = this.tabs.find((t) => t.kind === "settings");
     if (!existing) this.tabs = [...this.tabs, new SettingsTab()];
     void this.activate(existing?.id ?? "settings");
+  }
+
+  /**
+   * Ouvre les paramètres d'un dépôt dans son propre onglet, en l'activant
+   * d'abord — c'est ce que fait le menu contextuel d'un onglet, qui n'est pas
+   * forcément celui affiché.
+   */
+  async openRepoSettings(id: string) {
+    const tab = this.repoTabs.find((t) => t.repoId === id);
+    if (!tab) return;
+    tab.openSettings();
+    await this.activate(id);
+  }
+
+  /**
+   * Fixe ou retire le nom d'affichage d'un dépôt. Les récents sont relus : le
+   * backend y met ce nom à la place de celui du dossier. Renvoie l'erreur au
+   * formulaire, comme les autres écritures des paramètres du dépôt.
+   */
+  async setAlias(tab: RepoStore, alias: string | null): Promise<AppError | null> {
+    try {
+      const kept = await api.setAlias(tab.repoId, alias);
+      tab.alias = kept;
+      if (kept) this.aliases[tab.repoId] = kept;
+      else delete this.aliases[tab.repoId];
+    } catch (e) {
+      return e as AppError;
+    }
+    try {
+      this.recent = await api.listRecent();
+    } catch {
+      /* la liste se mettra à jour à la prochaine ouverture */
+    }
+    return null;
   }
 
   async loadProfiles() {
@@ -2267,6 +2424,7 @@ class TabsStore {
       }
     } else {
       const tab = new RepoStore(id, info);
+      tab.alias = this.aliases[id] ?? null;
       if (slot === -1) {
         this.tabs = [...this.tabs, tab];
       } else {

@@ -153,7 +153,26 @@
     aria-hidden="true"
   ></div>
 
-  <span class="name" title={repo.repoId}>{repo.repoInfo?.name ?? "…"}</span>
+  <!-- Le nom, puis la roue dentée des paramètres **de ce dépôt** : collée au
+       nom parce qu'elle porte sur lui, là où celle de la barre d'onglets, au
+       bord droit de la fenêtre, porte sur l'application. -->
+  <div class="ident">
+    <span class="name" title={repo.repoId}>{repo.displayName ?? "…"}</span>
+    <button
+      class="repo-settings"
+      class:on={repo.settingsOpen}
+      aria-pressed={repo.settingsOpen}
+      title={t("repoSettings.open.hint")}
+      aria-label={t("repoSettings.open")}
+      disabled={!repo.repoInfo}
+      onclick={() => (repo.settingsOpen ? repo.closeSettings() : repo.openSettings())}
+    >
+      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+        <circle cx="8" cy="8" r="2.1" />
+        <path d="M12.9 9.8a1.1 1.1 0 0 0 .22 1.21l.04.04a1.33 1.33 0 1 1-1.88 1.88l-.04-.04a1.1 1.1 0 0 0-1.21-.22 1.1 1.1 0 0 0-.67 1v.11a1.33 1.33 0 1 1-2.67 0v-.06a1.1 1.1 0 0 0-.72-1 1.1 1.1 0 0 0-1.21.22l-.04.04a1.33 1.33 0 1 1-1.88-1.88l.04-.04a1.1 1.1 0 0 0 .22-1.21 1.1 1.1 0 0 0-1-.67h-.11a1.33 1.33 0 1 1 0-2.67h.06a1.1 1.1 0 0 0 1-.72 1.1 1.1 0 0 0-.22-1.21l-.04-.04a1.33 1.33 0 1 1 1.88-1.88l.04.04a1.1 1.1 0 0 0 1.21.22h.05a1.1 1.1 0 0 0 .67-1v-.11a1.33 1.33 0 1 1 2.67 0v.06a1.1 1.1 0 0 0 .67 1 1.1 1.1 0 0 0 1.21-.22l.04-.04a1.33 1.33 0 1 1 1.88 1.88l-.04.04a1.1 1.1 0 0 0-.22 1.21v.05a1.1 1.1 0 0 0 1 .67h.11a1.33 1.33 0 1 1 0 2.67h-.06a1.1 1.1 0 0 0-1 .67z" />
+      </svg>
+    </button>
+  </div>
 
   <div class="actions">
     {@render action({
@@ -527,6 +546,47 @@
     padding: 0 0.75rem;
     border-bottom: 1px solid var(--border);
     background: var(--bg);
+  }
+  /* Nom et roue dentée : la roue suit le nom au lieu d'être repoussée au bout
+     de la cellule, et c'est le nom qui s'abrège quand la place manque. */
+  .ident {
+    min-width: 0;
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+  }
+  .repo-settings {
+    flex: none;
+    width: 26px;
+    height: 26px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 0;
+    border: none;
+    border-radius: 5px;
+    background: transparent;
+    color: var(--text-faint);
+    cursor: pointer;
+  }
+  .repo-settings svg {
+    display: block;
+    width: 15px;
+    height: 15px;
+  }
+  .repo-settings:hover:not(:disabled) {
+    background: var(--bg-raised);
+    color: var(--text);
+  }
+  /* Allumée tant que les paramètres du dépôt sont affichés : c'est aussi le
+     bouton qui les referme. */
+  .repo-settings.on {
+    background: var(--accent-bg);
+    color: var(--accent-soft);
+  }
+  .repo-settings:disabled {
+    cursor: default;
+    opacity: 0.5;
   }
   .name {
     min-width: 0;

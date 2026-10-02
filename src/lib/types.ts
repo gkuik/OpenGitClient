@@ -412,6 +412,17 @@ export interface RepoChangedEvent {
 }
 
 /**
+ * Un dépôt distant déclaré, tel que les paramètres du dépôt le listent.
+ * `pushUrl` n'est présent que s'il diffère de `url` : changer l'URL ne
+ * changerait alors pas la destination des push, et l'écran doit le dire.
+ */
+export interface RemoteEntry {
+  name: string;
+  url: string;
+  pushUrl: string | null;
+}
+
+/**
  * Dépôt distant d'un onglet. `host` est la clé sous laquelle les identifiants
  * sont rangés — null si l'URL n'expose pas d'hôte (chemin local).
  */

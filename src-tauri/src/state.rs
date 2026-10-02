@@ -25,6 +25,7 @@ const RECENT_FILE: &str = "recent.json";
 const SESSION_FILE: &str = "session.json";
 const PROFILES_FILE: &str = "profiles.json";
 const PREFS_FILE: &str = "prefs.json";
+const PROJECTS_FILE: &str = "projects.json";
 const RECENT_MAX: usize = 10;
 
 /// Session persistée : onglets ouverts et onglet actif, pour restaurer l'espace
@@ -58,6 +59,11 @@ pub struct AppState {
     /// propre config Git (voir `GitBackend::set_identity`), ce qui évite d'avoir
     /// à maintenir une association en double.
     profiles: Vec<Profile>,
+    /// Réglages propres à un dépôt **qui ne sont pas du Git** — aujourd'hui le
+    /// seul nom d'affichage —, indexés par chemin canonique comme les onglets.
+    /// Ce qui est du Git (identité, distants) vit dans la config du dépôt et
+    /// n'est jamais recopié ici : aucun autre outil ne lirait ce fichier.
+    projects: HashMap<String, ProjectPrefs>,
     /// Surveillance du disque : elle émet `repo://changed` pour les dépôts
     /// ouverts, afin que l'interface reflète ce qu'un autre outil modifie.
     /// `None` si le système ne la permet pas — l'application marche alors comme
@@ -74,6 +80,7 @@ impl AppState {
         let recent = load_json(&app, RECENT_FILE).unwrap_or_default();
         let profiles = load_json(&app, PROFILES_FILE).unwrap_or_default();
         let prefs = load_json(&app, PREFS_FILE).unwrap_or_default();
+        let projects = load_json(&app, PROJECTS_FILE).unwrap_or_default();
         let session: Session = load_json(&app, SESSION_FILE).unwrap_or_default();
         let watcher = RepoWatcher::new(app.clone());
         Self {
@@ -84,6 +91,7 @@ impl AppState {
             recent,
             prefs,
             profiles,
+            projects,
             watcher,
             app,
         }
@@ -125,6 +133,12 @@ impl AppState {
         self.push_recent(canonical);
         self.save_session();
         Ok(id)
+    }
+
+    /// Une opération réseau tourne-t-elle sur ce dépôt ? Renommer ou retirer un
+    /// distant réécrit `refs/remotes/**`, que le thread réseau écrit aussi.
+    pub fn is_networking(&self, id: &str) -> bool {
+        self.networking.contains(id)
     }
 
     /// Réserve le dépôt pour une opération réseau (fetch ou push). `false` si
@@ -324,16 +338,55 @@ impl AppState {
         save_json(&self.app, PROFILES_FILE, &self.profiles)
     }
 
-    /// Liste des récents sous forme sérialisable (chemin + nom du dossier).
+    /// Noms d'affichage des dépôts, par chemin canonique. Seuls ceux qui en ont
+    /// un figurent dans la table.
+    pub fn aliases(&self) -> HashMap<String, String> {
+        self.projects
+            .iter()
+            .filter_map(|(id, p)| p.alias.clone().map(|a| (id.clone(), a)))
+            .collect()
+    }
+
+    /// Fixe le nom d'affichage d'un dépôt, ou le retire avec `None` — une
+    /// chaîne vide ou blanche vaut retrait : un onglet sans nom ne se
+    /// retrouverait plus. Renvoie le nom retenu.
+    pub fn set_alias(&mut self, id: &str, alias: Option<String>) -> Result<Option<String>, AppError> {
+        let alias = alias
+            .map(|a| a.trim().to_string())
+            .filter(|a| !a.is_empty());
+        match &alias {
+            Some(a) => {
+                self.projects.entry(id.to_string()).or_default().alias = Some(a.clone());
+            }
+            None => {
+                if let Some(p) = self.projects.get_mut(id) {
+                    p.alias = None;
+                }
+                // Une entrée vidée de tout réglage n'a plus rien à faire dans le
+                // fichier.
+                self.projects.retain(|_, p| !p.is_empty());
+            }
+        }
+        save_json(&self.app, PROJECTS_FILE, &self.projects)?;
+        Ok(alias)
+    }
+
+    /// Liste des récents sous forme sérialisable : chemin, et le nom
+    /// d'affichage du dépôt s'il en a un, celui de son dossier sinon.
     pub fn recent_list(&self) -> Vec<RecentRepo> {
         self.recent
             .iter()
-            .map(|p| RecentRepo {
-                path: p.to_string_lossy().to_string(),
-                name: p
-                    .file_name()
-                    .map(|n| n.to_string_lossy().to_string())
-                    .unwrap_or_else(|| p.to_string_lossy().to_string()),
+            .map(|p| {
+                let path = p.to_string_lossy().to_string();
+                let alias = self.projects.get(&path).and_then(|pr| pr.alias.clone());
+                RecentRepo {
+                    name: alias.unwrap_or_else(|| {
+                        p.file_name()
+                            .map(|n| n.to_string_lossy().to_string())
+                            .unwrap_or_else(|| path.clone())
+                    }),
+                    path,
+                }
             })
             .collect()
     }
@@ -420,6 +473,23 @@ impl Default for Prefs {
             graph_lines: GraphLineStyle::default(),
             graph_roundness: GRAPH_ROUNDNESS_DEFAULT,
         }
+    }
+}
+
+/// Réglages d'un dépôt propres à l'application, persistés dans `projects.json`.
+/// `default` sur chaque champ : un fichier écrit par une version antérieure
+/// — ou à laquelle il manquera un réglage futur — se lit quand même.
+#[derive(Debug, Default, Clone, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct ProjectPrefs {
+    /// Nom affiché à la place de celui du dossier : onglet, barre du dépôt,
+    /// récents.
+    alias: Option<String>,
+}
+
+impl ProjectPrefs {
+    fn is_empty(&self) -> bool {
+        self.alias.is_none()
     }
 }
 

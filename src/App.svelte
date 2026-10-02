@@ -5,6 +5,7 @@
   import WelcomeScreen from "./lib/components/WelcomeScreen.svelte";
   import NewTabView from "./lib/components/NewTabView.svelte";
   import SettingsView from "./lib/components/SettingsView.svelte";
+  import RepoSettingsView from "./lib/components/RepoSettingsView.svelte";
   import RepoBar from "./lib/components/RepoBar.svelte";
   import UpstreamPrompt from "./lib/components/UpstreamPrompt.svelte";
   import BranchPrompt from "./lib/components/BranchPrompt.svelte";
@@ -61,31 +62,44 @@
         <BranchPrompt />
       </div>
 
-      <div class="body">
-        <BranchSidebar />
-        <!-- Poignées posées sur les deux frontières : hors de la grille, elles
-             ne déplacent aucune colonne (voir SidebarResizer). -->
-        <SidebarResizer side="left" />
-        <SidebarResizer side="right" />
-        <main class="main">
-          <CenterPanel />
-        </main>
-        <!--
-          La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
-          le détail du commit quand un commit est sélectionné, sinon les
-          changements en cours et la boîte de commit.
-        -->
-        <aside class="sidebar">
-          <!-- Au-dessus des deux vues : une fusion en cours concerne le dépôt,
-               pas ce qu'on est en train de regarder. -->
-          <MergeBanner />
-          {#if repo.selectedCommitOid}
-            <CommitDetailsPanel />
-          {:else}
-            <StatusPanel />
-            <CommitBox />
-          {/if}
-        </aside>
+      <!-- Les paramètres du dépôt se posent **par-dessus** les trois colonnes
+           au lieu de les remplacer : le graph reste monté, avec sa hauteur
+           mesurée et sa position de défilement, et réapparaît tel quel au
+           retour. Les deux occupent la même cellule de `.stage`. -->
+      <div class="stage">
+        {#if repo.settingsOpen}
+          <!-- `#key` : les brouillons du formulaire sont locaux au composant et
+               ne doivent pas suivre d'un dépôt à l'autre. -->
+          {#key repo.repoId}
+            <div class="repo-settings"><RepoSettingsView /></div>
+          {/key}
+        {/if}
+        <div class="body" class:covered={repo.settingsOpen}>
+          <BranchSidebar />
+          <!-- Poignées posées sur les deux frontières : hors de la grille, elles
+               ne déplacent aucune colonne (voir SidebarResizer). -->
+          <SidebarResizer side="left" />
+          <SidebarResizer side="right" />
+          <main class="main">
+            <CenterPanel />
+          </main>
+          <!--
+            La colonne de droite est le sélecteur de fichiers de ce qu'on regarde :
+            le détail du commit quand un commit est sélectionné, sinon les
+            changements en cours et la boîte de commit.
+          -->
+          <aside class="sidebar">
+            <!-- Au-dessus des deux vues : une fusion en cours concerne le dépôt,
+                 pas ce qu'on est en train de regarder. -->
+            <MergeBanner />
+            {#if repo.selectedCommitOid}
+              <CommitDetailsPanel />
+            {:else}
+              <StatusPanel />
+              <CommitBox />
+            {/if}
+          </aside>
+        </div>
       </div>
     </div>
   {/if}
@@ -121,6 +135,25 @@
      sans question, et rien ne saute en dessous. */
   .top {
     position: relative;
+  }
+  /* Une seule cellule, partagée par les colonnes et les paramètres du dépôt. */
+  .stage {
+    display: grid;
+    grid-template: minmax(0, 1fr) / minmax(0, 1fr);
+    min-height: 0;
+    overflow: hidden;
+  }
+  .stage > * {
+    grid-area: 1 / 1;
+  }
+  .repo-settings {
+    min-height: 0;
+    z-index: 1;
+  }
+  /* `visibility` et non `display: none`, pour la même raison que dans
+     `CenterPanel` : le graph garde sa hauteur mesurée et son défilement. */
+  .body.covered {
+    visibility: hidden;
   }
   .body {
     display: grid;

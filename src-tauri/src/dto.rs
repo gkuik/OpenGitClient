@@ -719,6 +719,20 @@ pub struct ChangeEvent {
     pub refs: bool,
 }
 
+/// Un dépôt distant déclaré, tel que les paramètres du dépôt le listent.
+///
+/// Lecture pure de `.git/config`. `push_url` n'est présent que s'il diffère de
+/// `url` (`remote.<nom>.pushurl`) : sans lui, changer l'URL depuis l'interface
+/// laisserait croire que le push suit, alors qu'il continuerait de partir
+/// ailleurs.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteEntry {
+    pub name: String,
+    pub url: String,
+    pub push_url: Option<String>,
+}
+
 /// Dépôt distant d'un onglet, tel que le frontend en a besoin pour demander des
 /// identifiants : `host` est la clé sous laquelle ils sont rangés.
 #[derive(Debug, Clone, Serialize)]

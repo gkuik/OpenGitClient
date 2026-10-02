@@ -8,7 +8,7 @@ use std::rc::Rc;
 use git2::{
     build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
     DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions,
-    IndexAddOption, ObjectType, Oid, PushOptions, Reference, RemoteCallbacks, Repository,
+    IndexAddOption, ObjectType, Oid, PushOptions, Reference, Remote, RemoteCallbacks, Repository,
     RepositoryState, ResetType, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
 };
 
@@ -18,8 +18,8 @@ use crate::dto::{
     FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
     GraphRef, GraphRefKind,
     Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
-    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry, TagPushReport,
-    Upstream,
+    RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry,
+    TagPushReport, Upstream,
 };
 use crate::error::AppError;
 
@@ -1086,6 +1086,68 @@ impl GitBackend for Libgit2Backend {
         Ok(repo.remotes()?.iter().flatten().map(str::to_string).collect())
     }
 
+    fn remote_entries(&self) -> Result<Vec<RemoteEntry>, AppError> {
+        let repo = self.repo()?;
+        let names = repo.remotes()?;
+        let mut entries = Vec::new();
+        for name in names.iter().flatten() {
+            // Un distant à la configuration cassée est sauté plutôt que de faire
+            // échouer toute la liste : les autres restent gérables.
+            let Ok(remote) = repo.find_remote(name) else {
+                continue;
+            };
+            let url = remote.url().unwrap_or_default().to_string();
+            let push_url = remote
+                .pushurl()
+                .filter(|p| *p != url)
+                .map(str::to_string);
+            entries.push(RemoteEntry {
+                name: name.to_string(),
+                url,
+                push_url,
+            });
+        }
+        Ok(entries)
+    }
+
+    fn add_remote(&self, name: &str, url: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        check_remote_name(&repo, name)?;
+        let url = non_empty_url(url)?;
+        repo.remote(name, url)?;
+        Ok(())
+    }
+
+    fn rename_remote(&self, name: &str, new_name: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        find_remote(&repo, name)?;
+        if name == new_name {
+            return Ok(());
+        }
+        check_remote_name(&repo, new_name)?;
+        // libgit2 renvoie les refspecs qu'il n'a pas su réécrire (celles qui ne
+        // sont pas la forme par défaut) : elles restent telles quelles, comme
+        // avec `git remote rename`, et n'empêchent pas le renommage.
+        repo.remote_rename(name, new_name)?;
+        Ok(())
+    }
+
+    fn set_remote_url(&self, name: &str, url: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        // Vérifié d'abord : libgit2 écrirait sinon `remote.<nom>.url` et créerait
+        // en silence un distant à moitié déclaré, sans refspec.
+        find_remote(&repo, name)?;
+        repo.remote_set_url(name, non_empty_url(url)?)?;
+        Ok(())
+    }
+
+    fn delete_remote(&self, name: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        find_remote(&repo, name)?;
+        repo.remote_delete(name)?;
+        Ok(())
+    }
+
     fn pull(&self, branch: Option<&str>, mode: PullMode) -> Result<PullReport, AppError> {
         let repo = self.repo()?;
 
@@ -1564,6 +1626,34 @@ fn push_refspec(
         return Err(AppError::PushRejected(reason));
     }
     Ok(())
+}
+
+/// Refuse un nom de distant invalide ou déjà pris, avant toute écriture.
+/// libgit2 le refuserait aussi, mais sans dire lequel des deux cas, ni le nom.
+fn check_remote_name(repo: &Repository, name: &str) -> Result<(), AppError> {
+    if !Remote::is_valid_name(name) {
+        return Err(AppError::InvalidRemoteName(name.to_string()));
+    }
+    if repo.find_remote(name).is_ok() {
+        return Err(AppError::RemoteExists(name.to_string()));
+    }
+    Ok(())
+}
+
+/// Le distant nommé, ou `RemoteNotFound` s'il n'est pas déclaré.
+fn find_remote<'r>(repo: &'r Repository, name: &str) -> Result<Remote<'r>, AppError> {
+    repo.find_remote(name)
+        .map_err(|_| AppError::RemoteNotFound(name.to_string()))
+}
+
+/// Une URL de distant débarrassée de ses blancs, et jamais vide : libgit2
+/// accepterait de l'écrire, et le distant ne mènerait nulle part.
+fn non_empty_url(url: &str) -> Result<&str, AppError> {
+    let url = url.trim();
+    if url.is_empty() {
+        return Err(AppError::EmptyRemoteUrl);
+    }
+    Ok(url)
 }
 
 /// Détermine quel dépôt distant interroger quand l'appel n'en nomme aucun :
@@ -3491,6 +3581,67 @@ mod tests {
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn remotes_are_added_renamed_repointed_and_removed() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        let origin_url = git.remote_entries().unwrap()[0].url.clone();
+
+        // Un premier push pose l'amont et crée `refs/remotes/origin/<b>`.
+        fs::write(local_dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        git.push(None, None, PushMode::Normal).unwrap();
+        let branch = git.info().unwrap().branch.unwrap();
+
+        // Ajout : refusé sous un nom pris, invalide ou sans URL.
+        assert!(matches!(git.add_remote("origin", "x"), Err(AppError::RemoteExists(n)) if n == "origin"));
+        assert!(matches!(git.add_remote("a b", "x"), Err(AppError::InvalidRemoteName(_))));
+        assert!(matches!(git.add_remote("fork", "  "), Err(AppError::EmptyRemoteUrl)));
+        git.add_remote("fork", " https://example.com/fork.git ").unwrap();
+        // libgit2 liste les distants triés par nom.
+        let entries = git.remote_entries().unwrap();
+        let names: Vec<_> = entries.iter().map(|r| r.name.as_str()).collect();
+        assert_eq!(names, ["fork", "origin"]);
+        assert_eq!(entries[0].url, "https://example.com/fork.git", "l'URL est nettoyée");
+        assert!(entries[0].push_url.is_none());
+
+        // Renommage : les branches de suivi et l'amont suivent.
+        assert!(matches!(git.rename_remote("origin", "fork"), Err(AppError::RemoteExists(_))));
+        assert!(matches!(git.rename_remote("nope", "x"), Err(AppError::RemoteNotFound(_))));
+        git.rename_remote("origin", "upstream").unwrap();
+        let remotes = git.remote_branches().unwrap();
+        assert!(remotes.iter().any(|r| r.name == format!("upstream/{branch}")));
+        assert!(!remotes.iter().any(|r| r.name.starts_with("origin/")));
+        let local = git.local_branches().unwrap();
+        let up = local.iter().find(|b| b.name == branch).unwrap().upstream.as_ref().unwrap();
+        assert_eq!(up.name, format!("upstream/{branch}"));
+
+        // URL : changée sur un distant existant, jamais créée en douce.
+        git.set_remote_url("fork", "https://example.com/other.git").unwrap();
+        assert_eq!(git.remote_entries().unwrap()[0].url, "https://example.com/other.git");
+        assert!(matches!(git.set_remote_url("ghost", "x"), Err(AppError::RemoteNotFound(_))));
+        assert!(git.remote_entries().unwrap().iter().all(|r| r.name != "ghost"));
+
+        // Suppression : la config et les branches de suivi partent.
+        git.delete_remote("upstream").unwrap();
+        assert!(git.remote_branches().unwrap().is_empty());
+        assert_eq!(git.remotes().unwrap(), vec!["fork".to_string()]);
+        let local = git.local_branches().unwrap();
+        assert!(local.iter().find(|b| b.name == branch).unwrap().upstream.is_none());
+
+        // Et le serveur n'a rien perdu : redéclaré, un fetch le retrouve.
+        git.add_remote("origin", &origin_url).unwrap();
+        git.fetch(Some("origin")).unwrap();
+        assert!(git
+            .remote_branches()
+            .unwrap()
+            .iter()
+            .any(|r| r.name == format!("origin/{branch}")));
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
     }
 
     #[test]
