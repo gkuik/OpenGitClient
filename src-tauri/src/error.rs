@@ -97,6 +97,18 @@ pub enum AppError {
     #[error("{0} is not a valid tag name")]
     InvalidTagName(String),
 
+    #[error("A remote named {0} already exists")]
+    RemoteExists(String),
+
+    #[error("{0} is not a valid remote name")]
+    InvalidRemoteName(String),
+
+    #[error("No remote named {0}")]
+    RemoteNotFound(String),
+
+    #[error("A remote needs a URL")]
+    EmptyRemoteUrl,
+
     #[error("Tag push refused by the remote ({0}). It may already hold a different tag of that name.")]
     TagRejected(String),
 
@@ -142,6 +154,10 @@ impl AppError {
             AppError::TagExists(_) => "TagExists",
             AppError::InvalidTagName(_) => "InvalidTagName",
             AppError::TagRejected(_) => "TagRejected",
+            AppError::RemoteExists(_) => "RemoteExists",
+            AppError::InvalidRemoteName(_) => "InvalidRemoteName",
+            AppError::RemoteNotFound(_) => "RemoteNotFound",
+            AppError::EmptyRemoteUrl => "EmptyRemoteUrl",
             AppError::Network(_) => "Network",
             AppError::Git(_) => "Git",
             AppError::Io(_) => "Io",
@@ -162,7 +178,10 @@ impl AppError {
             | AppError::InvalidBranchName(arg)
             | AppError::TagExists(arg)
             | AppError::InvalidTagName(arg)
-            | AppError::TagRejected(arg) => Some(arg),
+            | AppError::TagRejected(arg)
+            | AppError::RemoteExists(arg)
+            | AppError::InvalidRemoteName(arg)
+            | AppError::RemoteNotFound(arg) => Some(arg),
             _ => None,
         }
     }

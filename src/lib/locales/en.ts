@@ -310,6 +310,40 @@ export const en = {
     "No usable SSH key for {host}: load it into ssh-agent, or place it in ~/.ssh (id_ed25519, id_ecdsa, id_rsa).",
   "credentials.none": "No usable credentials for {url}",
 
+  // ── Paramètres du dépôt ───────────────────────────────────────────────────
+  "repoSettings.open": "Repository settings",
+  "repoSettings.open.hint": "Settings of this repository: display name, identity, remotes",
+  "repoSettings.open.menu": "Repository settings…",
+  "repoSettings.back": "Back to the graph",
+  "repoSettings.title": "Repository settings",
+  "repoSettings.alias": "Display name",
+  "repoSettings.alias.intro":
+    "The name shown in the tab, the repository bar and the recent list. Only OpenGitClient knows it: the folder is not renamed. Leave it empty to show the folder's name, {folder}.",
+  "repoSettings.alias.reset": "Use the folder's name",
+  "repoSettings.identity": "Identity",
+  "repoSettings.identity.intro":
+    "Who the commits of this repository are signed by. A profile or a custom identity is written into the repository's own {config}, where any Git tool reads it; {global} removes it, and the repository falls back on your global configuration.",
+  "repoSettings.identity.aria": "Identity of this repository",
+  "repoSettings.identity.current": "Commits are signed {who}",
+  "repoSettings.identity.local": "Set in this repository",
+  "repoSettings.identity.inherited": "Inherited from the global configuration",
+  "repoSettings.identity.none": "No Git identity configured: committing will fail until one is set.",
+  "repoSettings.identity.custom": "Custom identity",
+  "repoSettings.identity.manage": "Manage profiles…",
+  "repoSettings.remotes": "Remotes",
+  "repoSettings.remotes.intro":
+    "The servers this repository fetches from and pushes to, read from and written to its {config}. Nothing is fetched here: a new remote shows its branches after the next fetch.",
+  "repoSettings.remotes.empty": "No remote: this repository is local only.",
+  "repoSettings.remotes.name": "Name",
+  "repoSettings.remotes.name.placeholder": "origin",
+  "repoSettings.remotes.url": "URL",
+  "repoSettings.remotes.url.placeholder": "https://github.com/owner/repo.git",
+  "repoSettings.remotes.pushUrl": "Pushes go to {url}",
+  "repoSettings.remotes.add": "Add a remote",
+  "repoSettings.remotes.delete.confirm": "Remove it",
+  "repoSettings.remotes.delete.hint":
+    "Removes the remote and its remote branches from this repository. Nothing is deleted on the server: adding it back and fetching brings everything back.",
+
   // ── Redimensionnement des colonnes ────────────────────────────────────────
   "layout.resize.left": "Resize the branches column",
   "layout.resize.right": "Resize the changes column",
@@ -341,7 +375,7 @@ export const en = {
   "settings.graph.roundness.reset.hint": "Back to the default roundness, {n} %",
   "settings.profiles": "Profiles",
   "settings.profiles.intro":
-    "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right. {note}, their identity living in their own configuration.",
+    "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right, or in the repository's settings. {note}, their identity living in their own configuration.",
   "settings.profiles.intro.note": "Deleting a profile changes nothing for the repositories using it",
   "settings.profiles.empty": "No profile yet.",
   "settings.profiles.add": "Add a profile",
@@ -444,6 +478,10 @@ export const en = {
   "error.InvalidBranchName": "“{arg}” is not a valid branch name",
   "error.TagExists": "A tag named {arg} already exists",
   "error.InvalidTagName": "“{arg}” is not a valid tag name",
+  "error.RemoteExists": "A remote named {arg} already exists",
+  "error.InvalidRemoteName": "“{arg}” is not a valid remote name",
+  "error.RemoteNotFound": "No remote named {arg}",
+  "error.EmptyRemoteUrl": "A remote needs a URL",
   "error.TagRejected":
     "Tag push refused by the remote ({arg}). It may already hold a different tag of that name.",
   "error.PushRejected":

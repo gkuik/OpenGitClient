@@ -21,6 +21,7 @@ import type {
   PullRequestEvent,
   PushEvent,
   RemoteBranchEntry,
+  RemoteEntry,
   RemoteInfo,
   RecentRepo,
   RepoChangedEvent,
@@ -81,6 +82,11 @@ export const api = {
   setTabOrder: (order: string[]) => call<void>("set_tab_order", { order }),
   getSession: () => call<SessionInfo>("get_session"),
   listRecent: () => call<RecentRepo[]>("list_recent"),
+  /** Noms d'affichage des dépôts, par chemin canonique (`projects.json`). */
+  listAliases: () => call<Record<string, string>>("list_aliases"),
+  /** Fixe ou retire (`null`, chaîne vide) le nom d'affichage ; renvoie celui retenu. */
+  setAlias: (repoId: string, alias: string | null) =>
+    call<string | null>("set_alias", { repoId, alias }),
   getRepoInfo: (repoId: string) => call<RepoInfo>("get_repo_info", { repoId }),
 
   // ── Statut / diff / index ────────────────────────────────────────────────
@@ -196,6 +202,18 @@ export const api = {
     }),
   /** Noms des distants déclarés — le choix de la barre d'upstream. Aucun réseau. */
   listRemotes: (repoId: string) => call<string[]>("list_remotes", { repoId }),
+  // Gestion des distants (paramètres du dépôt). Chaque écriture renvoie la
+  // liste à jour : pas d'aller-retour de plus pour la relire.
+  listRemoteEntries: (repoId: string) =>
+    call<RemoteEntry[]>("list_remote_entries", { repoId }),
+  addRemote: (repoId: string, name: string, url: string) =>
+    call<RemoteEntry[]>("add_remote", { repoId, name, url }),
+  renameRemote: (repoId: string, name: string, newName: string) =>
+    call<RemoteEntry[]>("rename_remote", { repoId, name, newName }),
+  setRemoteUrl: (repoId: string, name: string, url: string) =>
+    call<RemoteEntry[]>("set_remote_url", { repoId, name, url }),
+  deleteRemote: (repoId: string, name: string) =>
+    call<RemoteEntry[]>("delete_remote", { repoId, name }),
   onPushed: (handler: (event: PushEvent) => void): Promise<UnlistenFn> =>
     listen<PushEvent>("repo://pushed", (e) => handler(e.payload)),
   /**

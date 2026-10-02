@@ -131,7 +131,7 @@
           repos: [],
           stored: remote.hasCredentials,
         };
-        const name = tab.repoInfo?.name;
+        const name = tab.displayName;
         if (name && !row.repos.includes(name)) row.repos.push(name);
         found.set(remote.host, row);
       } catch {

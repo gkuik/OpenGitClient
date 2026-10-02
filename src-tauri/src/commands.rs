@@ -18,7 +18,7 @@ use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
-    RemoteBranchEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
+    RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
     TagEntry, TagPushEvent,
     GraphColumns, GraphLineStyle,
     ThemeMode,
@@ -705,6 +705,100 @@ pub fn list_remotes(
     state: State<'_, Mutex<AppState>>,
 ) -> Result<Vec<String>, AppError> {
     lock(&state)?.backend(&repo_id)?.remotes()
+}
+
+/// Distants déclarés avec leurs URL (paramètres du dépôt).
+#[tauri::command]
+pub fn list_remote_entries(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RemoteEntry>, AppError> {
+    lock(&state)?.backend(&repo_id)?.remote_entries()
+}
+
+/// Déclare un distant, et renvoie la liste à jour.
+#[tauri::command]
+pub fn add_remote(
+    repo_id: String,
+    name: String,
+    url: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RemoteEntry>, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    backend.add_remote(name.trim(), &url)?;
+    backend.remote_entries()
+}
+
+/// Renomme un distant, et renvoie la liste à jour.
+///
+/// Refusé pendant une opération réseau : le renommage déplace
+/// `refs/remotes/<ancien>/**`, que le thread réseau est peut-être en train
+/// d'écrire sous l'ancien nom.
+#[tauri::command]
+pub fn rename_remote(
+    repo_id: String,
+    name: String,
+    new_name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RemoteEntry>, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    if guard.is_networking(&repo_id) {
+        return Err(AppError::NetworkBusy);
+    }
+    backend.rename_remote(&name, new_name.trim())?;
+    backend.remote_entries()
+}
+
+/// Change l'URL d'un distant, et renvoie la liste à jour.
+#[tauri::command]
+pub fn set_remote_url(
+    repo_id: String,
+    name: String,
+    url: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RemoteEntry>, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    backend.set_remote_url(&name, &url)?;
+    backend.remote_entries()
+}
+
+/// Retire un distant, et renvoie la liste à jour. Refusé pendant une opération
+/// réseau, pour la même raison que le renommage.
+#[tauri::command]
+pub fn delete_remote(
+    repo_id: String,
+    name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<RemoteEntry>, AppError> {
+    let guard = lock(&state)?;
+    let backend = guard.backend(&repo_id)?;
+    if guard.is_networking(&repo_id) {
+        return Err(AppError::NetworkBusy);
+    }
+    backend.delete_remote(&name)?;
+    backend.remote_entries()
+}
+
+/// Noms d'affichage des dépôts, par chemin canonique.
+#[tauri::command]
+pub fn list_aliases(
+    state: State<'_, Mutex<AppState>>,
+) -> Result<std::collections::HashMap<String, String>, AppError> {
+    Ok(lock(&state)?.aliases())
+}
+
+/// Fixe (ou retire, avec `None` ou une chaîne vide) le nom d'affichage d'un
+/// dépôt, et renvoie celui retenu.
+#[tauri::command]
+pub fn set_alias(
+    repo_id: String,
+    alias: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Option<String>, AppError> {
+    lock(&state)?.set_alias(&repo_id, alias)
 }
 
 /// Dépôt distant qu'un fetch interrogerait, avec l'hôte auquel rattacher des

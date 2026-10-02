@@ -34,6 +34,24 @@
     }
   }
 
+  // ── Menu contextuel d'un onglet de dépôt ────────────────────────────────
+  //
+  // Une seule entrée : les paramètres du dépôt. C'est le geste naturel quand on
+  // pense « ce dépôt-là », y compris pour un onglet qui n'est pas celui affiché
+  // — d'où l'activation qui va avec (`openRepoSettings`).
+  let tabMenu = $state<{ id: string; x: number; y: number } | null>(null);
+  const TAB_MENU_W = 200;
+  const TAB_MENU_H = 40;
+
+  function openTabMenu(e: MouseEvent, id: string) {
+    e.preventDefault();
+    tabMenu = {
+      id,
+      x: Math.max(8, Math.min(e.clientX, window.innerWidth - TAB_MENU_W - 8)),
+      y: Math.max(8, Math.min(e.clientY, window.innerHeight - TAB_MENU_H - 8)),
+    };
+  }
+
   // ── Réordonnancement par glisser-déposer ────────────────────────────────
   //
   // Pointer events plutôt que le drag & drop HTML5 : pas d'image fantôme
@@ -228,7 +246,7 @@
           ? t("tabbar.newTab")
           : tab.kind === "settings"
             ? t("tabbar.settings")
-            : (tab.repoInfo?.name ?? "…")}
+            : (tab.displayName ?? "…")}
       <div
         class="tab"
         class:active
@@ -243,7 +261,16 @@
         onpointerup={onPointerUp}
         onpointercancel={onPointerUp}
         onauxclick={(e) => onMiddle(e, tab.id)}
-        onkeydown={(e) => (e.key === "Enter" ? tabs.activate(tab.id) : undefined)}
+        oncontextmenu={tab.kind === "repo" ? (e) => openTabMenu(e, tab.id) : undefined}
+        onkeydown={(e) => {
+          if (e.key === "Enter") tabs.activate(tab.id);
+          else if (e.key === "ContextMenu" && tab.kind === "repo") {
+            // Équivalent clavier du clic droit, sous l'onglet.
+            e.preventDefault();
+            const r = e.currentTarget.getBoundingClientRect();
+            tabMenu = { id: tab.id, x: r.left, y: r.bottom + 2 };
+          }
+        }}
       >
         {#if tab.kind === "settings"}
           {@render gear("tab-ic")}
@@ -307,6 +334,34 @@
     {@render gear()}
   </button>
 </div>
+
+<svelte:window onkeydown={(e) => e.key === "Escape" && (tabMenu = null)} />
+
+{#if tabMenu}
+  {@const id = tabMenu.id}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => (tabMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      tabMenu = null;
+    }}
+  ></button>
+  <div class="ctx-menu" style="left: {tabMenu.x}px; top: {tabMenu.y}px" role="menu">
+    <button
+      class="ctx-item"
+      role="menuitem"
+      onclick={() => {
+        tabMenu = null;
+        void tabs.openRepoSettings(id);
+      }}
+    >
+      {@render gear("menu-ic")}
+      <span>{t("repoSettings.open.menu")}</span>
+    </button>
+  </div>
+{/if}
 
 <!-- La roue dentée, partagée par le bouton et par l'onglet qu'il ouvre. -->
 {#snippet gear(cls?: string)}
@@ -556,5 +611,10 @@
   .add:hover {
     background: var(--bg);
     color: var(--text);
+  }
+  .menu-ic {
+    flex: none;
+    width: 14px;
+    height: 14px;
   }
 </style>

@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileContent, FileDiff,
     FileSource, Identity,
-    MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteInfo, RepoInfo,
+    MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry, TagEntry, TagPushReport,
 };
 use crate::error::AppError;
@@ -289,6 +289,30 @@ pub trait GitBackend: Send {
     /// distant, celui qu'un fetch prendrait, alors que la question posée est
     /// justement lequel choisir.
     fn remotes(&self) -> Result<Vec<String>, AppError>;
+
+    /// Dépôts distants déclarés avec leurs URL, triés par nom (l'ordre de
+    /// libgit2) — ce que liste l'écran des paramètres du dépôt.
+    fn remote_entries(&self) -> Result<Vec<RemoteEntry>, AppError>;
+
+    /// Déclare un dépôt distant (`git remote add`). Aucun réseau : rien n'est
+    /// récupéré tant qu'un fetch ne le demande pas. Un nom déjà pris ou
+    /// invalide est refusé avant toute écriture, avec le nom en cause.
+    fn add_remote(&self, name: &str, url: &str) -> Result<(), AppError>;
+
+    /// Renomme un dépôt distant (`git remote rename`) : ses branches de suivi
+    /// (`refs/remotes/<ancien>/**`) et l'amont des branches locales qui le
+    /// suivaient le suivent, comme le fait Git.
+    fn rename_remote(&self, name: &str, new_name: &str) -> Result<(), AppError>;
+
+    /// Change l'URL d'un dépôt distant (`git remote set-url`). Un `pushurl`
+    /// distinct n'est pas touché : c'est une autre clé, et `RemoteEntry` le dit.
+    fn set_remote_url(&self, name: &str, url: &str) -> Result<(), AppError>;
+
+    /// Retire un dépôt distant (`git remote remove`) : sa configuration, ses
+    /// branches de suivi et l'amont des branches locales qui le suivaient.
+    /// Rien n'est perdu côté serveur, et un fetch après l'avoir redéclaré
+    /// ramène les mêmes références.
+    fn delete_remote(&self, name: &str) -> Result<(), AppError>;
 
     /// Récupère puis intègre, selon le mode choisi (`git pull`).
     ///
