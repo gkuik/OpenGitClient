@@ -114,16 +114,22 @@ export interface GraphLayout {
   laneCount: number;
 }
 
-function colorOf(lane: number): number {
-  return lane % LANE_COLORS.length;
+/**
+ * Colonnes fixes du graph : à chaque commit, la bande où il doit être dessiné.
+ *
+ * Une bande est un groupe de colonnes contiguës. Les `count` premières sont
+ * celles que l'utilisateur a ordonnées (Git Flow : `main`, `stage`,
+ * `develop`…) ; tout commit absent de `bandOf` tombe dans une dernière bande,
+ * libre, à droite des autres — les features en premier lieu. Voir
+ * `flowBands` dans `lib/gitflow.ts`, qui la calcule.
+ */
+export interface GraphBands {
+  bandOf: Map<string, number>;
+  count: number;
 }
 
-/** Première lane libre, ou une nouvelle colonne à droite. */
-function allocLane(lanes: (string | null)[]): number {
-  const free = lanes.indexOf(null);
-  if (free !== -1) return free;
-  lanes.push(null);
-  return lanes.length - 1;
+function colorOf(lane: number): number {
+  return lane % LANE_COLORS.length;
 }
 
 /** Index de la dernière lane occupée + 1. */
@@ -133,6 +139,15 @@ function widthOf(lanes: (string | null)[]): number {
   }
   return 0;
 }
+
+/**
+ * Pendant le parcours, une lane est désignée par sa bande et son rang dans la
+ * bande, codés dans un seul nombre : la largeur d'une bande n'est connue
+ * qu'à la fin, et c'est elle qui fixe où commence la suivante. Les rangées
+ * sont donc produites dans ce codage, puis ramenées en colonnes une fois les
+ * largeurs connues.
+ */
+const STRIDE = 1 << 16;
 
 /**
  * Place les commits en lanes et produit les segments à dessiner.
@@ -153,68 +168,124 @@ function widthOf(lanes: (string | null)[]): number {
  * branche courante prend donc la colonne 0 même si son commit n'est pas le
  * premier de la liste — c'est exactement ce que le nœud raconte.
  *
+ * `bands` (Git Flow) range les colonnes par groupes : chaque bande a les
+ * siennes, allouées comme ci-dessus mais **dans la bande**, et un commit prend
+ * une colonne de sa propre bande — celle qui l'y attend, sinon une nouvelle,
+ * vers laquelle convergent les colonnes d'autres bandes qui l'attendaient.
+ * Chaque bande est aussi large qu'au plus fort de l'historique chargé, et ce
+ * sur toute la hauteur : `develop` ne glisse pas d'une colonne quand `stage`
+ * n'a plus de commit à l'écran. Sans `bands`, il n'y a qu'une bande, libre, et
+ * le résultat est exactement celui de l'algorithme d'origine.
+ *
  * Coût : O(n · lanes). Recalculé intégralement à chaque page chargée, ce qui
  * reste négligeable devant l'appel Tauri.
  */
 export function layoutGraph(
   commits: GraphCommit[],
   wip: WipInput | null = null,
+  bands: GraphBands | null = null,
 ): GraphLayout {
+  const bandCount = (bands?.count ?? 0) + 1;
+  const free = bandCount - 1;
+  const bandOf = (oid: string | null): number =>
+    oid === null ? free : (bands?.bandOf.get(oid) ?? free);
+
   const rows: GraphRow[] = [];
-  // Pour chaque colonne : l'oid attendu, ou null si la colonne est libre.
-  const lanes: (string | null)[] = [];
-  let laneCount = 0;
+  // Pour chaque bande, pour chaque colonne : l'oid attendu, ou null si libre.
+  const lanes: (string | null)[][] = Array.from({ length: bandCount }, () => []);
+  // Largeur atteinte par chaque bande au plus fort.
+  const widths: number[] = new Array(bandCount).fill(0);
   // Colonne qui porte la ligne WIP → HEAD, tant que HEAD n'est pas atteint.
   // Elle ne bouge jamais : aucune étape ne déplace un oid déjà en attente.
   let wipLane: number | null = null;
 
+  const at = (id: number) => lanes[Math.floor(id / STRIDE)];
+  const get = (id: number) => at(id)[id % STRIDE];
+  const set = (id: number, value: string | null) => {
+    at(id)[id % STRIDE] = value;
+  };
+
+  /** Première lane libre de la bande, ou une nouvelle colonne à sa droite. */
+  function alloc(band: number): number {
+    const own = lanes[band];
+    let free = own.indexOf(null);
+    if (free === -1) {
+      own.push(null);
+      free = own.length - 1;
+    }
+    return band * STRIDE + free;
+  }
+
+  /** Lane qui attend `oid`, dans la bande `band` seulement si elle est donnée. */
+  function waiting(oid: string, band?: number): number {
+    for (let b = 0; b < bandCount; b++) {
+      if (band !== undefined && b !== band) continue;
+      const i = lanes[b].indexOf(oid);
+      if (i !== -1) return b * STRIDE + i;
+    }
+    return -1;
+  }
+
+  function measure(snapshot: (string | null)[][]) {
+    for (let b = 0; b < bandCount; b++) {
+      widths[b] = Math.max(widths[b], widthOf(snapshot[b]));
+    }
+  }
+
+  function touch(id: number) {
+    const b = Math.floor(id / STRIDE);
+    widths[b] = Math.max(widths[b], (id % STRIDE) + 1);
+  }
+
   if (wip) {
-    // Rien n'attend encore : la colonne allouée est la 0.
-    const lane = allocLane(lanes);
+    // La rangée prend la bande de HEAD : c'est vers lui que sa ligne descend.
+    const lane = alloc(bandOf(wip.head));
     const edges: GraphEdge[] = [];
     // Sans commit (dépôt vierge), le nœud ne descend nulle part.
     if (wip.head !== null) {
-      lanes[lane] = wip.head;
+      set(lane, wip.head);
       wipLane = lane;
-      edges.push({
-        fromLane: lane,
-        toLane: lane,
-        color: colorOf(lane),
-        kind: "out",
-        dashed: true,
-      });
+      edges.push({ fromLane: lane, toLane: lane, color: 0, kind: "out", dashed: true });
     }
-    rows.push({ kind: "wip", lane, color: colorOf(lane), edges });
-    laneCount = Math.max(laneCount, lane + 1);
+    rows.push({ kind: "wip", lane, color: 0, edges });
+    touch(lane);
   }
 
   for (const commit of commits) {
     // État des colonnes en haut de la rangée, avant traitement du commit.
-    const before = lanes.slice();
+    const before = lanes.map((band) => band.slice());
+    const band = bandOf(commit.oid);
 
-    // 1. Colonne du commit : celle qui l'attend, sinon une nouvelle (c'est une tête).
-    let lane = lanes.indexOf(commit.oid);
-    if (lane === -1) lane = allocLane(lanes);
+    // 1. Colonne du commit : celle qui l'attend dans sa bande ; à défaut, dans
+    //    la bande libre, n'importe laquelle qui l'attend (l'algorithme
+    //    d'origine) ; sinon une nouvelle — c'est une tête, ou une branche fixe
+    //    que seule une autre bande attendait.
+    let lane = waiting(commit.oid, band);
+    if (lane === -1 && band === free) lane = waiting(commit.oid);
+    if (lane === -1) lane = alloc(band);
 
     // 2. Les autres colonnes qui attendaient ce commit convergent vers `lane`.
-    for (let i = 0; i < lanes.length; i++) {
-      if (lanes[i] === commit.oid) lanes[i] = null;
+    for (const own of lanes) {
+      for (let i = 0; i < own.length; i++) {
+        if (own[i] === commit.oid) own[i] = null;
+      }
     }
 
     // 3. Les parents prennent la relève. Le premier reste dans la colonne du
     //    commit (continuité visuelle de la branche) ; les suivants réutilisent
-    //    une colonne qui attend déjà le même parent, sinon en ouvrent une.
+    //    une colonne qui attend déjà le même parent, sinon en ouvrent une dans
+    //    la bande du parent.
     const parentLanes: number[] = [];
     commit.parents.forEach((parent, i) => {
       if (i === 0) {
-        lanes[lane] = parent;
+        set(lane, parent);
         parentLanes.push(lane);
         return;
       }
-      let l = lanes.indexOf(parent);
+      let l = waiting(parent);
       if (l === -1) {
-        l = allocLane(lanes);
-        lanes[l] = parent;
+        l = alloc(bandOf(parent));
+        set(l, parent);
       }
       // Un même parent listé deux fois ne doit pas produire deux segments.
       if (!parentLanes.includes(l)) parentLanes.push(l);
@@ -222,30 +293,52 @@ export function layoutGraph(
 
     // 4. Segments de la rangée : ce qui descend du haut, puis ce qui repart du point.
     const edges: GraphEdge[] = [];
-    for (let i = 0; i < before.length; i++) {
-      const waiting = before[i];
-      if (waiting === null) continue;
-      const kind: GraphEdgeKind = waiting === commit.oid ? "in" : "through";
-      // Colonne non concernée : elle traverse la rangée sans changer d'index
-      // (aucune étape ne déplace un oid déjà en attente).
-      const edge: GraphEdge = {
-        fromLane: i,
-        toLane: kind === "in" ? lane : i,
-        color: colorOf(i),
-        kind,
-      };
-      if (i === wipLane) edge.dashed = true;
-      edges.push(edge);
-    }
+    before.forEach((own, b) => {
+      for (let i = 0; i < own.length; i++) {
+        const expected = own[i];
+        if (expected === null) continue;
+        const id = b * STRIDE + i;
+        const kind: GraphEdgeKind = expected === commit.oid ? "in" : "through";
+        // Colonne non concernée : elle traverse la rangée sans changer d'index
+        // (aucune étape ne déplace un oid déjà en attente).
+        const edge: GraphEdge = { fromLane: id, toLane: kind === "in" ? lane : id, color: 0, kind };
+        if (id === wipLane) edge.dashed = true;
+        edges.push(edge);
+      }
+    });
     // HEAD atteint : la ligne WIP s'arrête sur son point, ce qui en repart est
     // l'historique ordinaire.
-    if (wipLane !== null && before[wipLane] === commit.oid) wipLane = null;
+    if (wipLane !== null && before[Math.floor(wipLane / STRIDE)][wipLane % STRIDE] === commit.oid) {
+      wipLane = null;
+    }
     for (const l of parentLanes) {
-      edges.push({ fromLane: lane, toLane: l, color: colorOf(l), kind: "out" });
+      edges.push({ fromLane: lane, toLane: l, color: 0, kind: "out" });
     }
 
-    laneCount = Math.max(laneCount, lane + 1, widthOf(before), widthOf(lanes));
-    rows.push({ kind: "commit", commit, lane, color: colorOf(lane), edges });
+    touch(lane);
+    measure(before);
+    measure(lanes);
+    rows.push({ kind: "commit", commit, lane, color: 0, edges });
+  }
+
+  // Les largeurs sont connues : chaque bande commence où finit la précédente.
+  const offsets: number[] = [];
+  let laneCount = 0;
+  for (const w of widths) {
+    offsets.push(laneCount);
+    laneCount += w;
+  }
+  const column = (id: number) => offsets[Math.floor(id / STRIDE)] + (id % STRIDE);
+  for (const row of rows) {
+    row.lane = column(row.lane);
+    row.color = colorOf(row.lane);
+    for (const edge of row.edges) {
+      edge.fromLane = column(edge.fromLane);
+      edge.toLane = column(edge.toLane);
+      // Ce qui descend prend la couleur de sa colonne d'origine, ce qui
+      // repart celle du parent qu'il rejoint.
+      edge.color = colorOf(edge.kind === "out" ? edge.toLane : edge.fromLane);
+    }
   }
 
   return { rows, laneCount };

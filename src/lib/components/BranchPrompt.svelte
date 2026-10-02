@@ -1,5 +1,6 @@
 <script lang="ts">
   import { t } from "../i18n.svelte";
+  import { FLOW_PREFIX } from "../gitflow";
   import { repo } from "../stores/repo.svelte";
 
   /*
@@ -18,6 +19,16 @@
   */
 
   const prompt = $derived(repo.branchPrompt);
+  /*
+    Une branche Git Flow : le préfixe est affiché devant le champ, hors de lui
+    — il est imposé, on ne tape que le nom. Les blancs du nom deviennent des
+    tirets à la création (`flowBranchName`), d'où un contrôle plus souple.
+  */
+  const flow = $derived(prompt?.flow ?? null);
+  const label = $derived(
+    prompt ? (flow ? t(`flow.start.${flow}`, { from: prompt.from }) : t("branch.create.label", { from: prompt.from })) : "",
+  );
+  const placeholder = $derived(flow ? t(`flow.start.name.${flow}`) : t("branch.create.name"));
 
   // Brouillon local : la barre est ré-instanciée à chaque ouverture (elle est
   // sous un `{#if}`), mais un changement de départ sans fermeture — un second
@@ -36,7 +47,7 @@
   // gris plutôt que de laisser le backend refuser après coup. Le reste des
   // règles (`..`, `~`, `:`…) est vérifié par le backend, qui nomme le refus.
   const valid = $derived(
-    name.trim().length > 0 && !/\s/.test(name.trim()) && !repo.checkingOut,
+    name.trim().length > 0 && (flow !== null || !/\s/.test(name.trim())) && !repo.checkingOut,
   );
 
   function submit() {
@@ -55,20 +66,23 @@
 {#if prompt}
   <form
     class="branch-prompt"
-    aria-label={t("branch.create.label", { from: prompt.from })}
+    aria-label={label}
     onsubmit={(e) => {
       e.preventDefault();
       submit();
     }}
   >
-    <span class="label">{t("branch.create.label", { from: prompt.from })}</span>
+    <span class="label">{label}</span>
+    {#if flow}
+      <span class="prefix">{FLOW_PREFIX[flow]}</span>
+    {/if}
     <input
       class="name"
       type="text"
       bind:this={input}
       bind:value={name}
-      aria-label={t("branch.create.name")}
-      placeholder={t("branch.create.name")}
+      aria-label={placeholder}
+      {placeholder}
       spellcheck="false"
       autocomplete="off"
       autocapitalize="off"
@@ -118,6 +132,32 @@
     font-size: 0.82rem;
     font-family: inherit;
     box-sizing: border-box;
+  }
+  /* Le préfixe imposé, collé au champ : il fait partie du nom, mais ne se
+     tape pas. */
+  .prefix {
+    flex: none;
+    display: flex;
+    align-items: center;
+    box-sizing: border-box;
+    margin-right: -0.5rem;
+    padding: 0.3rem 0.45rem 0.3rem 0.6rem;
+    border: 1px solid var(--border);
+    border-right: none;
+    border-radius: 6px 0 0 6px;
+    background: var(--bg);
+    color: var(--text-dim);
+    font-family: var(--mono);
+    font-size: 0.78rem;
+  }
+  /* Même hauteur imposée aux deux : leurs polices diffèrent, leurs boîtes
+     aussi sinon. */
+  .prefix,
+  .prefix + .name {
+    height: 1.95rem;
+  }
+  .prefix + .name {
+    border-radius: 0 6px 6px 0;
   }
   .name:focus {
     outline: none;

@@ -1086,6 +1086,25 @@ impl GitBackend for Libgit2Backend {
         Ok(repo.remotes()?.iter().flatten().map(str::to_string).collect())
     }
 
+    fn delete_branch(&self, name: &str, merged_into: &str) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let mut branch = repo.find_branch(name, BranchType::Local)?;
+        let tip = branch
+            .get()
+            .target()
+            .ok_or_else(|| AppError::Git(format!("Branch {name} has no commit")))?;
+        let target = repo
+            .find_branch(merged_into, BranchType::Local)?
+            .get()
+            .target()
+            .ok_or_else(|| AppError::Git(format!("Branch {merged_into} has no commit")))?;
+        if tip != target && !repo.graph_descendant_of(target, tip)? {
+            return Err(AppError::BranchNotMerged(name.to_string()));
+        }
+        branch.delete()?;
+        Ok(())
+    }
+
     fn remote_entries(&self) -> Result<Vec<RemoteEntry>, AppError> {
         let repo = self.repo()?;
         let names = repo.remotes()?;
@@ -3580,6 +3599,40 @@ mod tests {
         assert!(lone.remotes().unwrap().is_empty());
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_branch_refuses_what_its_target_does_not_contain() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        git.commit("c1", None, false).unwrap();
+        let main = git.info().unwrap().branch.unwrap();
+
+        git.create_branch("feature/x", None).unwrap();
+        fs::write(dir.join("b.txt"), "1\n").unwrap();
+        git.stage("b.txt").unwrap();
+        git.commit("c2", None, false).unwrap();
+        git.checkout_branch(&main).unwrap();
+
+        // Pas encore fusionnée : refusée, et toujours là.
+        assert!(matches!(
+            git.delete_branch("feature/x", &main),
+            Err(AppError::BranchNotMerged(n)) if n == "feature/x"
+        ));
+        assert!(git.local_branches().unwrap().iter().any(|b| b.name == "feature/x"));
+
+        // Fusionnée : supprimée.
+        git.merge_branches("feature/x", &main, MergeMode::NoFastForward).unwrap();
+        git.delete_branch("feature/x", &main).unwrap();
+        assert!(!git.local_branches().unwrap().iter().any(|b| b.name == "feature/x"));
+
+        // Une branche au même commit que la cible est contenue par elle.
+        git.create_branch("feature/y", None).unwrap();
+        git.checkout_branch(&main).unwrap();
+        git.delete_branch("feature/y", &main).unwrap();
+
         fs::remove_dir_all(&dir).ok();
     }
 

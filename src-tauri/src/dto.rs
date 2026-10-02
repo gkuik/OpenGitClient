@@ -719,6 +719,65 @@ pub struct ChangeEvent {
     pub refs: bool,
 }
 
+/// Réglages Git Flow d'un dépôt. Propres à l'application (`projects.json`) :
+/// rien n'est écrit dans `.git/config`, le CLI `git flow` n'en sait rien.
+///
+/// `main` et `develop` sont les deux branches pérennes — d'où partent les
+/// branches de travail et où elles reviennent. `order` est l'ordre des
+/// colonnes fixes du graph, de gauche à droite : un nom exact (`stage`) ou un
+/// groupe par préfixe (`release/*`). Ce qui n'y figure pas — les features en
+/// premier lieu — vient après.
+///
+/// `default` sur chaque champ : un fichier écrit avant l'ajout d'un champ se
+/// lit quand même, le champ prenant sa valeur par défaut.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct GitFlowConfig {
+    pub enabled: bool,
+    pub main: String,
+    pub develop: String,
+    pub order: Vec<String>,
+}
+
+impl Default for GitFlowConfig {
+    fn default() -> Self {
+        Self {
+            enabled: false,
+            main: "main".into(),
+            develop: "develop".into(),
+            order: ["main", "stage", "develop", "release/*", "hotfix/*"]
+                .map(String::from)
+                .to_vec(),
+        }
+    }
+}
+
+impl GitFlowConfig {
+    /// Noms débarrassés de leurs blancs, entrées vides et doublons retirés, et
+    /// jamais de branche pérenne sans nom — le fichier peut avoir été édité à
+    /// la main, et un `develop` vide ferait partir les features de nulle part.
+    pub fn sanitized(mut self) -> Self {
+        let defaults = Self::default();
+        self.main = self.main.trim().to_string();
+        if self.main.is_empty() {
+            self.main = defaults.main;
+        }
+        self.develop = self.develop.trim().to_string();
+        if self.develop.is_empty() {
+            self.develop = defaults.develop;
+        }
+        let mut order: Vec<String> = Vec::with_capacity(self.order.len());
+        for entry in self.order {
+            let entry = entry.trim().to_string();
+            if !entry.is_empty() && !order.contains(&entry) {
+                order.push(entry);
+            }
+        }
+        self.order = order;
+        self
+    }
+}
+
 /// Un dépôt distant déclaré, tel que les paramètres du dépôt le listent.
 ///
 /// Lecture pure de `.git/config`. `push_url` n'est présent que s'il diffère de
@@ -908,5 +967,29 @@ mod graph_columns_tests {
         assert_eq!(c.widths.get("author"), Some(&GRAPH_COL_W_MAX));
         assert_eq!(c.widths.get("date"), Some(&GRAPH_COL_W_MIN));
         assert!(!c.widths.contains_key("sha"));
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn git_flow_config_is_sanitized_and_survives_missing_fields() {
+        let raw = GitFlowConfig {
+            enabled: true,
+            main: "  ".into(),
+            develop: " dev ".into(),
+            order: vec![" main".into(), "".into(), "main".into(), "release/*".into()],
+        };
+        let clean = raw.sanitized();
+        assert_eq!(clean.main, "main", "une branche pérenne n'est jamais sans nom");
+        assert_eq!(clean.develop, "dev");
+        assert_eq!(clean.order, vec!["main".to_string(), "release/*".to_string()]);
+
+        // Un fichier écrit avant l'ajout d'un champ se lit quand même.
+        let partial: GitFlowConfig = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
+        assert!(partial.enabled);
+        assert_eq!(partial.order, GitFlowConfig::default().order);
     }
 }

@@ -14,7 +14,8 @@
     répartition les décalerait dès que l'un des deux grandit.
   */
   import type { Snippet } from "svelte";
-  import { t } from "../i18n.svelte";
+  import { i18n, t } from "../i18n.svelte";
+  import { FLOW_KINDS, flowBase, flowTargets } from "../gitflow";
   import { repo, tabs, type Outcome, type RemoteOp } from "../stores/repo.svelte";
   import type { PullMode, PushMode } from "../types";
 
@@ -114,7 +115,27 @@
    * opération tourne, le texte reste neutre — c'est le bouton et la barre de
    * progression qui travaillent.
    */
-  const tone = $derived(repo.runningOp || repo.mergingBranches ? null : repo.opTone);
+  const tone = $derived(
+    repo.runningOp || repo.mergingBranches || repo.flowRunning ? null : repo.opTone,
+  );
+
+  /*
+    Git Flow : un bouton par sorte de branche de travail, qui devient son
+    « Finish » quand on est sur une branche de cette sorte. Créer ou terminer
+    écrit le working directory : indisponible tant qu'une autre écriture
+    tourne, comme Branch et Stash.
+  */
+  const flowBusy = $derived(
+    !repo.repoInfo ||
+      repo.checkingOut ||
+      repo.busy ||
+      repo.mergingBranches ||
+      repo.flowRunning ||
+      // Une fusion en conflit attend sa résolution — y compris celle d'un
+      // « Finish », qui reprendra au commit.
+      repo.merging,
+  );
+  const lists = $derived(new Intl.ListFormat(i18n.locale, { type: "conjunction" }));
 
   /** Compte rendu de la dernière opération distante, ou de la fusion en cours. */
   const status = $derived(
@@ -128,7 +149,9 @@
             ? t("toolbar.status.pushingTag")
             : repo.mergingBranches
               ? t("toolbar.status.merging")
-              : repo.opStatus,
+              : repo.flowRunning && repo.flowFinish
+                ? t("flow.finish.running", { branch: repo.flowFinish.branch })
+                : repo.opStatus,
   );
 </script>
 
@@ -149,7 +172,7 @@
        disparition se fassent en fondu plutôt qu'en saut. -->
   <div
     class="progress"
-    class:on={repo.busyRemote || repo.mergingBranches}
+    class:on={repo.busyRemote || repo.mergingBranches || repo.flowRunning}
     aria-hidden="true"
   ></div>
 
@@ -229,6 +252,43 @@
         repo.mergingBranches ||
         !repo.repoInfo,
     })}
+    {#if repo.flowEnabled}
+      <!-- Git Flow, troisième groupe : des branches de travail, créées depuis
+           leur branche pérenne et ramenées dedans. -->
+      <span class="group-sep" aria-hidden="true"></span>
+      {#each FLOW_KINDS as kind (kind)}
+        {@const finishing = repo.currentFlowKind === kind}
+        {@const branch = repo.repoInfo?.branch ?? ""}
+        {#if finishing}
+          {@render action({
+            label: t(`flow.finish.${kind}`),
+            icon: flowFinishIcon,
+            hint:
+              repo.changeCount > 0
+                ? t("flow.finish.dirty")
+                : t("flow.finish.hint", {
+                    branch,
+                    targets: lists.format(flowTargets(kind, repo.flowConfig)),
+                  }),
+            run: () => repo.askFinish(),
+            // Une branche se termine sur un working directory propre — c'est
+            // ce que demande git flow, et une fusion ne doit pas emporter
+            // du travail en cours vers `main`.
+            busy: flowBusy || repo.changeCount > 0,
+            wide: true,
+          })}
+        {:else}
+          {@render action({
+            label: t(`flow.new.${kind}`),
+            icon: flowNewIcon,
+            hint: t(`flow.new.hint.${kind}`, { base: flowBase(kind, repo.flowConfig) }),
+            run: () => repo.askFlowBranch(kind),
+            busy: flowBusy,
+            wide: true,
+          })}
+        {/if}
+      {/each}
+    {/if}
   </div>
 
   <!-- Compte rendu partagé par les trois : le backend ne laisse pas un fetch et
@@ -395,6 +455,8 @@
   count?: number;
   /** Menu du bouton : son infobulle, et son ouverture en coordonnées fenêtre. */
   menu?: { hint: string; open: (x: number, y: number) => void };
+  /** Libellé trop long pour un carré (Git Flow) : le bouton s'élargit. */
+  wide?: boolean;
 })}
   {@const disabled = !a.run || a.busy}
   {@const running = a.op !== undefined && repo.runningOp === a.op}
@@ -430,6 +492,7 @@
   >
     <button
       class="action"
+      class:wide={a.wide}
       class:running
       data-op={a.op}
       {disabled}
@@ -496,6 +559,29 @@
     <circle cx="11.5" cy="5" r="1.75" />
     <path d="M4.5 5.25v5.5" />
     <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" />
+  </svg>
+{/snippet}
+
+{#snippet flowNewIcon()}
+  <!-- La branche du bouton Branch, avec un « + » : une branche de travail
+       qui commence. -->
+  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.5" cy="3.5" r="1.75" />
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <path d="M4.5 5.25v5.5" />
+    <path d="M4.5 9.5c0-2.2 2-3.5 4.5-3.5" />
+    <path d="M12.5 3v5M10 5.5h5" />
+  </svg>
+{/snippet}
+
+{#snippet flowFinishIcon()}
+  <!-- Une branche qui rejoint la ligne principale, et une coche : elle
+       revient d'où elle était partie, et elle est terminée. -->
+  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <path d="M4.5 1.75v9" />
+    <path d="M9.5 2.5c0 3-5 3.5-5 7" />
+    <path d="M10 11l1.75 1.75L15 9.5" />
   </svg>
 {/snippet}
 
@@ -721,6 +807,14 @@
     color: var(--text);
     font-size: 0.7rem;
     cursor: pointer;
+  }
+  /* Git Flow : « New feature », « Finish release »… ne tiennent pas dans un
+     carré de 48px. La hauteur reste celle des autres. */
+  .action.wide {
+    width: auto;
+    min-width: 48px;
+    padding: 0 0.45rem;
+    white-space: nowrap;
   }
   .action:disabled {
     color: var(--text-faint);

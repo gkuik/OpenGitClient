@@ -167,6 +167,16 @@ pub trait GitBackend: Send {
 
     // ── Tags ────────────────────────────────────────────────────────────────
 
+    /// Supprime une branche **locale**, à condition que `merged_into` la
+    /// contienne déjà — sinon [`AppError::BranchNotMerged`], et rien n'est
+    /// touché. C'est la dernière étape d'un « Finish » Git Flow, après les
+    /// fusions : la garde rend impossible de perdre un commit par ce chemin.
+    ///
+    /// La branche courante ne se supprime pas (libgit2 le refuse) : il faut
+    /// avoir basculé ailleurs avant. La branche distante, s'il y en a une,
+    /// n'est pas touchée.
+    fn delete_branch(&self, name: &str, merged_into: &str) -> Result<(), AppError>;
+
     /// Liste les tags (`refs/tags/**`) qui désignent un commit, triés par nom.
     /// Lecture pure du disque, comme les branches.
     fn tags(&self) -> Result<Vec<TagEntry>, AppError>;

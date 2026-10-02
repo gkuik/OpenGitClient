@@ -5,6 +5,7 @@
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
+  import { flowBands, flowTips } from "../gitflow";
   import { groupRefs, type RefBadge } from "../graph/refs";
   import {
     MESSAGE,
@@ -144,7 +145,21 @@
       ? { head: repo.repoInfo?.head ?? null }
       : null,
   );
-  const layout = $derived(layoutGraph(repo.graph, wip));
+  /*
+    Git Flow : colonnes fixes à gauche (`main`, `stage`, `develop`…, dans
+    l'ordre des paramètres du dépôt), le reste après. Éteint, `null`, et le
+    placement est celui d'origine.
+  */
+  const bands = $derived(
+    repo.flowEnabled
+      ? flowBands(
+          repo.graph,
+          flowTips(repo.branches, repo.remoteBranches),
+          repo.flowConfig.order,
+        )
+      : null,
+  );
+  const layout = $derived(layoutGraph(repo.graph, wip, bands));
   const counts = $derived(repo.changeCounts);
   /*
     La rangée WIP est en surbrillance quand c'est bien elle qu'on regarde, soit

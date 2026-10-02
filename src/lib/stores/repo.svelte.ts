@@ -2,6 +2,17 @@ import { SvelteSet } from "svelte/reactivity";
 import { api, pickRepositoryFolder } from "../api";
 import { t } from "../i18n.svelte";
 import { countStatuses, type TreeCounts } from "../tree";
+import {
+  defaultFlowConfig,
+  defaultTag,
+  flowBase,
+  flowBranchName,
+  flowKindOf,
+  flowTagged,
+  flowTargets,
+  resolveTip,
+  type FlowKind,
+} from "../gitflow";
 import type {
   AppError,
   BranchEntry,
@@ -12,6 +23,7 @@ import type {
   FileEntry,
   FileSource,
   FileStatus,
+  GitFlowConfig,
   GraphCommit,
   Identity,
   MergeMode,
@@ -143,6 +155,17 @@ function pullText(report: PullReport): string {
 }
 
 /** Compte rendu d'une fusion de branche à branche, en une ligne. */
+/** Une étape d'un « Finish » Git Flow. */
+type FinishStep =
+  | { kind: "merge"; target: string }
+  | { kind: "tag"; name: string; message: string; on: string }
+  | { kind: "delete"; into: string };
+
+/** Erreur construite ici, déjà dans la langue de l'interface. */
+function localizedError(message: string): AppError {
+  return { kind: "Git", message, localized: true };
+}
+
 function mergeStatus(report: MergeReport): OpReport {
   const { source, target } = report;
   const o = report.outcome;
@@ -350,7 +373,11 @@ export class RepoStore {
    * ou la tête de branche d'où partir (menus du graph et des branches).
    * `from` est ce que la barre affiche pour dire d'où part la branche.
    */
-  branchPrompt = $state<{ oid: string | null; from: string } | null>(null);
+  /**
+   * Barre de création d'une branche. `flow` en fait une branche Git Flow : le
+   * préfixe est imposé, et seul le nom se tape.
+   */
+  branchPrompt = $state<{ oid: string | null; from: string; flow?: FlowKind } | null>(null);
   checkingOut = $state(false);
   /**
    * Fusion de branche à branche en cours. Distinct de `checkingOut` : elle en
@@ -568,6 +595,9 @@ export class RepoStore {
       await this.loadTags();
       await this.loadStashes();
       await this.loadIdentity();
+      // Avant le graph : c'est elle qui décide de la disposition des colonnes,
+      // et le graph ne doit pas se dessiner deux fois.
+      await this.loadGitFlow();
       await this.loadGraph();
       this.loaded = true;
       // Sans `await` : la forge est au bout du réseau, et l'onglet n'a pas à
@@ -724,6 +754,7 @@ export class RepoStore {
       this.pushingTag ||
       this.checkingOut ||
       this.mergingBranches ||
+      this.flowRunning ||
       this.fetching ||
       this.pushing ||
       this.pulling ||
@@ -984,8 +1015,9 @@ export class RepoStore {
    * Elle occupe la place de la barre d'upstream : les deux ne peuvent pas être
    * ouvertes ensemble.
    */
-  askBranch(start?: { oid: string; from: string }) {
+  askBranch(start?: { oid: string; from: string; flow?: FlowKind }) {
     this.upstreamPrompt = null;
+    this.finishPrompt = null;
     this.branchPrompt = start ?? {
       oid: null,
       from: this.repoInfo?.branch ?? "HEAD",
@@ -1005,7 +1037,7 @@ export class RepoStore {
   async createBranch(name: string) {
     const prompt = this.branchPrompt;
     if (!prompt) return;
-    const branch = name.trim();
+    const branch = prompt.flow ? flowBranchName(prompt.flow, name) : name.trim();
     const ok = await this.runCheckout(() =>
       api.createBranch(this.repoId, branch, prompt.oid),
     );
@@ -1188,6 +1220,184 @@ export class RepoStore {
     }
   }
 
+  // ── Git Flow ────────────────────────────────────────────────────────────────
+
+  /**
+   * Réglages Git Flow enregistrés, `null` s'il n'y en a jamais eu. Propres à
+   * l'application (`projects.json`), comme le nom d'affichage.
+   */
+  gitFlow = $state<GitFlowConfig | null>(null);
+
+  /**
+   * Réglages en vigueur : ceux enregistrés, sinon ceux qu'on proposerait —
+   * déduits des branches locales, et désactivés.
+   */
+  get flowConfig(): GitFlowConfig {
+    return this.gitFlow ?? defaultFlowConfig(this.branches.map((b) => b.name));
+  }
+
+  get flowEnabled(): boolean {
+    return this.gitFlow?.enabled === true;
+  }
+
+  /** Sorte de la branche courante (`feature/x` → feature), Git Flow actif ou non. */
+  get currentFlowKind(): FlowKind | null {
+    return flowKindOf(this.repoInfo?.branch);
+  }
+
+  async loadGitFlow() {
+    try {
+      this.gitFlow = await api.getGitFlow(this.repoId);
+    } catch {
+      /* réglages illisibles : Git Flow reste éteint, le graph comme avant */
+    }
+  }
+
+  /** Enregistre les réglages ; l'erreur revient au formulaire, comme ailleurs. */
+  async saveGitFlow(config: GitFlowConfig): Promise<AppError | null> {
+    try {
+      this.gitFlow = await api.setGitFlow(this.repoId, config);
+      return null;
+    } catch (e) {
+      return e as AppError;
+    }
+  }
+
+  /**
+   * Ouvre la barre de création d'une branche de travail, au départ de sa
+   * branche pérenne (`develop`, ou `main` pour un hotfix) — jamais de HEAD :
+   * c'est la règle de Git Flow. La locale si elle existe, la distante sinon.
+   */
+  askFlowBranch(kind: FlowKind) {
+    const base = flowBase(kind, this.flowConfig);
+    const tip = resolveTip(base, this.branches, this.remoteBranches);
+    if (!tip) {
+      this.error = localizedError(t("flow.noBase", { branch: base }));
+      return;
+    }
+    this.askBranch({ oid: tip.oid, from: tip.from, flow: kind });
+  }
+
+  /**
+   * Barre de fin d'une branche de travail : ce qui va se passer, et le tag
+   * pour une release ou un hotfix. Rien n'est fait avant sa validation.
+   */
+  finishPrompt = $state<{ kind: FlowKind; branch: string; targets: string[]; tag: string | null } | null>(
+    null,
+  );
+
+  /**
+   * « Finish » en cours : la branche, et les étapes qui restent. Il survit à
+   * un conflit — la fusion s'arrête, on résout, on committe, et `commit()`
+   * relance la suite. Abandonner la fusion l'abandonne aussi.
+   */
+  flowFinish = $state<{ kind: FlowKind; branch: string; steps: FinishStep[] } | null>(null);
+  /** Une étape du « Finish » s'exécute. */
+  flowRunning = $state(false);
+
+  askFinish() {
+    const branch = this.repoInfo?.branch;
+    const kind = flowKindOf(branch);
+    if (!branch || !kind) return;
+    this.upstreamPrompt = null;
+    this.branchPrompt = null;
+    this.finishPrompt = {
+      kind,
+      branch,
+      targets: flowTargets(kind, this.flowConfig),
+      tag: flowTagged(kind) ? defaultTag(branch) : null,
+    };
+  }
+
+  cancelFinish() {
+    this.finishPrompt = null;
+  }
+
+  /**
+   * Termine la branche de travail courante, comme `git flow <sorte> finish` :
+   * fusion `--no-ff` dans chaque cible (production d'abord pour une release ou
+   * un hotfix, tag posé là), puis suppression de la branche locale. Chaque
+   * fusion bascule sur sa cible ; on finit donc sur `develop`.
+   *
+   * Le tag est facultatif : un champ vidé n'en pose pas.
+   */
+  async finishFlow(tag: string | null, message: string) {
+    const prompt = this.finishPrompt;
+    if (!prompt || this.flowRunning) return;
+    this.finishPrompt = null;
+    const steps: FinishStep[] = [];
+    prompt.targets.forEach((target, i) => {
+      steps.push({ kind: "merge", target });
+      if (i === 0 && tag?.trim()) {
+        steps.push({ kind: "tag", name: tag.trim(), message: message.trim(), on: target });
+      }
+    });
+    steps.push({ kind: "delete", into: prompt.targets[prompt.targets.length - 1] });
+    this.flowFinish = { kind: prompt.kind, branch: prompt.branch, steps };
+    await this.runFinish();
+  }
+
+  /**
+   * Exécute les étapes restantes du « Finish ». Chacune est sans effet si elle
+   * a déjà eu lieu — une fusion déjà faite rend « à jour », un tag identique
+   * est sauté —, ce qui permet de relancer un « Finish » interrompu par une
+   * erreur depuis la branche, sans rien refaire en double.
+   */
+  private async runFinish() {
+    const finish = this.flowFinish;
+    if (!finish || this.flowRunning) return;
+    this.flowRunning = true;
+    this.error = null;
+    this.setOpStatus(null);
+    const { branch } = finish;
+    try {
+      while (finish.steps.length > 0) {
+        const step = finish.steps[0];
+        if (step.kind === "merge") {
+          const report = await api.mergeBranches(this.repoId, branch, step.target, "noFastForward");
+          finish.steps.shift();
+          if (report.outcome.kind === "conflicted") {
+            // La suite attend le commit de résolution (voir `commit()`).
+            this.diffTarget = null;
+            this.diff = null;
+            this.setOpStatus(
+              t("flow.finish.conflict", { target: step.target, n: report.outcome.files.length }),
+              "warn",
+            );
+            return;
+          }
+        } else if (step.kind === "tag") {
+          const target = (await api.listBranches(this.repoId)).find((b) => b.name === step.on);
+          if (!target?.oid) throw localizedError(t("flow.noBase", { branch: step.on }));
+          const existing = (await api.listTags(this.repoId)).find((tg) => tg.name === step.name);
+          // Déjà posé au bon endroit : un « Finish » relancé ne le refait pas.
+          if (!existing || existing.oid !== target.oid) {
+            await api.createTag(this.repoId, step.name, target.oid, step.message || null);
+          }
+          finish.steps.shift();
+        } else {
+          // Une fusion « à jour » ne bascule pas : on peut être resté sur la
+          // branche, qu'on ne peut pas supprimer sous ses propres pieds.
+          const info = await api.getRepoInfo(this.repoId);
+          if (info.branch === branch) await api.checkoutBranch(this.repoId, step.into);
+          await api.deleteBranch(this.repoId, branch, step.into);
+          finish.steps.shift();
+        }
+      }
+      this.flowFinish = null;
+      this.setOpStatus(t(`flow.finished.${finish.kind}`, { branch }), "ok");
+    } catch (e) {
+      // Interrompu : rien n'est perdu, chaque étape faite l'est pour de bon,
+      // et un nouveau « Finish » depuis la branche reprendrait sans doublon.
+      this.flowFinish = null;
+      this.error = e as AppError;
+    } finally {
+      this.flowRunning = false;
+      await this.reloadAfterMerge();
+      await this.loadTags();
+    }
+  }
+
   // ── Paramètres du dépôt ─────────────────────────────────────────────────────
 
   /** Affiche les paramètres du dépôt et relit ce qu'ils montrent. */
@@ -1314,6 +1524,7 @@ export class RepoStore {
       }
       if (remotes.length > 0) {
         this.branchPrompt = null;
+        this.finishPrompt = null;
         this.upstreamPrompt = { branch: head.name, remotes, mode };
         return;
       }
@@ -1445,6 +1656,12 @@ export class RepoStore {
    * de la fusion.
    */
   async abortMerge() {
+    // Abandonner la fusion abandonne le « Finish » qui l'avait lancée : ce qui
+    // restait à faire n'a plus de sens sans elle.
+    if (this.flowFinish) {
+      this.flowFinish = null;
+      this.setOpStatus(t("flow.finish.aborted"), "warn");
+    }
     await this.run(() => api.abortMerge(this.repoId).then((info) => {
       this.repoInfo = info;
     }));
@@ -1874,6 +2091,10 @@ export class RepoStore {
       // le regarde.
       await this.loadBranches();
       await this.loadGraph();
+      // Ce commit résolvait le conflit d'un « Finish » Git Flow : il reprend
+      // où il s'était arrêté. Sans `await` : `committing` doit retomber
+      // d'abord, sinon la suite se croirait bloquée par lui.
+      if (this.flowFinish && !this.repoInfo?.merging) void this.runFinish();
       return true;
     } catch (e) {
       this.error = e as AppError;

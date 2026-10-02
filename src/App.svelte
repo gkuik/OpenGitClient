@@ -9,6 +9,7 @@
   import RepoBar from "./lib/components/RepoBar.svelte";
   import UpstreamPrompt from "./lib/components/UpstreamPrompt.svelte";
   import BranchPrompt from "./lib/components/BranchPrompt.svelte";
+  import FlowFinishPrompt from "./lib/components/FlowFinishPrompt.svelte";
   import BranchSidebar from "./lib/components/BranchSidebar.svelte";
   import StatusPanel from "./lib/components/StatusPanel.svelte";
   import CenterPanel from "./lib/components/CenterPanel.svelte";
@@ -60,6 +61,8 @@
         <UpstreamPrompt />
         <!-- Création d'une branche : même place, même mécanique. -->
         <BranchPrompt />
+        <!-- Fin d'une branche Git Flow : idem. -->
+        <FlowFinishPrompt />
       </div>
 
       <!-- Les paramètres du dépôt se posent **par-dessus** les trois colonnes

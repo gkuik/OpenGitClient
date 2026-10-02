@@ -97,6 +97,9 @@ pub enum AppError {
     #[error("{0} is not a valid tag name")]
     InvalidTagName(String),
 
+    #[error("Branch {0} is not merged: deleting it would lose commits")]
+    BranchNotMerged(String),
+
     #[error("A remote named {0} already exists")]
     RemoteExists(String),
 
@@ -154,6 +157,7 @@ impl AppError {
             AppError::TagExists(_) => "TagExists",
             AppError::InvalidTagName(_) => "InvalidTagName",
             AppError::TagRejected(_) => "TagRejected",
+            AppError::BranchNotMerged(_) => "BranchNotMerged",
             AppError::RemoteExists(_) => "RemoteExists",
             AppError::InvalidRemoteName(_) => "InvalidRemoteName",
             AppError::RemoteNotFound(_) => "RemoteNotFound",
@@ -179,6 +183,7 @@ impl AppError {
             | AppError::TagExists(arg)
             | AppError::InvalidTagName(arg)
             | AppError::TagRejected(arg)
+            | AppError::BranchNotMerged(arg)
             | AppError::RemoteExists(arg)
             | AppError::InvalidRemoteName(arg)
             | AppError::RemoteNotFound(arg) => Some(arg),
