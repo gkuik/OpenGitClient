@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
-    FileSource, Identity,
+    FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
     TagEntry, TagPushEvent,
@@ -780,6 +780,39 @@ pub fn delete_remote(
     }
     backend.delete_remote(&name)?;
     backend.remote_entries()
+}
+
+/// Supprime une branche locale déjà contenue par `merged_into` — dernière
+/// étape d'un « Finish » Git Flow.
+#[tauri::command]
+pub fn delete_branch(
+    repo_id: String,
+    name: String,
+    merged_into: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?
+        .backend(&repo_id)?
+        .delete_branch(&name, &merged_into)
+}
+
+/// Réglages Git Flow d'un dépôt (`null` s'il n'en a jamais eu).
+#[tauri::command]
+pub fn get_git_flow(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Option<GitFlowConfig>, AppError> {
+    Ok(lock(&state)?.git_flow(&repo_id))
+}
+
+/// Enregistre les réglages Git Flow d'un dépôt ; renvoie leur version nettoyée.
+#[tauri::command]
+pub fn set_git_flow(
+    repo_id: String,
+    config: GitFlowConfig,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<GitFlowConfig, AppError> {
+    lock(&state)?.set_git_flow(&repo_id, config)
 }
 
 /// Noms d'affichage des dépôts, par chemin canonique.

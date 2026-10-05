@@ -5,6 +5,7 @@
   import { repo } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import { lanePalette, layoutGraph, type GraphRow } from "../graph/layout";
+  import { flowBands, flowTips } from "../gitflow";
   import { groupRefs, type RefBadge } from "../graph/refs";
   import {
     MESSAGE,
@@ -48,6 +49,12 @@
    * tirets. Six périodes font exactement le tour, sans raccord visible.
    */
   const WIP_RING_DASH = ((p) => [p * 0.6, p * 0.4])((2 * Math.PI * WIP_R) / 6);
+  /**
+   * Opacité du prolongement d'une branche pérenne au-dessus de sa pointe
+   * (Git Flow) : sa couleur, en retrait — la colonne attend, l'historique
+   * n'y est pas.
+   */
+  const GHOST_ALPHA = 0.35;
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /*
@@ -144,7 +151,21 @@
       ? { head: repo.repoInfo?.head ?? null }
       : null,
   );
-  const layout = $derived(layoutGraph(repo.graph, wip));
+  /*
+    Git Flow : colonnes fixes à gauche (`main`, `stage`, `develop`…, dans
+    l'ordre des paramètres du dépôt), le reste après. Éteint, `null`, et le
+    placement est celui d'origine.
+  */
+  const bands = $derived(
+    repo.flowEnabled
+      ? flowBands(
+          repo.graph,
+          flowTips(repo.branches, repo.remoteBranches),
+          repo.flowConfig.order,
+        )
+      : null,
+  );
+  const layout = $derived(layoutGraph(repo.graph, wip, bands));
   const counts = $derived(repo.changeCounts);
   /*
     La rangée WIP est en surbrillance quand c'est bien elle qu'on regarde, soit
@@ -538,6 +559,27 @@
         const x1 = laneX(edge.fromLane);
         const x2 = laneX(edge.toLane);
         ctx.strokeStyle = lanes[edge.color];
+        if (edge.ghost) {
+          // Prolongement Git Flow : une verticale atténuée, qui s'arrête au
+          // bord du point quand elle l'atteint — le cercle WIP est vide, elle
+          // le barrerait.
+          const r = row.lane === edge.fromLane ? (isWip ? WIP_R : DOT_R) : 0;
+          const bottom = top + ROW_H;
+          const spans =
+            edge.ghost === "top" ? [[top, mid - r]]
+            : edge.ghost === "bottom" ? [[mid + r, bottom]]
+            : r > 0 ? [[top, mid - r], [mid + r, bottom]]
+            : [[top, bottom]];
+          ctx.globalAlpha = GHOST_ALPHA;
+          ctx.beginPath();
+          for (const [y1, y2] of spans) {
+            ctx.moveTo(x1, y1);
+            ctx.lineTo(x1, y2);
+          }
+          ctx.stroke();
+          ctx.globalAlpha = 1;
+          continue;
+        }
         // Ligne WIP → HEAD : pointillés, comme le nœud. Le décalage se cale sur
         // la position **absolue** du segment dans le graph, pas sur la vue :
         // chaque rangée trace son morceau à part, et sans ça le motif

@@ -11,6 +11,7 @@ import type {
   FileContent,
   FileDiff,
   FileSource,
+  GitFlowConfig,
   Identity,
   MergeMode,
   MergeReport,
@@ -84,6 +85,17 @@ export const api = {
   listRecent: () => call<RecentRepo[]>("list_recent"),
   /** Noms d'affichage des dépôts, par chemin canonique (`projects.json`). */
   listAliases: () => call<Record<string, string>>("list_aliases"),
+  /** Réglages Git Flow du dépôt, `null` s'il n'en a jamais eu. */
+  getGitFlow: (repoId: string) => call<GitFlowConfig | null>("get_git_flow", { repoId }),
+  /** Enregistre les réglages Git Flow ; renvoie leur version nettoyée. */
+  setGitFlow: (repoId: string, config: GitFlowConfig) =>
+    call<GitFlowConfig>("set_git_flow", { repoId, config }),
+  /**
+   * Supprime une branche locale, refusé si `mergedInto` ne la contient pas
+   * déjà (`BranchNotMerged`). Seul le « Finish » Git Flow s'en sert.
+   */
+  deleteBranch: (repoId: string, name: string, mergedInto: string) =>
+    call<void>("delete_branch", { repoId, name, mergedInto }),
   /** Fixe ou retire (`null`, chaîne vide) le nom d'affichage ; renvoie celui retenu. */
   setAlias: (repoId: string, alias: string | null) =>
     call<string | null>("set_alias", { repoId, alias }),

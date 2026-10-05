@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, per-repository settings — display name, identity, remotes, Git Flow —, Git Flow work branches started and finished from the repository bar, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -40,11 +40,15 @@ Rust is installed through Homebrew's `rustup` (`/opt/homebrew/opt/rustup/bin`, o
 
 ```bash
 npm install                # once
-npm run tauri dev          # run the app (starts Vite on :1420, then compiles + launches Rust)
+npm run app:dev           # run the app (starts Vite on :1420, then compiles + launches Rust) — = tauri dev
 npm run check              # svelte-check — type-checks .svelte/.ts (vite build does NOT type-check)
 npm run build              # frontend-only production build → dist/
-npm run tauri build        # full release bundle
+npm run app:build          # full release bundle → src-tauri/target/release/bundle/ — = tauri build
 ```
+
+`dev` and `build` must stay frontend-only: `tauri.conf.json` calls them as
+`beforeDevCommand` / `beforeBuildCommand`, so pointing either at `tauri` would
+make Tauri invoke itself.
 
 Backend (from `src-tauri/`):
 
@@ -54,7 +58,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `tree.ts`, `tags.ts`, `markdown.ts` and `i18n.svelte.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -161,7 +165,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness) rounding out the four state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness) and `projects.json` (per-repository display names, see *Two settings screens*) rounding out the five state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -615,6 +619,143 @@ That last point is why two reloads that used to be unnecessary now are: `commit(
 
 `RepoStore.currentGap` derives the HEAD branch's gap for the repository bar's counters; it's `null` on a detached HEAD, where no local branch is HEAD.
 
+### Two settings screens: the application's, and the repository's
+
+The tab bar's gear opens the **application** settings (a tab, see *Scope*). The
+gear right after the repository name in `RepoBar` — or **Repository settings…**
+in a repository tab's context menu (right-click, or the `ContextMenu` key) —
+opens **that repository's** settings: `RepoSettingsView`, *Display name*,
+*Identity*, *Git Flow* (see below), *Remotes*.
+
+- **It lives inside the repository tab, not in a tab of its own.** No
+  ambiguity about which repository it concerns, and no new tab kind to give an
+  id, restore or deduplicate. `RepoStore.settingsOpen` is tab state, like the
+  selection; the gear toggles it and *Back to the graph* closes it.
+  `TabsStore.openRepoSettings(id)` opens it for a tab that isn't the visible one
+  (the context menu), activating it on the way.
+- **It covers the three columns rather than replacing them** — same grid cell
+  (`.stage` in `App.svelte`), `.body` turned `visibility: hidden`, never
+  unmounted: the graph keeps its measured height and its scroll. `RepoBar`
+  stays above and stays live. The view is under `{#key repo.repoId}`, its form
+  drafts being local to the component.
+- **Two stores, on purpose.** The display name is the app's alone —
+  `projects.json` (the fifth state file), keyed by canonical path like the tabs,
+  `ProjectPrefs` with `#[serde(default)]` so a future field can't break the
+  parse; an empty name is a removal, and an emptied entry leaves the file. The
+  identity and the remotes are Git — `.git/config`, read by every other tool —
+  and are never copied there. The alias is applied by the frontend
+  (`RepoStore.displayName`, used by the tab, `RepoBar` and Settings' host list),
+  loaded once before session restore so no tab first shows its folder name, and
+  by the backend in `recent_list` — recents are re-read after a change.
+- **Identity** is the commit box's selector plus a *Custom identity* entry: a
+  name and an address written straight into the local config, with no profile
+  behind them. A local identity matching no profile *is* that entry, so the
+  form shows it pre-filled.
+- **Remotes** are listed (`remote_entries`, sorted by name — libgit2's order),
+  added, edited (rename, then URL under the new name) and removed. Every write
+  returns the fresh list and is followed by `reloadRemoteRefs()`: a rename or a
+  removal moves `refs/remotes/**` and branch upstreams, an addition may bring a
+  forge. Names are checked first (`InvalidRemoteName` / `RemoteExists`, with
+  the name), `set_remote_url` refuses an undeclared remote (`RemoteNotFound` —
+  libgit2 would silently half-create one), an empty URL is `EmptyRemoteUrl`.
+  **Rename and removal are refused during a network operation** (`NetworkBusy`,
+  `AppState::is_networking`): the thread writes the very refs they move. A
+  distinct `pushurl` is shown, never edited — changing the URL would otherwise
+  look like it redirects pushes. Nothing is fetched: a new remote's branches
+  appear on the next fetch. Removing one is confirmed in two clicks; it deletes
+  nothing on the server, which is why it isn't counted among the destructive
+  operations.
+- Errors of these forms are shown **in the section**, not in the global banner:
+  the form stays open so a taken name is fixed in place — hence store methods
+  returning `AppError | null`.
+
+### Git Flow: pinned graph columns, and work branches started and finished from the bar
+
+Enabled per repository in its settings, and **the app's own setting**: a
+`GitFlowConfig` (`enabled`, `main`, `develop`, `order`) in `projects.json`,
+beside the display name. Nothing is read from or written to the `gitflow.*`
+keys of `.git/config` — the `git flow` CLI knows nothing of it, deliberately.
+`null` means never configured: the frontend then proposes `defaultFlowConfig`,
+deduced from the local branches (`main`/`master`, `develop`/`dev`). Disabled, the
+config is kept, so a tuned column order survives a toggle. The prefixes are
+git-flow's and fixed: `feature/`, `bugfix/`, `release/`, `hotfix/`.
+`src/lib/gitflow.ts` holds everything that computes without asking anyone —
+pure and tested.
+
+**The graph pins columns on the left, in `order`'s order; everything not
+listed — features first — comes after, laid out as before.** An entry is an
+exact name (`stage`) or a group ending in `*` (`release/*`). The default is
+`main, stage, develop, release/*, hotfix/*`. How it works:
+
+- **Which commit belongs to which entry is `flowBands`**: the first-parent
+  chain from each matching tip, local *and* remote (so `origin/develop` ahead
+  of `develop` stays in its column, and a branch absent locally keeps its
+  place). A commit on several chains goes to the first that claims it, and
+  **exact names claim before groups** — a release starts on `develop`, and if
+  `release/*` claimed first, `develop`'s whole history below the start point
+  would be drawn in the release's column. Among exact names the column order
+  decides: history shared by `main` and `develop` stays in `main`'s column.
+  Only loaded commits count; a chain stops at the page's edge.
+- **`layoutGraph(commits, wip, bands)` allocates lanes per band**: a commit
+  takes a lane of its own band — the one waiting for it there, otherwise a new
+  one, which the lanes of other bands waiting for it converge into. A second
+  parent opens its lane in *its* band; the WIP row sits in HEAD's band. Lanes
+  are coded `band × STRIDE + rank` during the walk, because a band's width is
+  only known at the end: each band is as wide as it ever gets over the loaded
+  history, **over the whole height** — `develop` does not slide one column left
+  when `stage` has no commit on screen —, and a band whose branch does not
+  exist is zero-wide. Colours are assigned after the remap, from the final
+  column, with the original rule (what comes down takes its source's colour,
+  what leaves takes the parent's). **Without `bands` there is one free band and
+  the output is identical to the old algorithm** — the pre-existing layout tests
+  are the proof, unchanged.
+- **A long-lived branch climbs to the top of the graph.** For every *exact*
+  entry (`main`, `stage`, `develop` — never a group: releases and hotfixes are
+  branches in passing), the column of its topmost commit is continued up to row
+  0, drawn in the lane's colour at `GHOST_ALPHA` — the column waits, the history
+  isn't there. It is computed in `layoutGraph` (`GraphBands.extend`, filled by
+  `flowBands`) as `through` edges carrying `ghost`, and **only where the column
+  is free**: a merge can already open a line towards that tip, so a row may get
+  just its `top` or `bottom` half. Ghosts are put first in a row's edges, so the
+  real segments they cross are drawn over them, and they stop at the edge of a
+  dot — the WIP circle is hollow, a line through it would cross it out. A branch
+  that exists nowhere still has no column at all.
+
+**The repository bar gets a third group, one button per kind** — *New feature*,
+*New bugfix*, *New release*, *New hotfix* — wider than the 48px squares
+(`wide`). **On a branch of a kind, that kind's button becomes its *Finish***;
+the others stay.
+
+- **New** opens the branch bar (`BranchPrompt`) in flow mode: the prefix is
+  shown, fixed, before the field; spaces typed become dashes
+  (`flowBranchName`). It starts **from the base branch, never HEAD** — `main`
+  for a hotfix, `develop` otherwise —, the local one if it exists, else
+  `origin/<name>` (`resolveTip`); then the usual SAFE switch.
+- **Finish** needs a clean working directory and opens `FlowFinishPrompt` (same
+  spot as the other bars): *Merge X into develop, then delete it*, plus a tag
+  field for a release or a hotfix (`v1.2.0` proposed for `release/1.2.0`,
+  empty = no tag; a message makes it annotated). Nothing happens before
+  *Finish*.
+- **The steps are run by the store, not by one backend command**:
+  `merge_branches(--no-ff)` into each target (`main` first for a release or a
+  hotfix, tagged there, then `develop`), then `delete_branch`. Composing existing
+  commands keeps each one tested on its own, and it is what lets the sequence
+  **survive a conflict**: `RepoStore.flowFinish` keeps the remaining steps, the
+  merge stops in the usual `MergeBanner` state, and `commit()` — once the
+  resolution commit closed the merge — calls `runFinish()` again. *Abort* on
+  the banner cancels the finish too.
+- **Every step is idempotent**: a merge already done is *up to date*, a tag
+  already at the right commit is skipped. So after an error (which clears
+  `flowFinish`), checking out the branch and finishing again resumes without
+  doing anything twice.
+- **`delete_branch(name, merged_into)` is the only branch deletion in the app**,
+  and it refuses (`BranchNotMerged`) unless `merged_into` contains the branch:
+  no commit can be lost through it. An *up to date* merge does not switch, so
+  the step first leaves the branch if HEAD is still on it. The remote branch,
+  if any, is left alone, as `git flow` does by default.
+- `flowRunning` is one of the flags that hold the watcher's refresh back
+  (`refreshBlocked`) and that light the bar's progress line.
+
 ### Author profiles are stored, the choice is not
 
 A profile is a reusable identity (label + name + email), persisted in `profiles.json` next to `recent.json` and `session.json`. **Which profile a repository uses is deliberately not recorded**: applying one writes `user.name` / `user.email` into that repository's *local* Git config, and the active profile is re-derived by matching the identity back against the list.
@@ -874,11 +1015,12 @@ right-clicked — fast-forwarding without a checkout when it can, switching to t
 target when it must, and leaving a conflict in the worktree for the same
 resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
 (`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branches are **created** (see
-*Creating a branch* above); renaming and deletion are still nowhere, and nothing
-rebases.
+*Creating a branch* above); renaming is still nowhere, deletion exists only as
+the last step of a Git Flow *Finish* — and refuses an unmerged branch —, and
+nothing rebases.
 
 The graph is **read-only** but for two entries: no checkout-from-commit, reset or revert from it. The exception is a commit row's context menu, whose two entries create a branch there (through the branch bar, then the same SAFE switch as anywhere else) or a tag — a tag writes one ref and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert, branch deletion). A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
+AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert). The branch deletion at the end of a Git Flow *Finish* is not a sixth: `delete_branch` refuses a branch its target doesn't contain (`BranchNotMerged`), so no commit can be lost through it. A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.

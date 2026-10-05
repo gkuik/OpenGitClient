@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
+    GitFlowConfig, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
     ThemeMode, FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT,
     GRAPH_ROUNDNESS_MAX,
 };
@@ -371,6 +371,23 @@ impl AppState {
         Ok(alias)
     }
 
+    /// Réglages Git Flow d'un dépôt, `None` s'il n'en a jamais eu.
+    pub fn git_flow(&self, id: &str) -> Option<GitFlowConfig> {
+        self.projects
+            .get(id)
+            .and_then(|p| p.git_flow.clone())
+            .map(GitFlowConfig::sanitized)
+    }
+
+    /// Enregistre les réglages Git Flow d'un dépôt, et renvoie leur version
+    /// nettoyée — celle que le frontend doit afficher.
+    pub fn set_git_flow(&mut self, id: &str, config: GitFlowConfig) -> Result<GitFlowConfig, AppError> {
+        let config = config.sanitized();
+        self.projects.entry(id.to_string()).or_default().git_flow = Some(config.clone());
+        save_json(&self.app, PROJECTS_FILE, &self.projects)?;
+        Ok(config)
+    }
+
     /// Liste des récents sous forme sérialisable : chemin, et le nom
     /// d'affichage du dépôt s'il en a un, celui de son dossier sinon.
     pub fn recent_list(&self) -> Vec<RecentRepo> {
@@ -485,11 +502,15 @@ struct ProjectPrefs {
     /// Nom affiché à la place de celui du dossier : onglet, barre du dépôt,
     /// récents.
     alias: Option<String>,
+    /// Git Flow. `None` tant qu'on n'y a jamais touché : le frontend propose
+    /// alors des valeurs déduites des branches du dépôt. Désactivé, il reste
+    /// enregistré, pour qu'un ordre de colonnes réglé ne se perde pas.
+    git_flow: Option<GitFlowConfig>,
 }
 
 impl ProjectPrefs {
     fn is_empty(&self) -> bool {
-        self.alias.is_none()
+        self.alias.is_none() && self.git_flow.is_none()
     }
 }
 

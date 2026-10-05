@@ -412,6 +412,18 @@ export interface RepoChangedEvent {
 }
 
 /**
+ * Réglages Git Flow d'un dépôt, propres à l'application. `order` est l'ordre
+ * des colonnes fixes du graph : un nom exact (`stage`) ou un groupe par
+ * préfixe (`release/*`) ; ce qui n'y figure pas vient après.
+ */
+export interface GitFlowConfig {
+  enabled: boolean;
+  main: string;
+  develop: string;
+  order: string[];
+}
+
+/**
  * Un dépôt distant déclaré, tel que les paramètres du dépôt le listent.
  * `pushUrl` n'est présent que s'il diffère de `url` : changer l'URL ne
  * changerait alors pas la destination des push, et l'écran doit le dire.
