@@ -70,6 +70,14 @@ export interface GraphEdge {
    * commit. Absent partout ailleurs, plutôt que `false`.
    */
   dashed?: true;
+  /**
+   * Git Flow : prolongement d'une branche pérenne au-dessus de sa pointe,
+   * jusqu'en haut du graph — dessiné atténué, ce n'est pas de l'historique,
+   * seulement la colonne qui attend. Toujours un `through` dans une seule
+   * colonne ; `top` / `bottom` n'en couvrent que la moitié haute ou basse,
+   * l'autre étant déjà occupée par un vrai segment. Absent partout ailleurs.
+   */
+  ghost?: "full" | "top" | "bottom";
 }
 
 /** Géométrie commune à toutes les rangées, commit ou non. */
@@ -126,6 +134,11 @@ export interface GraphLayout {
 export interface GraphBands {
   bandOf: Map<string, number>;
   count: number;
+  /**
+   * Bandes à prolonger jusqu'en haut du graph (les branches pérennes : noms
+   * exacts, pas les groupes) — voir `GraphEdge.ghost`.
+   */
+  extend?: number[];
 }
 
 function colorOf(lane: number): number {
@@ -338,6 +351,32 @@ export function layoutGraph(
       // Ce qui descend prend la couleur de sa colonne d'origine, ce qui
       // repart celle du parent qu'il rejoint.
       edge.color = colorOf(edge.kind === "out" ? edge.toLane : edge.fromLane);
+    }
+  }
+
+  // Git Flow : une branche pérenne qui n'a pas bougé depuis longtemps
+  // laisserait sa colonne vide au-dessus de sa pointe. On la prolonge
+  // jusqu'en haut, dans la colonne de sa pointe — la rangée la plus haute de
+  // sa bande —, partout où cette colonne est libre : un merge peut déjà y
+  // ouvrir une ligne vers elle, qui reste alors seule. Ajouté en tête de la
+  // rangée, pour être dessiné sous les vrais segments qu'il croise.
+  for (const b of bands?.extend ?? []) {
+    const tip = rows.findIndex((r) => r.kind === "commit" && bandOf(r.commit.oid) === b);
+    if (tip === -1) continue;
+    const lane = rows[tip].lane;
+    for (let i = 0; i <= tip; i++) {
+      // Moitiés de la colonne déjà occupées dans cette rangée.
+      let top = false;
+      let bottom = i === tip; // sous la pointe, c'est son historique
+      for (const e of rows[i].edges) {
+        if (e.kind === "through" && e.fromLane === lane) top = bottom = true;
+        else if (e.kind === "in" && e.fromLane === lane) top = true;
+        else if (e.kind === "out" && e.toLane === lane) bottom = true;
+      }
+      const ghost = !top && !bottom ? "full" : !top ? "top" : !bottom ? "bottom" : null;
+      if (ghost) {
+        rows[i].edges.unshift({ fromLane: lane, toLane: lane, color: colorOf(lane), kind: "through", ghost });
+      }
     }
   }
 

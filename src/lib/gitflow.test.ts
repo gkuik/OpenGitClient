@@ -157,3 +157,61 @@ describe("flowBands", () => {
     }
   });
 });
+
+describe("prolongement des branches pérennes", () => {
+  /** Prolongements de la rangée `i`, en `colonne:moitié`. */
+  const ghosts = (rows: ReturnType<typeof layoutGraph>["rows"], i: number) =>
+    rows[i].edges
+      .filter((e) => e.ghost)
+      .map((e) => `${e.fromLane}:${e.ghost}`)
+      .sort();
+
+  it("monte chaque branche pérenne de sa pointe jusqu'en haut, pas les features", () => {
+    const bands = flowBands(HISTORY, TIPS, ["main", "develop"]);
+    const { rows } = layoutGraph(HISTORY, null, bands);
+    // F1 (features, colonne 2), D2 (develop, 1), M2 (main, 0).
+    expect(ghosts(rows, 0)).toEqual(["0:full", "1:full"]);
+    expect(ghosts(rows, 1)).toEqual(["0:full", "1:top"]);
+    expect(ghosts(rows, 2)).toEqual(["0:top"]);
+    // Sous la pointe, c'est l'historique : plus rien d'ajouté.
+    expect(ghosts(rows, 3)).toEqual([]);
+    expect(ghosts(rows, 4)).toEqual([]);
+  });
+
+  it("ne prolonge pas un groupe : une release s'arrête à sa pointe", () => {
+    const history = [c("D2", "D1"), c("R1", "D1"), c("D1")];
+    const tips = [
+      { name: "develop", oid: "D2" },
+      { name: "release/1.0", oid: "R1" },
+    ];
+    const bands = flowBands(history, tips, ["develop", "release/*"]);
+    const { rows } = layoutGraph(history, null, bands);
+    const release = rows[1].lane;
+    expect(rows[0].edges.some((e) => e.ghost && e.fromLane === release)).toBe(false);
+  });
+
+  it("ne double pas une ligne déjà là : seule la moitié libre est prolongée", () => {
+    // D3 merge main dans develop : une ligne descend déjà vers M2 dans la
+    // colonne de main, depuis le point de D3.
+    const history = [c("D3", "D2", "M2"), c("D2", "D1"), c("M2", "M1"), c("D1", "M1"), c("M1")];
+    const tips = [
+      { name: "main", oid: "M2" },
+      { name: "develop", oid: "D3" },
+    ];
+    const bands = flowBands(history, tips, ["main", "develop"]);
+    const { rows } = layoutGraph(history, null, bands);
+    expect(rows[2].lane).toBe(0);
+    // Main : le haut seulement. Develop, dont D3 est la pointe : jusqu'au point.
+    expect(ghosts(rows, 0)).toEqual(["0:top", "1:top"]);
+    expect(ghosts(rows, 1)).toEqual([]);
+    expect(ghosts(rows, 2)).toEqual([]);
+  });
+
+  it("s'arrête au cercle WIP, dans la bande de HEAD", () => {
+    const bands = flowBands(HISTORY, TIPS, ["main", "develop"]);
+    const { rows } = layoutGraph(HISTORY, { head: "D2" }, bands);
+    // La ligne pointillée WIP → D2 occupe le bas : seul le haut est prolongé.
+    expect(rows[0].kind).toBe("wip");
+    expect(ghosts(rows, 0)).toContain("1:top");
+  });
+});

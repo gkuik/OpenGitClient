@@ -181,5 +181,8 @@ export function flowBands(commits: GraphCommit[], tips: FlowTip[], order: string
     }
   }
 
-  return { bandOf, count: order.length };
+  // Les branches pérennes montent jusqu'en haut ; un groupe (`release/*`)
+  // est fait de branches de passage, qui s'arrêtent à leur pointe.
+  const extend = entries.filter((e) => !isPattern(e.entry)).map((e) => e.band);
+  return { bandOf, count: order.length, extend };
 }
