@@ -9,3 +9,4 @@ src-tauri/gen/
 # OS / éditeurs
 .DS_Store
 *.log
+.idea/
