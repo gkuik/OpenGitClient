@@ -111,9 +111,12 @@
 
     // Coupe la sélection de texte et le glisser natif de WebKit. En contrepartie
     // l'appui ne donne plus le focus tout seul : on le fait à la main pour ne pas
-    // perdre la navigation au clavier.
+    // perdre la navigation au clavier. Sans anneau : un focus posé par script
+    // passe pour du clavier quand on vient de taper quelque chose, alors que
+    // c'est un clic — `focusVisible: false` le dit à WebKit (ignoré là où
+    // l'option n'existe pas).
     e.preventDefault();
-    e.currentTarget.focus();
+    e.currentTarget.focus({ focusVisible: false } as FocusOptions);
 
     // Activation à l'appui, comme dans un navigateur — et non au clic : celui-ci
     // arrive après le réordonnancement, sur l'onglet qui se trouve alors sous le

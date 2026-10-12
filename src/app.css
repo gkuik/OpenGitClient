@@ -188,6 +188,26 @@ body {
 }
 
 /*
+  Focus. L'anneau natif de WebKit est bleu système, ignore le thème, et déborde
+  de l'élément : un conteneur qui défile (la barre d'onglets) le rogne en haut
+  et en bas, et n'en laisse que deux crochets sur les côtés. Il est remplacé :
+
+  - rien quand le focus vient de la souris — un clic montre déjà ce qu'il vise ;
+  - au clavier, un contour à la couleur d'accent, tracé **à l'intérieur** de
+    l'élément (`outline-offset` négatif) : aucun conteneur ne peut le rogner.
+
+  Les champs de saisie gardent leur propre marque (bordure accent, posée dans
+  chaque composant), plus précise que ces règles et qui l'emporte donc.
+*/
+:focus:not(:focus-visible) {
+  outline: none;
+}
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
+}
+
+/*
   Pendant le redimensionnement d'une colonne : le pointeur est capturé par la
   poignée, mais il survole les panneaux — sans cette règle, le curseur
   redeviendrait une flèche ou un I-beam dès qu'il quitte la bande de 9px, et un
