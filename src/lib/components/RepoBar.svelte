@@ -14,13 +14,15 @@
     répartition les décalerait dès que l'un des deux grandit.
   */
   import { elapsed } from "../autoFetch";
+  import { externalApps } from "../externalApps.svelte";
   import { autoFetch } from "../autoFetch.svelte";
   import { i18n, t } from "../i18n.svelte";
   import { FLOW_KINDS, flowBase, flowTargets } from "../gitflow";
   import { repo, tabs, type Outcome, type RemoteOp } from "../stores/repo.svelte";
-  import { visibleToolbar, type ToolbarItem } from "../toolbar";
+  import { isWide, visibleToolbar, type ToolbarItem } from "../toolbar";
   import { itemLabel, toolbar } from "../toolbar.svelte";
   import type { PullMode, PushMode } from "../types";
+  import DiscardConfirm from "./DiscardConfirm.svelte";
   import ToolbarCustomizer from "./ToolbarCustomizer.svelte";
   import ToolbarIcon from "./ToolbarIcon.svelte";
   import ToolbarTile from "./ToolbarTile.svelte";
@@ -165,6 +167,29 @@
   const lifted = $derived(
     toolbar.drag?.source.kind === "bar" ? toolbar.drag.source.index : null,
   );
+
+  /*
+    Ce qui écrit déjà l'index ou le working directory rend indisponibles les
+    boutons qui l'écrivent aussi : Pop, Stage all, Unstage all, Discard all.
+  */
+  const writing = $derived(
+    !repo.repoInfo || repo.busy || repo.checkingOut || repo.mergingBranches || repo.stashing,
+  );
+
+  // ── Confirmation de « Discard all » ─────────────────────────────────────────
+  // Le même panneau que dans la colonne de droite (`DiscardConfirm`), ancré
+  // sous le bouton de la barre.
+  let discardAt = $state<{ x: number; y: number } | null>(null);
+  const DISCARD_W = 300;
+
+  function openDiscard() {
+    const r = barEl?.querySelector('[data-item="discard-all"]')?.getBoundingClientRect();
+    if (!r) return;
+    discardAt = {
+      x: Math.max(8, Math.min(r.left, window.innerWidth - DISCARD_W - 8)),
+      y: r.bottom + 4,
+    };
+  }
 
   /*
     Le dépôt n'est pas encore chargé le temps d'un aller-retour à l'ouverture
@@ -316,6 +341,7 @@
     confirmPush = null;
     flowMenu = null;
     toolbarMenu = null;
+    discardAt = null;
     // Échap pendant un glissement l'abandonne seulement (`toolbar.svelte.ts`) ;
     // sinon il referme la personnalisation, comme Done.
     if (toolbar.editing && !toolbar.drag) toolbar.stopEditing();
@@ -564,6 +590,13 @@
   </div>
 {/if}
 
+{#if discardAt}
+  <DiscardConfirm
+    style="position: fixed; left: {discardAt.x}px; top: {discardAt.y}px; width: {DISCARD_W}px"
+    onclose={() => (discardAt = null)}
+  />
+{/if}
+
 {#if toolbar.editing}
   <ToolbarCustomizer bar={barEl} />
 {/if}
@@ -715,6 +748,88 @@
         repo.mergingBranches ||
         !repo.repoInfo,
     })}
+  {:else if item === "pop"}
+    {@const top = repo.stashes[0]}
+    {@render action({
+      label: t("toolbar.pop"),
+      icon: "pop",
+      hint: top ? t("toolbar.pop.hint", { name: top.message }) : t("toolbar.pop.nothing"),
+      run: () => top && repo.applyStash(top.index, true),
+      // Le pop écrit le working directory : indisponible pendant tout ce qui
+      // l'écrit déjà. Un pop en conflit remonte dans le bandeau et laisse le
+      // stash en place.
+      busy: !top || writing,
+    })}
+  {:else if item === "tag"}
+    {@render action({
+      label: t("toolbar.tag"),
+      icon: "tag",
+      hint: t("toolbar.tag.hint"),
+      run: () => repo.askTagAtHead(),
+      // Un tag n'écrit qu'une référence, mais il lui faut un commit.
+      busy: !repo.repoInfo?.head,
+    })}
+  {:else if item === "stage-all"}
+    {@render action({
+      label: t("toolbar.stageAll"),
+      icon: "stage-all",
+      hint: repo.unstagedEntries.length > 0 ? t("toolbar.stageAll.hint") : t("toolbar.stageAll.nothing"),
+      run: () => repo.stageAll(),
+      busy: repo.unstagedEntries.length === 0 || writing,
+    })}
+  {:else if item === "unstage-all"}
+    {@render action({
+      label: t("toolbar.unstageAll"),
+      icon: "unstage-all",
+      hint:
+        repo.stagedEntries.length > 0 ? t("toolbar.unstageAll.hint") : t("toolbar.unstageAll.nothing"),
+      run: () => repo.unstageAll(),
+      busy: repo.stagedEntries.length === 0 || writing,
+    })}
+  {:else if item === "discard-all"}
+    {@render action({
+      label: t("toolbar.discardAll"),
+      icon: "discard-all",
+      hint: t("status.discardAll.hint"),
+      // N'efface rien : ouvre la confirmation, sous le bouton.
+      run: openDiscard,
+      busy: repo.changeCount === 0 || writing,
+      danger: true,
+    })}
+  {:else if item === "forge"}
+    {@render action({
+      label: t("toolbar.forge"),
+      icon: "forge",
+      hint: repo.prSupported ? t("toolbar.forge.hint") : t("toolbar.forge.none"),
+      run: () => repo.openOnForge(),
+      busy: !repo.repoInfo || !repo.prSupported,
+    })}
+  {:else if item === "finder"}
+    {@render action({
+      label: t("toolbar.finder"),
+      icon: "finder",
+      hint: t("toolbar.finder.hint"),
+      run: () => repo.revealInFinder(),
+      busy: !repo.repoInfo,
+    })}
+  {:else if item === "terminal"}
+    {@const app = externalApps.apps.terminal}
+    {@render action({
+      label: t("toolbar.terminal"),
+      icon: "terminal",
+      hint: `${app ? t("toolbar.terminal.hint", { app }) : t("toolbar.terminal.none")}\n${t("toolbar.external.settings")}`,
+      run: () => repo.openIn("terminal"),
+      busy: !repo.repoInfo || !app,
+    })}
+  {:else if item === "editor"}
+    {@const app = externalApps.apps.editor}
+    {@render action({
+      label: t("toolbar.editor"),
+      icon: "editor",
+      hint: `${app ? t("toolbar.editor.hint", { app }) : t("toolbar.editor.none")}\n${t("toolbar.external.settings")}`,
+      run: () => repo.openIn("editor"),
+      busy: !repo.repoInfo || !app,
+    })}
   {:else if item === "gitflow"}
     {@render action({
       label: t("flow.menu"),
@@ -724,7 +839,6 @@
       active: repo.flowRunning,
       menu: { open: openFlowMenu, hint: "" },
       dropdown: true,
-      wide: true,
     })}
   {/if}
 {/snippet}
@@ -759,12 +873,12 @@
   count?: number;
   /** Menu du bouton : son infobulle, et son ouverture en coordonnées fenêtre. */
   menu?: { hint: string; open: (x: number, y: number) => void };
-  /** Libellé trop long pour un carré (Git Flow) : le bouton s'élargit. */
-  wide?: boolean;
   /** Le clic gauche ouvre `menu` sous le bouton, au lieu d'une action. */
   dropdown?: boolean;
   /** Allumé comme un bouton en cours, hors des opérations distantes (Finish). */
   active?: boolean;
+  /** Destructeur (Discard all) : dans le rouge tant qu'il est disponible. */
+  danger?: boolean;
 })}
   {@const live = a.run !== undefined || a.dropdown === true}
   {@const disabled = !live || a.busy}
@@ -803,7 +917,9 @@
   >
     <button
       class="action"
-      class:wide={a.wide}
+      class:wide={isWide(a.icon)}
+      class:danger={a.danger}
+      data-item={a.icon}
       class:running
       data-op={a.op}
       {disabled}
@@ -1182,6 +1298,9 @@
     min-width: 48px;
     padding: 0 0.45rem;
     white-space: nowrap;
+  }
+  .action.danger:not(:disabled) {
+    color: var(--danger);
   }
   .action:disabled {
     color: var(--text-faint);

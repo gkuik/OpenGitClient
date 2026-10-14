@@ -3,6 +3,7 @@ import {
   DEFAULT_TOOLBAR,
   insertItem,
   insertionIndex,
+  isWide,
   moveItem,
   normalizeToolbar,
   removeAt,
@@ -23,6 +24,30 @@ describe("normalizeToolbar", () => {
     expect(
       normalizeToolbar(["push", "rebase", "separator", "push", 4, "separator", "space"]),
     ).toEqual(["push", "separator", "separator", "space"]);
+  });
+});
+
+describe("nouvelles actions", () => {
+  it("sont connues, et absentes de la barre par défaut", () => {
+    const added = [
+      "pop",
+      "tag",
+      "stage-all",
+      "unstage-all",
+      "discard-all",
+      "forge",
+      "finder",
+      "terminal",
+      "editor",
+    ];
+    expect(normalizeToolbar(added)).toEqual(added);
+    for (const id of added) expect(DEFAULT_TOOLBAR).not.toContain(id);
+  });
+
+  it("élargissent les boutons dont le libellé ne tient pas dans un carré", () => {
+    expect(isWide("stage-all")).toBe(true);
+    expect(isWide("gitflow")).toBe(true);
+    expect(isWide("pop")).toBe(false);
   });
 });
 

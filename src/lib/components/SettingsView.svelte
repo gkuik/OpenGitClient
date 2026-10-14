@@ -11,12 +11,14 @@
     hasRoundness,
   } from "../graphLines.svelte";
   import { errorMessage, t } from "../i18n.svelte";
+  import { externalApps } from "../externalApps.svelte";
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import RichText from "./RichText.svelte";
   import type {
     AppError,
     CredentialCheck,
+    ExternalAppKind,
     GraphLineStyle,
     Profile,
     ThemeMode,
@@ -174,6 +176,12 @@
     rows = [...found.values()].sort((a, b) => a.host.localeCompare(b.host));
     loading = false;
   }
+
+  /** Les deux applications réglables, dans l'ordre de la section. */
+  const EXTERNAL_KINDS: ExternalAppKind[] = ["editor", "terminal"];
+  let toolError = $state<AppError | null>(null);
+  // Une application installée depuis le lancement doit apparaître ici.
+  onMount(() => externalApps.load());
 
   // Au montage, et une seule fois : l'écran est démonté dès qu'on le quitte, et
   // ouvrir un dépôt referme les paramètres (voir `TabsStore.open`). Un `$effect`
@@ -441,6 +449,40 @@
         >
           {t("settings.autoFetch.reset")}
         </button>
+      </div>
+    </section>
+
+    <!-- Éditeur et terminal des boutons de la barre. Seules les applications
+         installées et connues sont proposées : le backend lance ce nom, il ne
+         doit pas pouvoir être n'importe quoi. -->
+    <section>
+      <h2>{t("settings.external")}</h2>
+      <p class="intro">{t("settings.external.intro")}</p>
+      {#if toolError}
+        <p class="error">{errorMessage(toolError)}</p>
+      {/if}
+      <div class="tools">
+        {#each EXTERNAL_KINDS as kind (kind)}
+          {@const list = kind === "editor" ? externalApps.apps.editors : externalApps.apps.terminals}
+          {@const current = kind === "editor" ? externalApps.apps.editor : externalApps.apps.terminal}
+          <label class="tool">
+            <span>{t(`settings.external.${kind}`)}</span>
+            <select
+              disabled={list.length === 0}
+              value={current ?? ""}
+              onchange={async (e) => {
+                toolError = await externalApps.set(kind, e.currentTarget.value || null);
+              }}
+            >
+              {#if list.length === 0}
+                <option value="">{t("settings.external.none")}</option>
+              {/if}
+              {#each list as name (name)}
+                <option value={name}>{name}</option>
+              {/each}
+            </select>
+          </label>
+        {/each}
       </div>
     </section>
 
@@ -840,6 +882,34 @@
   .seg button.active {
     background: var(--accent);
     color: var(--accent-text);
+  }
+
+  /* Éditeur et terminal : un libellé, une liste, alignés en deux colonnes. */
+  .tools {
+    display: grid;
+    grid-template-columns: auto minmax(0, 18rem);
+    align-items: center;
+    gap: 0.5rem 1rem;
+  }
+  .tool {
+    display: contents;
+  }
+  .tool span {
+    font-size: 0.82rem;
+    color: var(--text);
+  }
+  .tool select {
+    padding: 0.35rem 0.5rem;
+    border: 1px solid var(--border);
+    border-radius: 5px;
+    background: var(--bg-raised);
+    color: var(--text);
+    font-size: 0.82rem;
+    font-family: inherit;
+  }
+  .tool select:focus {
+    outline: none;
+    border-color: var(--accent);
   }
 
   .profiles,

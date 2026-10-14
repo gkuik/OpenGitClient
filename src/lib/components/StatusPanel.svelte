@@ -1,4 +1,5 @@
 <script lang="ts">
+  import DiscardConfirm from "./DiscardConfirm.svelte";
   import { tick } from "svelte";
   import { measureRows, playRows } from "../flip";
   import { t } from "../i18n.svelte";
@@ -39,22 +40,9 @@
   const stagedCount = $derived(repo.stagedEntries.length);
 
   // ── Abandon de tous les changements ─────────────────────────────────────────
-  // Irréversible, et sans dialogue natif (aucune capacité de confirmation
-  // déclarée) : la demande est un panneau ancré sous le bouton, qui dit ce qui
-  // va disparaître avant de le faire.
+  // Le panneau de confirmation est `DiscardConfirm`, partagé avec le bouton de
+  // la barre du dépôt ; ici, il s'ancre sous l'en-tête, large comme la colonne.
   let confirming = $state(false);
-
-  // Les non suivis seront *supprimés* du disque, les suivis seulement ramenés à
-  // HEAD : les deux nombres sont annoncés séparément parce qu'ils ne coûtent pas
-  // la même chose. Aucun chemin n'est dans les deux — un fichier indexé n'est
-  // plus non suivi — donc la soustraction est exacte.
-  const untrackedCount = $derived(repo.status?.untracked.length ?? 0);
-  const trackedCount = $derived(repo.changeCount - untrackedCount);
-
-  async function discard() {
-    confirming = false;
-    await repo.discardAll();
-  }
 
   // ── Menu contextuel d'un fichier ou d'un dossier ────────────────────────────
   // La demande vient d'une ligne (`FileItem` ou `TreeRow`, via le module
@@ -133,27 +121,12 @@
       </button>
 
       {#if confirming}
-        <!-- Superposition qui referme au clic à côté, comme les menus de la
-             colonne de gauche. -->
-        <button
-          class="scrim"
-          aria-label={t("action.cancel")}
-          onclick={() => (confirming = false)}
-        ></button>
-        <div class="confirm" role="dialog" aria-label={t("status.discard.title")}>
-          <p class="c-title">{t("status.discard.title")}</p>
-          <p class="c-text">
-            {#if trackedCount > 0}{t("status.discard.tracked", { n: trackedCount })}{/if}
-            {#if untrackedCount > 0}{t("status.discard.untracked", { n: untrackedCount })}{/if}
-            {t("status.discard.warning")}
-          </p>
-          <div class="c-actions">
-            <button class="c-cancel" onclick={() => (confirming = false)}>
-              {t("action.cancel")}
-            </button>
-            <button class="c-ok" onclick={discard}>{t("status.discardAll")}</button>
-          </div>
-        </div>
+        <!-- Large comme la colonne : la sidebar est trop étroite pour un
+             panneau qui choisirait sa propre largeur. -->
+        <DiscardConfirm
+          style="position: absolute; top: 100%; left: 0.5rem; right: 0.5rem; margin-top: 0.25rem"
+          onclose={() => (confirming = false)}
+        />
       {/if}
     </div>
 
@@ -362,70 +335,6 @@
   .discard:disabled {
     opacity: 0.4;
     cursor: default;
-  }
-
-  /* ── Confirmation ── */
-  .scrim {
-    position: fixed;
-    inset: 0;
-    z-index: 50;
-    background: transparent;
-    border: none;
-    padding: 0;
-    cursor: default;
-  }
-  /* Ancrée sous l'en-tête et large comme la colonne : la sidebar est trop
-     étroite pour un panneau qui choisirait sa propre largeur. */
-  .confirm {
-    position: absolute;
-    z-index: 51;
-    top: 100%;
-    left: 0.5rem;
-    right: 0.5rem;
-    margin-top: 0.25rem;
-    padding: 0.6rem;
-    background: var(--bg-raised);
-    border: 1px solid var(--border);
-    border-radius: 6px;
-    box-shadow: 0 8px 24px var(--shadow-color);
-  }
-  .c-title {
-    margin: 0 0 0.35rem;
-    font-size: 0.8rem;
-    font-weight: 600;
-  }
-  .c-text {
-    margin: 0 0 0.6rem;
-    color: var(--text-dim);
-    font-size: 0.75rem;
-    line-height: 1.35;
-  }
-  .c-actions {
-    display: flex;
-    justify-content: flex-end;
-    gap: 0.4rem;
-  }
-  .c-actions button {
-    font-size: 0.75rem;
-    padding: 0.2rem 0.6rem;
-    border-radius: 4px;
-    cursor: pointer;
-  }
-  .c-cancel {
-    background: transparent;
-    border: 1px solid var(--border);
-    color: var(--text);
-  }
-  .c-cancel:hover {
-    border-color: var(--accent);
-  }
-  .c-ok {
-    background: var(--danger);
-    border: 1px solid var(--danger);
-    color: var(--accent-text);
-  }
-  .c-ok:hover {
-    filter: brightness(1.1);
   }
 
   .toolbar {

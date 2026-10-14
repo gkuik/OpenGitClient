@@ -480,6 +480,18 @@ export interface RemoteInfo {
   forge: ForgeKind | null;
 }
 
+/** Applications externes de la barre (miroir de `dto::ExternalApps`). */
+export interface ExternalApps {
+  /** Éditeurs connus et installés, dans l'ordre de préférence. */
+  editors: string[];
+  terminals: string[];
+  /** Application effective — le choix s'il est installé, sinon le défaut ; `null` : aucune. */
+  editor: string | null;
+  terminal: string | null;
+}
+
+export type ExternalAppKind = "editor" | "terminal";
+
 /** Résultat du bouton *Test* d'un hôte, dans les Réglages (miroir de `dto::CredentialCheck`). */
 export interface CredentialCheck {
   /** Compte auquel appartient le jeton — quand c'est une forge qui répond. */

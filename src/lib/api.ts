@@ -3,6 +3,8 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   CredentialCheck,
+  ExternalApps,
+  ExternalAppKind,
   AppError,
   AutoFetchEvent,
   BranchEntry,
@@ -388,6 +390,20 @@ export const api = {
    * l'extérieur.
    */
   openForgePage: (url: string) => call<void>("open_forge_page", { url }),
+  /** Ouvre la page du dépôt sur sa forge ; le backend construit l'adresse. */
+  openRepositoryPage: (repoId: string) => call<void>("open_repository_page", { repoId }),
+  /**
+   * Applications externes : éditeurs et terminaux installés, et ceux que la
+   * barre ouvrira. Le backend ne retient qu'un nom de sa liste connue.
+   */
+  getExternalApps: () => call<ExternalApps>("get_external_apps"),
+  setExternalApp: (kind: ExternalAppKind, name: string | null) =>
+    call<ExternalApps>("set_external_app", { kind, name }),
+  /** Montre le dossier du dépôt dans le Finder. */
+  revealRepository: (repoId: string) => call<void>("reveal_repository", { repoId }),
+  /** Ouvre le dossier du dépôt dans l'éditeur ou le terminal choisi. */
+  openRepositoryIn: (repoId: string, kind: ExternalAppKind) =>
+    call<void>("open_repository_in", { repoId, kind }),
 
   // ── Graph ────────────────────────────────────────────────────────────────
   /** Page d'historique du graph. Recharger depuis `skip = 0` après toute mutation. */

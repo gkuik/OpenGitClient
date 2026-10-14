@@ -165,7 +165,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness, the auto-fetch interval) and `projects.json` (per-repository display names, see *Two settings screens*) rounding out the five state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness, the auto-fetch interval, the repository bar's items, the external editor and terminal) and `projects.json` (per-repository display names, see *Two settings screens*) rounding out the five state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -649,8 +649,9 @@ appears only when non-empty, and it exists because the header counts what was
 loaded: without it, a colleague's PR that concerns us in no way would be counted
 and invisible, and the count would lie.
 
-**A forge page is the only thing the app opens outside itself** — a PR, from its
-menu, or the token creation page, from Settings — and
+**A forge page is the only *web page* the app opens outside itself** — a PR, from its
+menu, the token creation page, from Settings, or the repository's page, from the
+bar's GitHub button — and
 the boundary is in Rust, not in the capabilities. `tauri-plugin-opener` is a
 dependency but is **not registered**: the webview therefore has no « open this
 URL » command at all, only ours, which passes `forge::is_openable` first — https,
@@ -775,8 +776,21 @@ Right-clicking the bar — its background, the name, the report, any button
 without a menu of its own (Git Flow included: its left click already opens its
 menu) — opens one entry, **Customize toolbar…**; Pull's and Push's own menus end
 with it too. The bar then switches to edit mode and `ToolbarCustomizer` lays a
-scrim over the window with a panel under the bar: the palette (the six actions,
+scrim over the window with a panel under the bar: the palette (the actions,
 **Separator**, **Space**), the default set as one draggable block, and **Done**.
+
+The palette holds the six default actions plus nine that are **not** in the
+default bar — Finder, Terminal and Editor (below), and six buttons over a feature
+that already existed elsewhere:
+**Pop** (the latest stash, `applyStash(0, true)`), **Tag** (the graph's tag
+dialog, on HEAD — `askTagAtHead`), **Stage all** / **Unstage all**, **Discard
+all** (it opens `DiscardConfirm`, the very panel of the right column's header,
+anchored under the button — never a one-click erase; the button is in the
+danger colour) and **GitHub** (`open_repository_page`: the backend builds the
+repository's web page from the remote a fetch would use and opens it through
+`open_forge_page`'s guard — the webview sends a tab id, never a URL; greyed
+where `prSupported` says there is no GitHub remote). The buttons whose label
+does not fit a 48px square widen (`isWide`, shared with the tiles).
 Modal like a macOS sheet: Done or Escape closes it.
 
 - **The bar is a list of items** (`src/lib/toolbar.ts`, pure and tested): an
@@ -809,6 +823,23 @@ Modal like a macOS sheet: Done or Escape closes it.
 - **Three layers**: scrim 60, bar 61 (`.repobar.editing`), panel 62. The panel is
   `fixed` under the bar rather than inside it, because the scrim has to pass
   *between* the bar and everything else.
+- **Finder, Terminal and Editor open the repository folder outside the app**
+  (`src-tauri/src/external.rs`) — always the working directory, never the
+  selected file. **The webview never names what opens**: it sends a tab id and
+  a kind (`editor` / `terminal`); the folder comes from the backend
+  (`watch_roots().workdir`), the application from a list known in Rust
+  (`EDITORS`, `TERMINALS`). Only the ones installed are offered
+  (`/Applications`, `~/Applications`, the system's Utilities), and only ones
+  known to open a *folder* passed by `open -a` — Alacritty and kitty ignore it
+  and are left out rather than opening a terminal elsewhere. The choice is a
+  global preference (`editor` / `terminal` in `prefs.json`), set in Settings'
+  *External tools*; `set_external_app` refuses a name outside the list, which
+  is what keeps the preference from becoming « launch any program ». Unset, or
+  uninstalled since, it falls back to the Terminal and to the first editor
+  found (`effective`); with nothing usable the button is greyed. Detection runs
+  on every read — at startup and when Settings mounts — so an app installed
+  meanwhile shows up. Outside macOS nothing is detected: only Finder (reveal)
+  works there.
 - The action icons moved to `ToolbarIcon.svelte`, and `ToolbarTile.svelte` draws
   an item as it looks in the bar, inert — the palette, the bar in edit mode and
   the dragged ghost all use it, so what is dropped is what will be seen.
@@ -1139,9 +1170,9 @@ Out of scope for now, but the architecture must not block them: rebase, hunk-lev
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. **The repository on screen is auto-fetched**, every minute by default (see *Auto-fetch*). Nothing is auto-*pulled*.
 
-**The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
+**The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy. Handing a folder to the Finder, an editor or a terminal (the bar's three buttons, `external.rs`) is not an exception to it: nothing Git goes through there, and the system launches the application (`open -a` on macOS, via `tauri-plugin-opener` from Rust).
 
-The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Text size*, *Graph* (the line style, segmented like the theme, and its roundness), *Auto-fetch* (the interval, a slider from *Off* to 60 minutes), *Profiles*, then *Access tokens*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. **Settings is a tab like any other** — `SettingsTab`, frontend-only for the same reason as `NewTab` (no repository, so no id for the backend), appended at the end of the bar, reorderable, closed by its ×, and not restored at startup. **There is only ever one**: its id is the fixed `"settings"`, and the gear (`TabsStore.openSettings()`, also what *Manage profiles…* and the PR section's link call) activates the existing tab rather than opening a second, the same rule as a repository already open. The gear is no longer a toggle — it stays lit while that tab is shown, and one leaves Settings like any tab. It lists one row per host found among the **open** tabs; the list is built on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts) — and since `App.svelte` unmounts `SettingsView` whenever another tab is shown, coming back to it rebuilds the list, so a repository opened in between shows up.
+The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Text size*, *Graph* (the line style, segmented like the theme, and its roundness), *Auto-fetch* (the interval, a slider from *Off* to 60 minutes), *External tools* (the editor and terminal the bar opens), *Profiles*, then *Access tokens*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. **Settings is a tab like any other** — `SettingsTab`, frontend-only for the same reason as `NewTab` (no repository, so no id for the backend), appended at the end of the bar, reorderable, closed by its ×, and not restored at startup. **There is only ever one**: its id is the fixed `"settings"`, and the gear (`TabsStore.openSettings()`, also what *Manage profiles…* and the PR section's link call) activates the existing tab rather than opening a second, the same rule as a repository already open. The gear is no longer a toggle — it stays lit while that tab is shown, and one leaves Settings like any tab. It lists one row per host found among the **open** tabs; the list is built on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts) — and since `App.svelte` unmounts `SettingsView` whenever another tab is shown, coming back to it rebuilds the list, so a repository opened in between shows up.
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab or the repository bar's Stash button, and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
@@ -1173,4 +1204,4 @@ The graph is **read-only** but for two entries: no checkout-from-commit, reset o
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert). The branch deletion at the end of a Git Flow *Finish* is not a sixth: `delete_branch` refuses a branch its target doesn't contain (`BranchNotMerged`), so no commit can be lost through it. A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
+AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** (from the right column's header, or the repository bar's button when placed there — the same confirmation panel either way) and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert). The branch deletion at the end of a Git Flow *Finish* is not a sixth: `delete_branch` refuses a branch its target doesn't contain (`BranchNotMerged`), so no commit can be lost through it. A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.

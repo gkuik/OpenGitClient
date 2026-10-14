@@ -40,7 +40,11 @@
 
   <div class="dialog" role="dialog" aria-modal="true" aria-labelledby="tag-title">
     <h2 id="tag-title">{t("tag.dialog.title")}</h2>
-    <p class="on">{t("tag.dialog.on", { oid: prompt.shortOid, summary: prompt.summary })}</p>
+    <p class="on">
+      {prompt.summary
+        ? t("tag.dialog.on", { oid: prompt.shortOid, summary: prompt.summary })
+        : t("tag.dialog.onOid", { oid: prompt.shortOid })}
+    </p>
 
     <form onsubmit={submit}>
       <label>

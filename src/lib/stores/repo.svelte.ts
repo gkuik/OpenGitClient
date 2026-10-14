@@ -18,6 +18,7 @@ import {
 import type {
   AppError,
   AutoFetchEvent,
+  ExternalAppKind,
   BranchEntry,
   CommitDetails,
   FetchEvent,
@@ -1112,6 +1113,49 @@ export class RepoStore {
       shortOid: commit.shortOid,
       summary: commit.summary,
     };
+  }
+
+  /**
+   * Même dialogue, sur HEAD — le bouton Tag de la barre. Le résumé vient du
+   * graph quand HEAD y est déjà chargé ; sinon le dialogue montre l'oid seul,
+   * ce qui suffit à dire où le tag va se poser.
+   */
+  askTagAtHead() {
+    const oid = this.repoInfo?.head;
+    if (!oid) return;
+    const commit = this.graph.find((c) => c.oid === oid);
+    this.tagPrompt = {
+      oid,
+      shortOid: commit?.shortOid ?? oid.slice(0, 7),
+      summary: commit?.summary ?? "",
+    };
+  }
+
+  /** Montre le dossier du dépôt dans le Finder (bouton de la barre). */
+  async revealInFinder() {
+    try {
+      await api.revealRepository(this.repoId);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+  }
+
+  /** Ouvre le dossier du dépôt dans l'éditeur ou le terminal choisi. */
+  async openIn(kind: ExternalAppKind) {
+    try {
+      await api.openRepositoryIn(this.repoId, kind);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+  }
+
+  /** Ouvre la page du dépôt sur sa forge (bouton de la barre). */
+  async openOnForge() {
+    try {
+      await api.openRepositoryPage(this.repoId);
+    } catch (e) {
+      this.error = e as AppError;
+    }
   }
 
   cancelTag() {

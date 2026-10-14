@@ -34,6 +34,24 @@ export function itemLabel(item: ToolbarItem): string {
       return t("toolbar.branch");
     case "stash":
       return t("toolbar.stash");
+    case "pop":
+      return t("toolbar.pop");
+    case "tag":
+      return t("toolbar.tag");
+    case "stage-all":
+      return t("toolbar.stageAll");
+    case "unstage-all":
+      return t("toolbar.unstageAll");
+    case "discard-all":
+      return t("toolbar.discardAll");
+    case "forge":
+      return t("toolbar.forge");
+    case "finder":
+      return t("toolbar.finder");
+    case "terminal":
+      return t("toolbar.terminal");
+    case "editor":
+      return t("toolbar.editor");
     case "gitflow":
       return t("flow.menu");
     case "separator":

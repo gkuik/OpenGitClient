@@ -2,6 +2,7 @@ import { mount } from "svelte";
 import "./app.css";
 import App from "./App.svelte";
 import { autoFetch } from "./lib/autoFetch.svelte";
+import { externalApps } from "./lib/externalApps.svelte";
 import { font } from "./lib/font.svelte";
 import { i18n } from "./lib/i18n.svelte";
 import { graphColumns } from "./lib/graphColumns.svelte";
@@ -28,6 +29,8 @@ graphColumns.init();
 graphLines.init();
 // Barre du dépôt : par défaut d'abord, personnalisation ensuite.
 toolbar.init();
+// Éditeur et terminal de la barre : détectés par le backend.
+externalApps.load();
 // Intervalle de l'auto-fetch : le premier tour de la minuterie attend de toute
 // façon qu'un dépôt soit chargé.
 autoFetch.init();
