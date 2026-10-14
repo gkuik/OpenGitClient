@@ -1,6 +1,8 @@
 <script lang="ts">
   import { onMount } from "svelte";
   import { api } from "../api";
+  import { AUTO_FETCH_MINUTES_DEFAULT, AUTO_FETCH_MINUTES_MAX } from "../autoFetch";
+  import { autoFetch } from "../autoFetch.svelte";
   import { font, FONT_SIZES } from "../font.svelte";
   import {
     graphLines,
@@ -336,6 +338,45 @@
       </div>
     </section>
 
+    <!-- Auto-fetch : le réglage de GitKraken, mêmes bornes, même défaut. Un
+         curseur comme l'arrondi plutôt qu'un champ numérique : 0 y est une
+         position comme une autre, et elle se lit « Off ». -->
+    <section>
+      <h2>{t("settings.autoFetch")}</h2>
+      <p class="intro">
+        <RichText
+          key="settings.autoFetch.intro"
+          params={{ nothing: { text: t("settings.autoFetch.intro.nothing"), tag: "strong" } }}
+        />
+      </p>
+
+      <div class="slider">
+        <span>{t("settings.autoFetch.interval")}</span>
+        <input
+          aria-label={t("settings.autoFetch.interval")}
+          type="range"
+          min="0"
+          max={AUTO_FETCH_MINUTES_MAX}
+          step="1"
+          value={autoFetch.minutes}
+          oninput={(e) => autoFetch.set(Number(e.currentTarget.value))}
+        />
+        <span class="value interval">
+          {autoFetch.minutes === 0
+            ? t("settings.autoFetch.off")
+            : t("settings.autoFetch.every", { n: autoFetch.minutes })}
+        </span>
+        <button
+          class="ghost"
+          disabled={autoFetch.minutes === AUTO_FETCH_MINUTES_DEFAULT}
+          title={t("settings.autoFetch.reset.hint")}
+          onclick={() => autoFetch.reset()}
+        >
+          {t("settings.autoFetch.reset")}
+        </button>
+      </div>
+    </section>
+
     <section>
       <h2>{t("settings.profiles")}</h2>
       <p class="intro">
@@ -645,6 +686,11 @@
     min-width: 3rem;
     color: var(--text-dim);
     font-variant-numeric: tabular-nums;
+  }
+  /* « Every 60 minutes » : sans largeur réservée, le bouton Reset glisserait
+     à chaque cran du curseur. */
+  .slider .value.interval {
+    min-width: 8.5rem;
   }
   .slider.off {
     color: var(--text-faint);

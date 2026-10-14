@@ -14,8 +14,8 @@ use tauri::{AppHandle, Manager};
 
 use crate::dto::{
     GitFlowConfig, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
-    ThemeMode, FONT_SIZE_DEFAULT, FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT,
-    GRAPH_ROUNDNESS_MAX,
+    ThemeMode, AUTO_FETCH_MINUTES_DEFAULT, AUTO_FETCH_MINUTES_MAX, FONT_SIZE_DEFAULT,
+    FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT, GRAPH_ROUNDNESS_MAX,
 };
 use crate::error::AppError;
 use crate::git::{open_repository, GitBackend};
@@ -302,6 +302,18 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Intervalle de l'auto-fetch, en minutes (0 = désactivé) — ramené dans ses
+    /// bornes à la lecture comme à l'écriture.
+    pub fn auto_fetch_minutes(&self) -> u8 {
+        self.prefs.auto_fetch_minutes.min(AUTO_FETCH_MINUTES_MAX)
+    }
+
+    /// Change l'intervalle de l'auto-fetch et le persiste.
+    pub fn set_auto_fetch_minutes(&mut self, minutes: u8) -> Result<(), AppError> {
+        self.prefs.auto_fetch_minutes = minutes.min(AUTO_FETCH_MINUTES_MAX);
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn profiles(&self) -> Vec<Profile> {
         self.profiles.clone()
     }
@@ -474,6 +486,8 @@ struct Prefs {
     graph_lines: GraphLineStyle,
     /// Arrondi de ce tracé, en pourcentage (tracés arrondi et courbe).
     graph_roundness: u8,
+    /// Intervalle de l'auto-fetch, en minutes ; 0 le désactive.
+    auto_fetch_minutes: u8,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -489,6 +503,9 @@ impl Default for Prefs {
             graph_columns: GraphColumns::default(),
             graph_lines: GraphLineStyle::default(),
             graph_roundness: GRAPH_ROUNDNESS_DEFAULT,
+            // Écrit à la main lui aussi : dérivé, il vaudrait 0, et un
+            // `prefs.json` d'avant ce réglage démarrerait sans auto-fetch.
+            auto_fetch_minutes: AUTO_FETCH_MINUTES_DEFAULT,
         }
     }
 }

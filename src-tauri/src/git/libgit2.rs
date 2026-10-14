@@ -15,7 +15,7 @@ use git2::{
 use super::{GitBackend, WatchRoots};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
-    FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
+    FetchAllReport, FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
     GraphRef, GraphRefKind,
     Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry,
@@ -1000,6 +1000,36 @@ impl GitBackend for Libgit2Backend {
         Ok(FetchReport {
             remote: name,
             updated,
+        })
+    }
+
+    fn fetch_all(&self) -> Result<FetchAllReport, AppError> {
+        let repo = self.repo()?;
+        let remotes: Vec<String> = repo
+            .remotes()?
+            .iter()
+            .flatten()
+            .map(str::to_string)
+            .collect();
+        if remotes.is_empty() {
+            return Err(AppError::NoRemote);
+        }
+        let mut updated = Vec::new();
+        let mut error = None;
+        for name in &remotes {
+            match fetch_one(&repo, name) {
+                Ok(refs) => updated.extend(refs),
+                // Le premier échec est celui qu'on rapporte : c'est lui qui dit
+                // pourquoi l'auto-fetch s'interrompt, s'il doit le faire.
+                Err(e) => {
+                    error.get_or_insert(e);
+                }
+            }
+        }
+        Ok(FetchAllReport {
+            remotes,
+            updated,
+            error,
         })
     }
 
@@ -4030,6 +4060,38 @@ mod tests {
         // libgit2 classe ce refus en `Os`/`GenericError`, pas en `Net` : sans
         // cette prise en compte l'erreur remontait au frontend en `Git`.
         assert!(matches!(git.fetch(None), Err(AppError::Network(_))));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn fetch_all_goes_on_past_an_unreachable_remote() {
+        let (origin_dir, local_dir, git) = repo_with_remote();
+        // Un miroir injoignable à côté d'origin : quel que soit l'ordre dans
+        // lequel libgit2 les rend, son échec ne doit rien bloquer.
+        Repository::open(&local_dir)
+            .unwrap()
+            .remote("aaa-miroir", "https://127.0.0.1:1/x.git")
+            .unwrap();
+
+        let report = git.fetch_all().unwrap();
+        assert_eq!(report.remotes.len(), 2);
+        assert!(matches!(report.error, Some(AppError::Network(_))));
+        assert!(
+            report
+                .updated
+                .iter()
+                .any(|r| r.name.starts_with("refs/remotes/origin/")),
+            "origin doit avoir été récupéré malgré l'échec du miroir"
+        );
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn fetch_all_without_remote_fails_cleanly() {
+        let (dir, git) = temp_repo();
+        assert!(matches!(git.fetch_all(), Err(AppError::NoRemote)));
         fs::remove_dir_all(&dir).ok();
     }
 

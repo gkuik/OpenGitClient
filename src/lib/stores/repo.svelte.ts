@@ -1,5 +1,7 @@
 import { SvelteSet } from "svelte/reactivity";
 import { api, pickRepositoryFolder } from "../api";
+import { autoFetchPause, isAutoFetchDue, type AutoFetchPause } from "../autoFetch";
+import { autoFetch as autoFetchPref } from "../autoFetch.svelte";
 import { t } from "../i18n.svelte";
 import { countStatuses, type TreeCounts } from "../tree";
 import {
@@ -15,6 +17,7 @@ import {
 } from "../gitflow";
 import type {
   AppError,
+  AutoFetchEvent,
   BranchEntry,
   CommitDetails,
   FetchEvent,
@@ -87,6 +90,13 @@ const GRAPH_PAGE_SIZE = 500;
 
 /** Durée d'affichage du compte rendu d'une opération, en millisecondes. */
 const OP_STATUS_MS = 6000;
+
+/**
+ * Durée minimale pendant laquelle la barre montre un auto-fetch : un tour
+ * complet de l'icône. Plus court, l'aller-retour d'un fetch sans nouveauté ne
+ * serait qu'un clignotement.
+ */
+const AUTO_FETCH_SHOWN_MS = 1000;
 
 /**
  * Durée de l'éclair ✓ / ! / ✗ sur le bouton qui a lancé l'opération. Court :
@@ -282,6 +292,38 @@ export class RepoStore {
   fetching = $state(false);
   pushing = $state(false);
   pulling = $state(false);
+  /**
+   * Auto-fetch en vol (voir *Auto-fetch* plus bas). Hors de `busyRemote`, et
+   * c'est délibéré : aucun bouton ne se grise pour lui, personne ne l'a
+   * demandé. Un geste distant qui tombe pendant qu'il tourne l'attend.
+   */
+  autoFetching = $state(false);
+  /**
+   * Ce que la barre montre de l'auto-fetch : vrai depuis son départ, et au
+   * moins `AUTO_FETCH_SHOWN_MS` — un fetch sans rien à ramener répond en
+   * quelques centaines de millisecondes, et l'icône qui tourne puis le
+   * « Auto-fetching… » ne seraient qu'un clignotement illisible.
+   */
+  autoFetchShown = $state(false);
+  private autoFetchStartedAt = 0;
+  private autoFetchShownTimer: ReturnType<typeof setTimeout> | null = null;
+  /**
+   * Dernier passage sur le réseau, auto *ou* manuel (ms) : c'est de là que
+   * l'échéance se compte, et c'est ce que l'infobulle de Fetch date. `0` tant
+   * qu'il n'y en a pas eu — un dépôt qu'on vient d'ouvrir est récupéré au
+   * premier tour.
+   */
+  lastFetchAt = $state(0);
+  /**
+   * Auto-fetch suspendu pour ce dépôt, et pourquoi : identifiants manquants ou
+   * refusés, ou aucun distant. Rien ne se résout tout seul dans ces cas-là ; un
+   * fetch ou un pull réussi à la main, une saisie d'identifiants ou un
+   * changement des distants le relance. L'infobulle de Fetch le dit.
+   */
+  autoFetchPause = $state<AutoFetchPause | null>(null);
+  /** Se résout à la fin de l'auto-fetch en vol, `null` s'il n'y en a pas. */
+  private autoFetchDone: Promise<void> | null = null;
+  private autoFetchSettle: (() => void) | null = null;
   /**
    * Question posée avant le premier push d'une branche — GitKraken : « What
    * remote/branch should X push to and pull from? ». Non nul = la barre est
@@ -758,6 +800,9 @@ export class RepoStore {
       this.fetching ||
       this.pushing ||
       this.pulling ||
+      // Il écrit `refs/remotes/**` : relire pendant ce temps lirait un état à
+      // moitié écrit, et son propre résultat demande de toute façon la relecture.
+      this.autoFetching ||
       // Une page d'historique en vol : un retour page 0 au milieu du scroll
       // infini jetterait ce qu'il vient de charger.
       this.graphLoading
@@ -1135,6 +1180,7 @@ export class RepoStore {
     this.error = null;
     this.setOpStatus(null);
     try {
+      await this.waitAutoFetch();
       await api.pushTag(this.repoId, name, remove);
     } catch (e) {
       this.pushingTag = false;
@@ -1460,6 +1506,12 @@ export class RepoStore {
    */
   private async writeRemotes(write: () => Promise<RemoteEntry[]>): Promise<AppError | null> {
     let error: AppError | null = null;
+    // Renommer ou retirer un distant est refusé pendant une opération réseau :
+    // un auto-fetch qui tourne n'a pas à faire échouer le formulaire.
+    await this.waitAutoFetch();
+    // Un distant ajouté, renommé ou corrigé : ce qui suspendait l'auto-fetch
+    // (aucun distant, une URL qui demandait des identifiants) a pu changer.
+    this.autoFetchPause = null;
     try {
       this.remoteEntries = await write();
     } catch (e) {
@@ -1484,6 +1536,7 @@ export class RepoStore {
     this.error = null;
     this.setOpStatus(null);
     try {
+      await this.waitAutoFetch();
       await api.fetchRemote(this.repoId);
     } catch (e) {
       // Échec au *lancement* (onglet fermé, opération déjà en cours) : aucun
@@ -1553,6 +1606,7 @@ export class RepoStore {
     this.error = null;
     this.setOpStatus(null);
     try {
+      await this.waitAutoFetch();
       await api.pushBranch(this.repoId, mode, remote, target);
     } catch (e) {
       this.pushing = false;
@@ -1596,6 +1650,7 @@ export class RepoStore {
     this.error = null;
     this.setOpStatus(null);
     try {
+      await this.waitAutoFetch();
       await api.pull(this.repoId, mode, branch);
     } catch (e) {
       this.pulling = false;
@@ -1615,6 +1670,8 @@ export class RepoStore {
   /** Résultat d'un pull, reçu par événement. */
   onPulled(event: PullEvent) {
     this.pulling = false;
+    // Tout pull commence par un fetch : l'auto-fetch repart de là.
+    this.lastFetchAt = Date.now();
     if (event.error) {
       if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
         void this.askCredentials(event.error.kind === "RemoteAuth", "pull");
@@ -1627,6 +1684,7 @@ export class RepoStore {
       return;
     }
     if (!event.report) return;
+    this.autoFetchPause = null;
 
     const report = pullStatus(event.report);
     this.setOpStatus(report.text, report.tone);
@@ -1731,6 +1789,7 @@ export class RepoStore {
   /** Résultat d'un fetch, reçu par événement. */
   onFetched(event: FetchEvent) {
     this.fetching = false;
+    this.lastFetchAt = Date.now();
     if (event.error) {
       // Ces deux cas ne sont pas des échecs à afficher tels quels : ils appellent
       // une saisie. Le bandeau d'erreur ne servirait qu'à faire écran au dialogue.
@@ -1745,6 +1804,7 @@ export class RepoStore {
       return;
     }
     if (!event.report) return;
+    this.autoFetchPause = null;
 
     const { remote, updated } = event.report;
     const n = updated.length;
@@ -1821,6 +1881,127 @@ export class RepoStore {
     // où on la redemande sans que personne ne l'ait cliqué : quelqu'un vient
     // justement de demander des nouvelles du distant.
     void this.loadPullRequests();
+  }
+
+  // ── Auto-fetch ──────────────────────────────────────────────────────────────
+
+  /**
+   * L'auto-fetch de ce dépôt est-il dû ? `TabsStore` le demande à chaque tour
+   * de sa minuterie, pour l'onglet affiché seulement.
+   *
+   * Jamais par-dessus une opération de l'application — distante ou non : un
+   * commit, une fusion, une page d'historique en vol (`refreshBlocked`) —, ni
+   * sous le dialogue d'identifiants, ni une fois suspendu. Le tour suivant
+   * repassera : rien n'est perdu à attendre quelques secondes.
+   */
+  autoFetchDue(minutes: number, now: number): boolean {
+    return (
+      this.loaded &&
+      this.repoInfo !== null &&
+      this.autoFetchPause === null &&
+      !this.busyRemote &&
+      !this.refreshBlocked &&
+      this.credentialsPrompt === null &&
+      isAutoFetchDue(this.lastFetchAt, now, minutes)
+    );
+  }
+
+  /**
+   * Lance l'auto-fetch : tous les distants, en tâche de fond. Rien ne se grise
+   * ni ne s'allume — personne n'a cliqué —, seule l'icône de Fetch tourne
+   * (`autoFetchShown`). Le résultat revient par `repo://auto-fetched`.
+   */
+  async autoFetch() {
+    this.autoFetching = true;
+    this.autoFetchStartedAt = Date.now();
+    if (this.autoFetchShownTimer !== null) clearTimeout(this.autoFetchShownTimer);
+    this.autoFetchShownTimer = null;
+    this.autoFetchShown = true;
+    // L'échéance se compte depuis le départ : un serveur lent ne doit pas
+    // décaler l'intervalle, ni un échec le faire réessayer en boucle.
+    this.lastFetchAt = Date.now();
+    this.autoFetchDone = new Promise((resolve) => (this.autoFetchSettle = resolve));
+    try {
+      await api.autoFetch(this.repoId);
+    } catch {
+      // Échec au lancement (une opération réseau partie entre-temps, onglet
+      // fermé) : aucun événement ne suivra. On réessaiera à l'échéance.
+      this.endAutoFetch();
+    }
+  }
+
+  /**
+   * Résultat d'un auto-fetch. Ne montre que ce qui a bougé — l'éclair de Fetch
+   * et un compte rendu —, jamais « rien de neuf », qui reviendrait chaque
+   * minute. Une erreur qui ne passera pas toute seule suspend l'auto-fetch du
+   * dépôt, et se dit une fois si elle attend l'utilisateur ; les autres sont
+   * oubliées jusqu'à la prochaine échéance. Renvoie `true` si des références ont bougé — c'est
+   * `TabsStore` qui sait si l'onglet est affiché, donc s'il faut relire tout de
+   * suite.
+   */
+  onAutoFetched(event: AutoFetchEvent): boolean {
+    this.endAutoFetch();
+    const error = event.error ?? event.report?.error ?? null;
+    const pause = error ? autoFetchPause(error.kind) : null;
+    if (pause) {
+      // Dit une fois, au moment où il s'arrête — pas à chaque échéance, il n'y
+      // en a plus. Un dépôt sans distant, lui, n'a rien à se faire reprocher.
+      if (pause === "credentials" && this.autoFetchPause === null && !this.busyRemote) {
+        this.setOpStatus(t("op.autoFetch.paused"), "warn");
+      }
+      this.autoFetchPause = pause;
+    }
+
+    const updated = event.report?.updated ?? [];
+    if (updated.length === 0) return false;
+
+    // Le seul cas qui se montre : quelque chose a bougé sur un distant. Pas
+    // quand un geste de l'utilisateur tourne — c'est son bouton qui parle, et
+    // son compte rendu arrivera juste après.
+    if (!this.busyRemote) {
+      const remotes = event.report!.remotes;
+      const moved = remotes.filter((r) => updated.some((u) => u.name.startsWith(`refs/remotes/${r}/`)));
+      // Des tags seuls ne disent pas de quel distant ils viennent : tous.
+      const where = (moved.length > 0 ? moved : remotes).join(", ");
+      this.setOpStatus(t("op.autoFetch.updated", { where, n: updated.length }), "ok");
+      this.finish("fetch", "ok");
+    }
+
+    // Le chemin des changements venus du disque, pas celui du Fetch : c'est
+    // lui qui sait attendre qu'une opération en cours se termine, qui ne relit
+    // l'onglet que s'il est affiché, et qui fusionne cette relecture avec celle
+    // que le watcher demandera pour les mêmes `refs/remotes/**`.
+    this.noteExternalChange({ repoId: this.repoId, worktree: false, refs: true });
+    // Une PR a pu s'ouvrir ou se fermer : la branche qui vient de bouger en est
+    // souvent la raison. Rien de redemandé quand rien n'a bougé.
+    void this.loadPullRequests();
+    return true;
+  }
+
+  private endAutoFetch() {
+    this.autoFetching = false;
+    this.autoFetchSettle?.();
+    this.autoFetchSettle = null;
+    this.autoFetchDone = null;
+    const left = AUTO_FETCH_SHOWN_MS - (Date.now() - this.autoFetchStartedAt);
+    if (left <= 0) {
+      this.autoFetchShown = false;
+      return;
+    }
+    this.autoFetchShownTimer = setTimeout(() => {
+      this.autoFetchShownTimer = null;
+      this.autoFetchShown = false;
+    }, left);
+  }
+
+  /**
+   * Un geste distant tombé pendant un auto-fetch l'attend plutôt que d'échouer
+   * en `NetworkBusy` : le backend n'en laisse passer qu'un par dépôt, et un
+   * clic sur Pull ne doit pas se solder par une erreur pour une opération que
+   * personne n'a vue partir. Le bouton, lui, s'allume dès le clic.
+   */
+  private async waitAutoFetch() {
+    if (this.autoFetchDone) await this.autoFetchDone;
   }
 
   // ── Pull requests ───────────────────────────────────────────────────────────
@@ -1942,6 +2123,7 @@ export class RepoStore {
     try {
       await api.setCredentials(prompt.remote.host, username, secret);
       this.credentialsPrompt = null;
+      this.autoFetchPause = null;
       await (prompt.op === "push"
         ? this.push()
         : prompt.op === "pull"
@@ -2274,6 +2456,14 @@ export type Tab = RepoStore | NewTab | SettingsTab;
  * revenir est instantané (graph, sélection et scroll intacts), seul le statut du
  * working directory est resynchronisé (voir `RepoStore.activate`).
  */
+/**
+ * Pas de la minuterie de l'auto-fetch. Elle ne lance rien à ce rythme : elle
+ * demande seulement à l'onglet affiché si son échéance est passée. Un tour
+ * court, c'est ce qui fait qu'un intervalle raccourci, un retour sur un onglet
+ * ou la fin d'une opération qui le retenait se rattrapent en quelques secondes.
+ */
+const AUTO_FETCH_TICK_MS = 5_000;
+
 class TabsStore {
   /** Onglets dans l'ordre d'affichage, dépôts et pages d'accueil mêlés. */
   tabs = $state<Tab[]>([]);
@@ -2299,6 +2489,12 @@ class TabsStore {
    * d'abord sous le nom de son dossier.
    */
   private aliases: Record<string, string> = {};
+  /**
+   * Faux si l'abonnement à `repo://auto-fetched` a échoué : sans lui, un
+   * auto-fetch lancé ne se terminerait jamais côté frontend, et chaque geste
+   * distant l'attendrait indéfiniment.
+   */
+  private autoFetchListening = true;
 
   /** Onglets de dépôt seuls — les seuls que le backend connaisse. */
   get repoTabs(): RepoStore[] {
@@ -2397,6 +2593,23 @@ class TabsStore {
       .catch(() => {
         /* sans abonnement, l'interface se rafraîchit comme avant : à l'activation */
       });
+    // Auto-fetch : pas de pastille sur l'onglet — personne ne l'a demandé, et
+    // seul l'onglet affiché en lance. La relecture, comme pour le disque,
+    // n'est immédiate que pour l'onglet affiché.
+    api
+      .onAutoFetched((event) => {
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        if (tab?.onAutoFetched(event) && this.activeId === tab.id) {
+          void tab.applyExternalChange();
+        }
+      })
+      .catch(() => {
+        /* sans abonnement, l'auto-fetch ne se lance pas — voir `tickAutoFetch` */
+        this.autoFetchListening = false;
+      });
+    setInterval(() => this.tickAutoFetch(), AUTO_FETCH_TICK_MS);
+    // Fenêtre réduite puis rouverte : on n'attend pas le prochain tour.
+    document.addEventListener("visibilitychange", () => this.tickAutoFetch());
 
     try {
       this.recent = await api.listRecent();
@@ -2562,6 +2775,22 @@ class TabsStore {
       /* la persistance de la session ne doit jamais bloquer la navigation */
     });
     await tab.activate();
+    // Un onglet resté caché plus longtemps que l'intervalle est récupéré dès
+    // qu'on y revient, sans attendre le tour suivant.
+    this.tickAutoFetch();
+  }
+
+  /**
+   * Un tour de la minuterie d'auto-fetch : **l'onglet affiché seulement**,
+   * comme pour les changements du disque. Dix dépôts ouverts n'ont pas à
+   * interroger dix serveurs chaque minute ; un onglet caché est rattrapé à son
+   * activation, son échéance étant passée depuis longtemps. Fenêtre réduite,
+   * rien ne part non plus — le retour la rattrape de la même façon.
+   */
+  private tickAutoFetch() {
+    if (!this.autoFetchListening || document.hidden) return;
+    const tab = this.active;
+    if (tab?.autoFetchDue(autoFetchPref.minutes, Date.now())) void tab.autoFetch();
   }
 
   /**

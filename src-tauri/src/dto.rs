@@ -336,6 +336,41 @@ pub struct FetchEvent {
     pub error: Option<AppError>,
 }
 
+/// Résultat d'un fetch de **tous** les distants — celui de l'auto-fetch.
+///
+/// Un distant injoignable n'arrête pas les autres, contrairement au mode
+/// « Fetch All » du Pull : l'auto-fetch tourne sans que personne le regarde,
+/// et un miroir hors ligne ne doit pas empêcher `origin` d'avancer. D'où
+/// `error` à côté de `updated` plutôt qu'à sa place : ce qui a bougé ailleurs
+/// a bougé, et doit être rechargé.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FetchAllReport {
+    /// Distants interrogés, qu'ils aient répondu ou non.
+    pub remotes: Vec<String>,
+    /// Références distantes déplacées, tous distants confondus.
+    pub updated: Vec<FetchedRef>,
+    /// Premier échec rencontré, les distants suivants ayant tout de même été
+    /// interrogés.
+    pub error: Option<AppError>,
+}
+
+/// Charge utile de l'événement `repo://auto-fetched`.
+///
+/// Un événement à part plutôt que `repo://fetched` : son issue ne s'affiche pas
+/// comme celle d'un Fetch — ni dialogue d'identifiants, ni bandeau, ni rien
+/// quand rien n'a bougé —, et le frontend n'a pas à deviner qui a lancé quoi.
+/// Exactement l'un des deux champs est renseigné ; `error` ne porte que ce qui
+/// a tout arrêté (aucun distant, dépôt illisible), les échecs d'un distant
+/// parmi d'autres voyageant dans le rapport.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoFetchEvent {
+    pub repo_id: String,
+    pub report: Option<FetchAllReport>,
+    pub error: Option<AppError>,
+}
+
 /// Résultat d'un push.
 ///
 /// Il n'y a pas de compteur de commits envoyés : le nombre exact est celui que
@@ -462,6 +497,13 @@ pub enum GraphLineStyle {
 /// ramène dans l'intervalle au lieu de faire échouer `prefs.json`.
 pub const GRAPH_ROUNDNESS_DEFAULT: u8 = 60;
 pub const GRAPH_ROUNDNESS_MAX: u8 = 100;
+
+/// Intervalle de l'auto-fetch, en **minutes** — le réglage de GitKraken, avec
+/// ses bornes et son défaut : toutes les minutes, jusqu'à une heure, et 0 pour
+/// ne jamais le faire. Un nombre, pour la raison habituelle : une valeur hors
+/// bornes se ramène dans l'intervalle au lieu de faire échouer `prefs.json`.
+pub const AUTO_FETCH_MINUTES_DEFAULT: u8 = 1;
+pub const AUTO_FETCH_MINUTES_MAX: u8 = 60;
 
 /// Taille du corps de texte, en **points** — l'unité des recommandations
 /// d'Apple, et celle du pixel CSS à l'échelle 1× de macOS. 13 pt est la taille

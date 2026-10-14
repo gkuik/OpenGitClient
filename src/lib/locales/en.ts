@@ -214,6 +214,12 @@ export const en = {
   "toolbar.status.pulling": "Pulling…",
   "toolbar.status.merging": "Merging…",
   "toolbar.status.pushingTag": "Pushing the tag…",
+  "toolbar.status.autoFetching": "Auto-fetching…",
+  "toolbar.fetch.auto": { one: "Auto-fetch every minute", other: "Auto-fetch every {n} minutes" },
+  "toolbar.fetch.auto.off": "Auto-fetch off",
+  "toolbar.fetch.auto.paused": "Auto-fetch paused: the remote asks for credentials — Fetch to enter them",
+  "toolbar.fetch.auto.noRemote": "Auto-fetch paused: no remote",
+  "toolbar.fetch.last": "Last fetch: {when}",
 
   // ── Colonne de gauche : branches ──────────────────────────────────────────
   "branches.local": "Local",
@@ -428,6 +434,15 @@ export const en = {
   "settings.graph.roundness.hint": "Only for rounded corners and curves",
   "settings.graph.roundness.reset": "Reset",
   "settings.graph.roundness.reset.hint": "Back to the default roundness, {n} %",
+  "settings.autoFetch": "Auto-fetch",
+  "settings.autoFetch.intro":
+    "The repository on screen fetches all of its remotes in the background at this interval. Only remote branches and tags move — {nothing}. A remote asking for credentials pauses it until the next Fetch.",
+  "settings.autoFetch.intro.nothing": "nothing is pulled, merged or checked out",
+  "settings.autoFetch.interval": "Interval",
+  "settings.autoFetch.every": { one: "Every minute", other: "Every {n} minutes" },
+  "settings.autoFetch.off": "Off",
+  "settings.autoFetch.reset": "Reset",
+  "settings.autoFetch.reset.hint": "Back to the default, every minute",
   "settings.profiles": "Profiles",
   "settings.profiles.intro":
     "A profile is an author identity: a name and an address. Choosing one for a repository writes {name} and {email} into its local configuration — so commits made outside OpenGitClient use it too. The choice is made in the commit box, on the right, or in the repository's settings. {note}, their identity living in their own configuration.",
@@ -461,6 +476,11 @@ export const en = {
     one: "{where}: {n} ref updated",
     other: "{where}: {n} refs updated",
   },
+  "op.autoFetch.updated": {
+    one: "Auto-fetch · {where}: {n} ref updated",
+    other: "Auto-fetch · {where}: {n} refs updated",
+  },
+  "op.autoFetch.paused": "Auto-fetch paused: the remote asks for credentials",
   "op.pull.fastForwarded": {
     one: "{where}: {n} commit fetched (fast-forward)",
     other: "{where}: {n} commits fetched (fast-forward)",

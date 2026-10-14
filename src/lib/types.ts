@@ -247,6 +247,27 @@ export interface FetchEvent {
 }
 
 /**
+ * Résultat d'un fetch de tous les distants — l'auto-fetch. Un distant en échec
+ * n'arrête pas les autres : `error` est le premier échec, `updated` ce que les
+ * autres ont fait bouger.
+ */
+export interface FetchAllReport {
+  remotes: string[];
+  updated: FetchedRef[];
+  error: AppError | null;
+}
+
+/**
+ * Charge utile de `repo://auto-fetched`. `error` ne porte que ce qui a tout
+ * arrêté (aucun distant, dépôt illisible).
+ */
+export interface AutoFetchEvent {
+  repoId: string;
+  report: FetchAllReport | null;
+  error: AppError | null;
+}
+
+/**
  * Ce que le bouton Pull exécute, choisi dans son menu et persisté côté Rust.
  *
  * Pas de `"rebase"` : l'entrée existe dans le menu mais désactivée, faute

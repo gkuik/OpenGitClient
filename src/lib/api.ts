@@ -3,6 +3,7 @@ import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
   AppError,
+  AutoFetchEvent,
   BranchEntry,
   CommitDetails,
   CommitGraphPage,
@@ -190,6 +191,14 @@ export const api = {
   onFetched: (handler: (event: FetchEvent) => void): Promise<UnlistenFn> =>
     listen<FetchEvent>("repo://fetched", (e) => handler(e.payload)),
   /**
+   * Auto-fetch : récupère tous les distants en tâche de fond. Même contrat que
+   * `fetchRemote` — réponse immédiate, résultat par `onAutoFetched` —, avec un
+   * événement à lui, son issue ne se montrant pas comme celle d'un Fetch.
+   */
+  autoFetch: (repoId: string) => call<void>("auto_fetch", { repoId }),
+  onAutoFetched: (handler: (event: AutoFetchEvent) => void): Promise<UnlistenFn> =>
+    listen<AutoFetchEvent>("repo://auto-fetched", (e) => handler(e.payload)),
+  /**
    * Publie la branche courante. Même contrat que `fetchRemote` : réponse
    * immédiate, résultat par `onPushed`. Le suivi est posé au premier push, et
    * un rejet du distant remonte en erreur.
@@ -276,6 +285,8 @@ export const api = {
   /** Arrondi des tracés arrondi et courbe, en pourcentage (0 → 100). */
   getGraphRoundness: () => call<number>("get_graph_roundness"),
   setGraphRoundness: (roundness: number) => call<void>("set_graph_roundness", { roundness }),
+  getAutoFetchMinutes: () => call<number>("get_auto_fetch_minutes"),
+  setAutoFetchMinutes: (minutes: number) => call<void>("set_auto_fetch_minutes", { minutes }),
   setTheme: (mode: ThemeMode) => call<void>("set_theme", { theme: mode }),
 
   /**

@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull (+ recent repos, per-repository settings — display name, identity, remotes, Git Flow —, Git Flow work branches started and finished from the repository bar, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull, plus a GitKraken-style background auto-fetch (+ recent repos, per-repository settings — display name, identity, remotes, Git Flow —, Git Flow work branches started and finished from the repository bar, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -58,7 +58,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts` and `i18n.svelte.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts`, `autoFetch.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -165,7 +165,7 @@ Frontend counterpart, and the reason the twelve components that use `repo` were 
 - methods are re-bound to the target tab on access — never cache `repo.someMethod` or destructure `repo`, capture `tabs.active` instead;
 - with no tab open, the proxy falls back to an inert `EMPTY_TAB` so components can read `repo.*` without null checks.
 
-Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness) and `projects.json` (per-repository display names, see *Two settings screens*) rounding out the five state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
+Session (open tabs, **their order**, and the active tab) is persisted next to `recent.json` in `session.json` — with `profiles.json` and `prefs.json` (the Pull button's mode, the theme, the text size, the two sidebar widths, the graph's column layout, its line style and that style's roundness, the auto-fetch interval) and `projects.json` (per-repository display names, see *Two settings screens*) rounding out the five state files. Tabs are **not** reopened by Rust at startup: the frontend replays them through `open_repository`, so a repository deleted since last run is silently dropped instead of breaking startup. Display order lives in `AppState.order` (the `HashMap` has none) and `set_tab_order` overwrites it wholesale from the frontend — but defensively: unknown ids are dropped and an open tab missing from the received list is kept at the end, so a stale list can never make a repository vanish from the session.
 
 Tab state stays in memory while the tab is open, so returning to it is instant; only `activate()` re-runs, refreshing status and branches because the working directory may have changed on disk. **`graphScrollTop` lives in the store, not in the DOM** — all tabs share one `GraphView`, so the scroll position has to be saved and restored per tab. `GraphView` guards that restore with a `restoring` flag; do **not** reintroduce `requestAnimationFrame` there, since it is suspended while the window isn't painting and would leave the flag stuck, silently discarding every later scroll.
 
@@ -253,7 +253,7 @@ Two independent selections, don't conflate them: `diffTarget` (centre) and `sele
 
 ### Fetch and push are the commands that don't do their own work
 
-`fetch` and `push` are the only network calls in the codebase, and the only `GitBackend` methods that block on something outside the machine. `commands::fetch_remote` and `commands::push_branch` therefore **reserve the repo, spawn a thread and return immediately** — running either in the command body would run it under the `AppState` mutex, freezing every tab for its duration and forever on a connection that never answers.
+`fetch` and `push` (with `pull`, the tag push and the auto-fetch, which follow the same pattern) are the only network calls in the codebase, and the only `GitBackend` methods that block on something outside the machine. `commands::fetch_remote` and `commands::push_branch` therefore **reserve the repo, spawn a thread and return immediately** — running either in the command body would run it under the `AppState` mutex, freezing every tab for its duration and forever on a connection that never answers.
 
 The thread **re-opens its own backend from the path** instead of borrowing the one in `AppState`: the tab id *is* the canonical path and `Libgit2Backend` only stores a `PathBuf`, so it never touches shared state during the network call. It releases the reservation (`AppState::begin_network` / `end_network`) **before** emitting, so the frontend can start the next one the moment it hears back.
 
@@ -284,7 +284,74 @@ Two things inside the libgit2 impl that look optional and aren't:
 - **`CredState` separates "nothing to offer" from "everything was refused."** libgit2 reports both as one generic error, but they ask different things of the user (`NoCredentials` vs `RemoteAuth`).
 - **The callbacks share their state through `Rc`**, not borrows, for the same reason `Diff::print` is used over `foreach`: they live inside the `FetchOptions` until the end of the function, so the report they fill has to outlive them.
 
-A fetch only writes `refs/remotes/**` and `FETCH_HEAD` — never the worktree, index or current branch. That's what makes it safe to trigger without asking. **Auto-*pull* would not be.** Both the sidebar's REMOTE section and the graph read those refs, so `onFetched` reloads them — `reloadRemoteRefs()`, and only when the report says a ref actually moved. The graph reload is a full reset to page 0: its pagination is only stable while refs hold still.
+A fetch only writes `refs/remotes/**` and `FETCH_HEAD` — never the worktree, index or current branch. That's what makes it safe to trigger without asking — which the auto-fetch does (see below). **Auto-*pull* would not be.** Both the sidebar's REMOTE section and the graph read those refs, so `onFetched` reloads them — `reloadRemoteRefs()`, and only when the report says a ref actually moved. The graph reload is a full reset to page 0: its pagination is only stable while refs hold still.
+
+### Auto-fetch: the repository on screen, every N minutes, without a word
+
+GitKraken's *Auto-Fetch Interval*, with the same bounds and default: every
+minute, up to 60, and 0 turns it off. A global preference in `prefs.json`
+(`auto_fetch_minutes`, clamped on read and write like the text size), set in
+Settings with a slider. `src/lib/autoFetch.ts` holds what computes alone —
+bounds, the due date, which errors suspend, the elapsed time — pure and tested;
+`autoFetch.svelte.ts` the preference; `TabsStore` the timer.
+
+- **The backend runs no timer.** `auto_fetch(repo_id)` is `fetch_remote`'s
+  twin — same network reservation, own thread, own backend — calling
+  `GitBackend::fetch_all`, and emitting **`repo://auto-fetched`**, an event of
+  its own: its outcome is not displayed like a Fetch's, and the frontend must
+  not have to guess who started what. The frontend knows what the backend doesn't:
+  which tab is on screen and whether the user is in the middle of something.
+- **Every remote, and one failing doesn't stop the others** — unlike the Pull
+  menu's *Fetch every remote*, which aborts the batch. Nobody is watching, and
+  an unreachable mirror must not keep `origin` from moving: `FetchAllReport`
+  carries `error` *beside* `updated`, not instead of it.
+- **The tab on screen only.** A 5 s tick asks the active `RepoStore` whether it
+  is due (`autoFetchDue`); ten open repositories have no business polling ten
+  servers. A hidden tab catches up on activation (`TabsStore.activate` ticks
+  once), a minimised window (`document.hidden`) on `visibilitychange`.
+- **The due date counts from the last network trip, manual or not.**
+  `lastFetchAt` is set when an auto-fetch *starts* (a slow server must not
+  shift the interval, nor a failure make it retry in a loop) and when a
+  manual fetch or pull *ends*. `0` until then: a repository just opened is
+  fetched on the first tick, as in GitKraken.
+- **Never over an operation of the app** — remote or not: `autoFetchDue`
+  requires `!busyRemote && !refreshBlocked` and no credentials dialog, and
+  `refreshBlocked` now counts `autoFetching` (it writes `refs/remotes/**`).
+  The other way round, **a remote gesture during an auto-fetch waits for it**
+  (`waitAutoFetch`, in `fetch`, `runPush`, `pull`, `pushTag` and
+  `writeRemotes`) instead of failing with `NetworkBusy` for an operation
+  nobody saw start. Its button lights at the click, as usual.
+- **Shown exactly like a manual fetch.** While it runs, Fetch lights up as
+  if clicked — accent background, spinning icon, the 2px progress bar, the
+  tab's spinner — and the report reads *Auto-fetching…*. Fetch itself is
+  disabled (a second fetch has nothing to do), but **Pull and Push stay
+  clickable**: their click waits for it. Nothing of it shows while a user's
+  remote gesture runs: that gesture's button is the lit one. All of it lasts
+  at least `AUTO_FETCH_SHOWN_MS` (one turn of the icon): a fetch with nothing
+  new answers in a few hundred milliseconds and would only flicker. **Only a
+  fetch that moved something reports**: Fetch's check flash and a green
+  *Auto-fetch · origin: n refs updated* — never "up to date", which would come
+  back every minute. Fetch's tooltip carries the rest: the interval (or
+  *off*, or *paused* and why), and *Last fetch: 3 minutes ago* from
+  `lastFetchAt` (`elapsed`, `Intl.RelativeTimeFormat`, minute resolution). No
+  unseen-outcome dot, no banner, no credentials dialog.
+- **Not stubborn.** Network errors are forgotten until the next interval —
+  they often pass by themselves. `NoCredentials`, `RemoteAuth` and `NoRemote`
+  **suspend** it for that repository (`autoFetchPause`): they wait for
+  someone, and retrying every minute would only hammer a server with failed
+  authentications. A credentials pause is reported once, in amber, when it
+  starts; a repository with no remote has nothing to be told. A successful
+  manual fetch or pull, saved credentials or a change of remotes lifts the
+  suspension — the manual Fetch is what opens the dialog.
+- **What moved is re-read through the watcher's path**, not the Fetch's:
+  `noteExternalChange({ refs: true })`, then `applyExternalChange()` for the
+  visible tab. That path already waits for an operation in progress, re-reads
+  a hidden tab only on activation, and merges with the reload the watcher
+  will ask for the same refs ~300 ms later. The pull requests are reloaded
+  too, but only when something moved.
+- **If `repo://auto-fetched` can't be subscribed to**, the timer never starts
+  one: an auto-fetch whose end never arrives would make every remote gesture
+  wait forever.
 
 ### Remote branches: listed, walked, and checked out through a tracking branch
 
@@ -582,7 +649,7 @@ saying to fetch when neither does.
 
 An editor saving, a `git checkout` at the terminal, another client: the repository moves under the app's feet, and until now that was only noticed on the next tab activation. `src-tauri/src/watcher.rs` listens to the filesystem and emits `repo://changed`, which `TabsStore` routes to the named tab — the same contract as `repo://fetched`, except nobody asked for it.
 
-**Nothing is ever fetched here.** The watcher only re-reads what is already on disk; a fetch stays an explicit action, since it writes `refs/remotes/**` and would change what "behind" means without anyone deciding to.
+**Nothing is ever fetched here.** The watcher only re-reads what is already on disk. Fetching on a timer is the auto-fetch's job, a separate mechanism with its own setting (see *Auto-fetch*) — the watcher only sees its result, like any other write to `refs/remotes/**`.
 
 - **One watcher for every tab.** `notify` takes several paths on one instance, so it is one thread in total, not one per repository. `AppState::open` registers, `AppState::close` unregisters — putting it there rather than in the command guarantees no tab can exist without it, restored sessions included.
 - **The callback never touches `AppState`.** It runs on notify's thread while a command may hold the state's `Mutex`; it only reaches the watcher's own registry, which has its own lock and is never taken in the other direction. Each watched repository owns a backend the watcher opened **itself** from the path — same move as the fetch thread, for the same reason.
@@ -613,7 +680,7 @@ The app's own writes come back as events (staging writes `.git/index`), so a red
 - **The comparison is against `branch.upstream()`, never a hardcoded `origin/<name>`** — that's what a `push` would actually target, and it's the only version that survives a fork (`upstream/main`), a second remote, or a renamed tracking branch. It's also what the `set_upstream` in `checkout_remote_branch` exists to feed.
 - **`upstream` is `Option`, and every missing piece collapses into `None`**: no upstream configured, upstream ref gone with its remote, branch with no commit. The UI draws no badge there, and draws none at zero either — a badge means work pending, never "verified in sync". `↑0` would be a claim the data can't back.
 - **Both counters come from one call, so both are shown.** Ahead answers "what would I push"; behind answers "can I fast-forward" — and behind is the half a fetch actually moves.
-- **The numbers compare two local refs**, so they're only as fresh as the last fetch. The tooltip says so ("au dernier fetch"); nothing auto-fetches.
+- **The numbers compare two local refs**, so they're only as fresh as the last fetch. The tooltip says so ("au dernier fetch"); the auto-fetch is what keeps that fetch recent.
 
 That last point is why two reloads that used to be unnecessary now are: `commit()` reloads branches (the current branch just moved a commit ahead — the moment you look at the counter), and `reloadRemoteRefs()` reloads them too (a fetch changes `behind`, and that's *all* it changes locally). Miss either and the badge lies exactly when it matters.
 
@@ -990,11 +1057,11 @@ These caused real breakage; don't undo them.
 
 Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
-first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. Nothing is auto-*pulled* either.
+first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. **The repository on screen is auto-fetched**, every minute by default (see *Auto-fetch*). Nothing is auto-*pulled*.
 
 **The app must stay standalone**: no shelling out to `git`, `ssh`, or a credential helper. Anything Git-related is libgit2/libssh2 in-process, and credentials go through `credentials.rs`. This is what rules out `Cred::credential_helper` (it runs `git credential-<helper>`) and what any new auth path has to satisfy.
 
-The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Text size*, *Graph* (the line style, segmented like the theme, and its roundness), *Profiles*, then *Access tokens*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. **Settings is a tab like any other** — `SettingsTab`, frontend-only for the same reason as `NewTab` (no repository, so no id for the backend), appended at the end of the bar, reorderable, closed by its ×, and not restored at startup. **There is only ever one**: its id is the fixed `"settings"`, and the gear (`TabsStore.openSettings()`, also what *Manage profiles…* and the PR section's link call) activates the existing tab rather than opening a second, the same rule as a repository already open. The gear is no longer a toggle — it stays lit while that tab is shown, and one leaves Settings like any tab. It lists one row per host found among the **open** tabs; the list is built on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts) — and since `App.svelte` unmounts `SettingsView` whenever another tab is shown, coming back to it rebuilds the list, so a repository opened in between shows up.
+The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Text size*, *Graph* (the line style, segmented like the theme, and its roundness), *Auto-fetch* (the interval, a slider from *Off* to 60 minutes), *Profiles*, then *Access tokens*: the theme and the text size are picked there (segmented controls — exclusive options, one always active), profiles are created, and tokens entered, replaced and forgotten. **Settings is a tab like any other** — `SettingsTab`, frontend-only for the same reason as `NewTab` (no repository, so no id for the backend), appended at the end of the bar, reorderable, closed by its ×, and not restored at startup. **There is only ever one**: its id is the fixed `"settings"`, and the gear (`TabsStore.openSettings()`, also what *Manage profiles…* and the PR section's link call) activates the existing tab rather than opening a second, the same rule as a repository already open. The gear is no longer a toggle — it stays lit while that tab is shown, and one leaves Settings like any tab. It lists one row per host found among the **open** tabs; the list is built on mount rather than in an `$effect`, which would loop (the load reads the rows it then rewrites, to keep manually added hosts) — and since `App.svelte` unmounts `SettingsView` whenever another tab is shown, coming back to it rebuilds the list, so a repository opened in between shows up.
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab or the repository bar's Stash button, and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 

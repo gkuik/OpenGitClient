@@ -277,9 +277,10 @@
       >
         {#if tab.kind === "settings"}
           {@render gear("tab-ic")}
-        {:else if tab.kind === "repo" && tab.busyRemote}
+        {:else if tab.kind === "repo" && (tab.busyRemote || tab.autoFetchShown)}
           <!-- Une opération distante tourne dans ce dépôt — utile surtout quand
-               on l'a quitté pour un autre onglet entre-temps. -->
+               on l'a quitté pour un autre onglet entre-temps. L'auto-fetch a le
+               même spinner que le fetch cliqué. -->
           <span class="spinner" role="status" aria-label={t("tabbar.busy")} title={t("tabbar.busy")}></span>
         {:else if tab.kind === "repo" && tab.unseenOutcome && !active}
           <!-- Elle s'est terminée pendant qu'on était ailleurs : la couleur en
