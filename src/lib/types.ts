@@ -219,13 +219,14 @@ export interface StashEntry {
   oid: string;
 }
 
-/** Référence distante déplacée par un fetch. */
+/** Référence distante déplacée par un fetch — ou supprimée par son prune. */
 export interface FetchedRef {
   /** Nom complet ("refs/remotes/origin/main"). */
   name: string;
   /** OID avant le fetch ; null si la référence vient d'apparaître. */
   oldOid: string | null;
-  newOid: string;
+  /** OID après le fetch ; null si la branche a disparu du serveur (élaguée). */
+  newOid: string | null;
 }
 
 /** Résultat d'un fetch. `updated` vide = le distant n'a pas bougé. */

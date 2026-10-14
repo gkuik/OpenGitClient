@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use git2::{
     build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
-    DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions,
+    DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions, FetchPrune,
     IndexAddOption, ObjectType, Oid, PushOptions, Reference, Remote, RemoteCallbacks, Repository,
     RepositoryState, ResetType, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
 };
@@ -1498,11 +1498,12 @@ fn fetch_one(repo: &Repository, name: &str) -> Result<Vec<FetchedRef>, AppError>
     {
         let updated = Rc::clone(&updated);
         callbacks.update_tips(move |name, old, new| {
-            // `old` est nul quand la référence vient d'apparaître.
+            // `old` est nul quand la référence vient d'apparaître, `new` quand
+            // le prune vient de la supprimer.
             updated.borrow_mut().push(FetchedRef {
                 name: name.to_string(),
                 old_oid: (!old.is_zero()).then(|| old.to_string()),
-                new_oid: new.to_string(),
+                new_oid: (!new.is_zero()).then(|| new.to_string()),
             });
             true
         });
@@ -1518,9 +1519,12 @@ fn fetch_one(repo: &Repository, name: &str) -> Result<Vec<FetchedRef>, AppError>
 
     let mut options = FetchOptions::new();
     options.remote_callbacks(callbacks);
-    // Pas de prune automatique : Git ne le fait pas non plus par défaut, et
-    // supprimer des références sans que l'utilisateur l'ait demandé serait une
-    // surprise désagréable.
+    // Prune systématique, comme GitKraken par défaut (et `git fetch --prune`) :
+    // une branche supprimée sur le serveur disparaît de `refs/remotes/**`.
+    // Sans lui, elle restait affichée pour toujours, fetch après fetch. Rien de
+    // local n'est perdu — une référence distante n'est que le reflet du
+    // serveur ; les branches locales, elles, ne sont jamais touchées.
+    options.prune(FetchPrune::On);
 
     // Refspecs vides = celles configurées pour ce distant, comme `git fetch`.
     let refspecs: [&str; 0] = [];
@@ -3971,7 +3975,40 @@ mod tests {
         // La référence existait déjà : son OID précédent est renseigné.
         let moved = &report.updated[0];
         assert!(moved.old_oid.is_some());
-        assert_ne!(moved.old_oid.as_deref(), Some(moved.new_oid.as_str()));
+        assert_ne!(moved.old_oid, moved.new_oid);
+
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn fetch_prunes_a_branch_deleted_on_the_remote() {
+        let (origin_dir, local_dir, git) = repo_with_remote();
+        let origin = Repository::open(&origin_dir).unwrap();
+        let head = origin.head().unwrap().peel_to_commit().unwrap();
+        origin.branch("feature/x", &head, false).unwrap();
+
+        git.fetch(None).unwrap();
+        let names = |git: &Libgit2Backend| -> Vec<String> {
+            git.remote_branches().unwrap().into_iter().map(|b| b.name).collect()
+        };
+        assert!(names(&git).contains(&"origin/feature/x".to_string()));
+
+        // Supprimée sur le serveur : le fetch suivant l'élague, et le dit.
+        origin
+            .find_branch("feature/x", BranchType::Local)
+            .unwrap()
+            .delete()
+            .unwrap();
+        let report = git.fetch(None).unwrap();
+        let pruned = report
+            .updated
+            .iter()
+            .find(|r| r.name == "refs/remotes/origin/feature/x")
+            .expect("la référence élaguée est signalée");
+        assert!(pruned.old_oid.is_some());
+        assert!(pruned.new_oid.is_none());
+        assert!(!names(&git).contains(&"origin/feature/x".to_string()));
 
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
