@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
-    AutoFetchEvent, BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
+    AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
@@ -938,6 +938,62 @@ pub fn has_credentials(host: String) -> bool {
     crate::credentials::has(&host)
 }
 
+/// Vérifie que le serveur accepte les identifiants enregistrés pour cet hôte —
+/// le bouton *Test* des Réglages.
+///
+/// Une forge reconnue est interrogée sur son API, qui dit à qui appartient le
+/// jeton et quelles portées il a ; c'est aussi le seul chemin pour un hôte
+/// ajouté à la main, sans dépôt ouvert. Tout autre hôte est testé par une
+/// connexion Git au distant `remote` de l'onglet `repo_id`, en vue d'un push.
+///
+/// **La seule commande `async` qui touche au réseau**, et c'est délibéré : les
+/// autres rendent la main tout de suite et répondent par un événement, parce
+/// que leur résultat concerne un onglet qui n'est peut-être plus à l'écran.
+/// Celui-ci n'intéresse que le bouton qui l'a demandé — une question, une
+/// réponse. Le travail part sur `spawn_blocking`, si bien que ni le thread
+/// principal ni un ouvrier de l'exécuteur ne bloquent sur le réseau, et le
+/// verrou de l'état n'est pris que le temps de vérifier que l'onglet existe,
+/// bien avant le premier `await`.
+#[tauri::command]
+pub async fn test_credentials(
+    host: String,
+    repo_id: Option<String>,
+    remote: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<CredentialCheck, AppError> {
+    let target = match (repo_id, remote) {
+        (Some(id), Some(name)) if !crate::forge::is_forge_host(&host) => {
+            lock(&state)?.backend(&id)?;
+            Some((id, name))
+        }
+        _ => None,
+    };
+
+    tauri::async_runtime::spawn_blocking(move || match target {
+        // L'identifiant d'un onglet *est* le chemin canonique du dépôt : le
+        // thread rouvre le sien, comme celui d'un fetch.
+        Some((id, name)) => {
+            let backend = crate::git::open_repository(Path::new(&id))?;
+            Ok(CredentialCheck {
+                login: None,
+                missing_scopes: Vec::new(),
+                authenticated: backend.check_remote(&name)?,
+            })
+        }
+        None => crate::forge::check_token(&host),
+    })
+    .await
+    .map_err(|e| AppError::Io(e.to_string()))?
+}
+
+/// Page de la forge qui crée un jeton pour cet hôte, `None` si l'hôte n'est pas
+/// une forge reconnue. L'écran Paramètres en tire un lien, ouvert ensuite par
+/// `open_forge_page`.
+#[tauri::command]
+pub fn token_page(host: String) -> Option<String> {
+    crate::forge::token_page(&host)
+}
+
 // ── Profils d'auteur ────────────────────────────────────────────────────────
 
 #[tauri::command]
@@ -1148,15 +1204,16 @@ pub fn load_pull_requests(
     Ok(())
 }
 
-/// Ouvre la page web d'une pull request dans le navigateur du système.
+/// Ouvre une page web de forge dans le navigateur du système — celle d'une
+/// pull request, ou celle qui crée un jeton.
 ///
 /// C'est la seule chose que l'application ouvre à l'extérieur, et le filtre est
 /// ici plutôt que dans les capacités : le plugin `opener` n'est **pas**
 /// enregistré, donc le webview n'a aucune commande « ouvre cette URL » à sa
-/// disposition — il ne peut demander que ce que celle-ci accepte, à savoir la
+/// disposition — il ne peut demander que ce que celle-ci accepte, à savoir une
 /// page d'une forge reconnue.
 #[tauri::command]
-pub fn open_pull_request(url: String) -> Result<(), AppError> {
+pub fn open_forge_page(url: String) -> Result<(), AppError> {
     if !crate::forge::is_openable(&url) {
         return Err(AppError::Io(format!("Address refused: {url}")));
     }

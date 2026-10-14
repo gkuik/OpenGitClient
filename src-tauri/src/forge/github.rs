@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-use super::{ForgeBackend, ForgeRemote};
+use super::{ForgeAccount, ForgeBackend, ForgeRemote};
 use crate::dto::{PullRequestEntry, PullRequestReport};
 use crate::error::AppError;
 
@@ -45,52 +45,100 @@ impl GitHub {
         Self { remote, token }
     }
 
-    fn agent(&self) -> ureq::Agent {
-        ureq::Agent::config_builder()
-            .timeout_global(Some(TIMEOUT))
-            .user_agent(USER_AGENT)
-            .build()
-            .into()
-    }
-
     /// GET + désérialisation JSON, en-têtes d'authentification compris.
     fn get<T: serde::de::DeserializeOwned>(&self, agent: &ureq::Agent, url: &str) -> Result<T, AppError> {
-        let mut response = agent
-            .get(url)
-            .header("Authorization", &format!("Bearer {}", self.token))
-            .header("Accept", "application/vnd.github+json")
-            .header("X-GitHub-Api-Version", API_VERSION)
-            .call()
-            .map_err(|e| self.map_error(e))?;
-        response
-            .body_mut()
-            .read_json::<T>()
-            .map_err(|e| AppError::Network(format!("Unreadable GitHub response: {e}")))
+        let mut response = send(agent, url, &self.token)
+            .map_err(|e| map_error(e, &self.remote.host, Some(&self.remote.slug())))?;
+        read_json(&mut response)
     }
+}
 
-    /// Traduit l'erreur de transport en erreur applicative.
-    ///
-    /// Les trois cas séparés ici ne se règlent pas de la même façon : un jeton
-    /// refusé se ressaisit, un dépôt invisible demande une *portée* de jeton, et
-    /// le reste n'est qu'une panne de réseau. Les confondre laisserait
-    /// l'utilisateur ressaisir un jeton parfaitement valide.
-    fn map_error(&self, e: ureq::Error) -> AppError {
-        match e {
-            ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => {
-                AppError::ForgeAuth(self.remote.host.clone())
-            }
-            ureq::Error::StatusCode(404) => AppError::ForgeNotFound(self.remote.slug()),
-            ureq::Error::StatusCode(code) => {
-                AppError::Network(format!("GitHub replied {code}"))
-            }
-            other => AppError::Network(other.to_string()),
+fn agent() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .user_agent(USER_AGENT)
+        .build()
+        .into()
+}
+
+/// GET authentifié, réponse brute : `account` en lit un en-tête, pas seulement
+/// le corps.
+fn send(
+    agent: &ureq::Agent,
+    url: &str,
+    token: &str,
+) -> Result<ureq::http::Response<ureq::Body>, ureq::Error> {
+    agent
+        .get(url)
+        .header("Authorization", &format!("Bearer {token}"))
+        .header("Accept", "application/vnd.github+json")
+        .header("X-GitHub-Api-Version", API_VERSION)
+        .call()
+}
+
+fn read_json<T: serde::de::DeserializeOwned>(
+    response: &mut ureq::http::Response<ureq::Body>,
+) -> Result<T, AppError> {
+    response
+        .body_mut()
+        .read_json::<T>()
+        .map_err(|e| AppError::Network(format!("Unreadable GitHub response: {e}")))
+}
+
+/// Traduit l'erreur de transport en erreur applicative.
+///
+/// Les trois cas séparés ici ne se règlent pas de la même façon : un jeton
+/// refusé se ressaisit, un dépôt invisible demande une *portée* de jeton, et
+/// le reste n'est qu'une panne de réseau. Les confondre laisserait
+/// l'utilisateur ressaisir un jeton parfaitement valide. `slug` est le dépôt
+/// demandé, absent quand la requête ne concerne que le compte.
+fn map_error(e: ureq::Error, host: &str, slug: Option<&str>) -> AppError {
+    match e {
+        ureq::Error::StatusCode(401) | ureq::Error::StatusCode(403) => {
+            AppError::ForgeAuth(host.to_string())
         }
+        ureq::Error::StatusCode(404) if slug.is_some() => {
+            AppError::ForgeNotFound(slug.unwrap_or_default().to_string())
+        }
+        ureq::Error::StatusCode(code) => AppError::Network(format!("GitHub replied {code}")),
+        other => AppError::Network(other.to_string()),
     }
+}
+
+/// Compte auquel appartient le jeton, et ses portées.
+///
+/// Une seule requête, `GET /user` : elle échoue en 401 sur un jeton expiré ou
+/// révoqué, et sa réponse porte en en-tête (`X-OAuth-Scopes`) les portées d'un
+/// jeton *classique*. Un jeton « fine-grained » n'en publie aucune — ses droits
+/// sont par dépôt —, d'où `None` plutôt qu'une liste vide qui dirait « aucune ».
+pub fn account(api: &str, host: &str, token: &str) -> Result<ForgeAccount, AppError> {
+    let mut response =
+        send(&agent(), &format!("{api}/user"), token).map_err(|e| map_error(e, host, None))?;
+    let scopes = response
+        .headers()
+        .get("x-oauth-scopes")
+        .and_then(|v| v.to_str().ok())
+        .map(parse_scopes);
+    let viewer: Account = read_json(&mut response)?;
+    Ok(ForgeAccount {
+        login: viewer.login,
+        scopes,
+    })
+}
+
+/// `"repo, workflow"` → `["repo", "workflow"]`.
+fn parse_scopes(header: &str) -> Vec<String> {
+    header
+        .split(',')
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(str::to_string)
+        .collect()
 }
 
 impl ForgeBackend for GitHub {
     fn pull_requests(&self) -> Result<PullRequestReport, AppError> {
-        let agent = self.agent();
+        let agent = agent();
 
         // L'identité du jeton, et non le nom d'utilisateur enregistré à côté :
         // c'est elle qui décide de « mes » PR, et elle seule ne peut pas être
@@ -236,5 +284,11 @@ mod tests {
         // distingue une PR fusionnée d'une PR abandonnée.
         assert!(prs[1].closed && prs[1].merged);
         assert!(!prs[1].mine && prs[1].assigned);
+    }
+
+    #[test]
+    fn parses_the_scopes_header() {
+        assert_eq!(parse_scopes("repo, workflow"), ["repo", "workflow"]);
+        assert_eq!(parse_scopes(""), Vec::<String>::new());
     }
 }

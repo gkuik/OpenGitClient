@@ -94,6 +94,8 @@ pub fn run() {
             commands::set_credentials,
             commands::forget_credentials,
             commands::has_credentials,
+            commands::token_page,
+            commands::test_credentials,
             commands::list_profiles,
             commands::save_profile,
             commands::delete_profile,
@@ -110,7 +112,7 @@ pub fn run() {
             commands::commit_file_diff,
             commands::file_content,
             commands::load_pull_requests,
-            commands::open_pull_request,
+            commands::open_forge_page,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage de l'application Tauri");

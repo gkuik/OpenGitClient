@@ -14,7 +14,13 @@
   import { tabs } from "../stores/repo.svelte";
   import { theme } from "../theme.svelte";
   import RichText from "./RichText.svelte";
-  import type { AppError, GraphLineStyle, Profile, ThemeMode } from "../types";
+  import type {
+    AppError,
+    CredentialCheck,
+    GraphLineStyle,
+    Profile,
+    ThemeMode,
+  } from "../types";
 
   /** Les trois thèmes proposés, dans l'ordre d'affichage du segmenté. */
   const THEMES: { mode: ThemeMode; label: string }[] = $derived([
@@ -94,7 +100,20 @@
     /** Dépôts ouverts qui pointent dessus — sert à situer l'hôte d'un coup d'œil. */
     repos: string[];
     stored: boolean;
+    /** Page de la forge qui crée un jeton pour cet hôte ; `null` hors forge. */
+    tokenPage: string | null;
+    /**
+     * Distant HTTP(S) d'un onglet ouvert sur cet hôte : de quoi tester les
+     * identifiants par Git quand il n'y a pas de forge à interroger.
+     */
+    gitRemote: { repoId: string; remote: string; repo: string } | null;
   };
+
+  /** Dernier test d'un hôte, affiché sous sa ligne. */
+  type Check =
+    | { kind: "running" }
+    | { kind: "done"; result: CredentialCheck }
+    | { kind: "failed"; error: AppError };
 
   let rows = $state<HostRow[]>([]);
   let loading = $state(true);
@@ -107,6 +126,9 @@
   let saving = $state(false);
   /** Suppression confirmée en deux temps, faute de dialogue natif déclaré. */
   let confirmForget = $state(false);
+
+  /** Tests par hôte. Un résultat reste affiché jusqu'à la prochaine saisie. */
+  let checks = $state<Record<string, Check>>({});
 
   // Hôte ajouté à la main, pour un dépôt qui n'est pas ouvert.
   let newHost = $state("");
@@ -132,9 +154,14 @@
           host: remote.host,
           repos: [],
           stored: remote.hasCredentials,
+          tokenPage: remote.forge ? await api.tokenPage(remote.host).catch(() => null) : null,
+          gitRemote: null,
         };
         const name = tab.displayName;
         if (name && !row.repos.includes(name)) row.repos.push(name);
+        if (!row.gitRemote && remote.usesHttp) {
+          row.gitRemote = { repoId: tab.repoId, remote: remote.name, repo: name ?? tab.repoId };
+        }
         found.set(remote.host, row);
       } catch {
         /* dépôt sans distant : rien à paramétrer */
@@ -156,6 +183,7 @@
 
   function edit(host: string) {
     editing = host;
+    delete checks[host];
     username = "";
     secret = "";
     confirmForget = false;
@@ -203,7 +231,43 @@
     }
   }
 
+  /** Ouvre la page de création d'un jeton dans le navigateur du système. */
+  async function openTokenPage(url: string) {
+    error = null;
+    try {
+      await api.openForgePage(url);
+    } catch (e) {
+      error = e as AppError;
+    }
+  }
+
+  /**
+   * Testable : une forge se teste sur son API, sans dépôt ; un autre hôte n'a
+   * que Git, donc un onglet ouvert dessus. Un hôte ajouté à la main hors forge
+   * n'a ni l'un ni l'autre.
+   */
+  function testable(row: HostRow): boolean {
+    return row.stored && (row.tokenPage !== null || row.gitRemote !== null);
+  }
+
+  async function test(row: HostRow) {
+    if (checks[row.host]?.kind === "running") return;
+    checks[row.host] = { kind: "running" };
+    try {
+      const result = await api.testCredentials(
+        row.host,
+        row.gitRemote?.repoId ?? null,
+        row.gitRemote?.remote ?? null,
+      );
+      checks[row.host] = { kind: "done", result };
+    } catch (e) {
+      checks[row.host] = { kind: "failed", error: e as AppError };
+    }
+  }
+
   async function refresh(host: string) {
+    // Les identifiants viennent de changer : l'ancien verdict ne vaut plus.
+    delete checks[host];
     const stored = await api.hasCredentials(host).catch(() => false);
     rows = rows.map((row) => (row.host === host ? { ...row, stored } : row));
   }
@@ -214,8 +278,11 @@
       newHost = "";
       return;
     }
-    const stored = await api.hasCredentials(host).catch(() => false);
-    rows = [...rows, { host, repos: [], stored }].sort((a, b) =>
+    const [stored, tokenPage] = await Promise.all([
+      api.hasCredentials(host).catch(() => false),
+      api.tokenPage(host).catch(() => null),
+    ]);
+    rows = [...rows, { host, repos: [], stored, tokenPage, gitRemote: null }].sort((a, b) =>
       a.host.localeCompare(b.host),
     );
     newHost = "";
@@ -507,11 +574,58 @@
               {#if editing === row.host}
                 <button class="ghost" onclick={cancel}>{t("action.cancel")}</button>
               {:else}
+                {#if testable(row)}
+                  <button
+                    class="ghost"
+                    title={t("settings.tokens.test.title")}
+                    disabled={checks[row.host]?.kind === "running"}
+                    onclick={() => test(row)}
+                  >
+                    {t("settings.tokens.test")}
+                  </button>
+                {/if}
                 <button class="ghost" onclick={() => edit(row.host)}>
                   {row.stored ? t("settings.tokens.replace") : t("settings.tokens.set")}
                 </button>
               {/if}
             </div>
+
+            {#if checks[row.host] && editing !== row.host}
+              {@const check = checks[row.host]}
+              {#if check.kind === "running"}
+                <p class="check">{t("settings.tokens.test.running")}</p>
+              {:else if check.kind === "failed"}
+                <p class="check failed">{errorMessage(check.error)}</p>
+              {:else if check.result.login !== null}
+                {@const missing = check.result.missingScopes}
+                <p class="check" class:ok={missing.length === 0} class:warn={missing.length > 0}>
+                  {#if missing.length === 0}
+                    <RichText
+                      key="settings.tokens.test.account"
+                      params={{ login: { text: check.result.login, tag: "strong" } }}
+                    />
+                  {:else}
+                    <RichText
+                      key="settings.tokens.test.scopes"
+                      params={{
+                        login: { text: check.result.login, tag: "strong" },
+                        scopes: { text: missing.join(", "), tag: "code" },
+                        n: missing.length,
+                      }}
+                    />
+                  {/if}
+                </p>
+              {:else if row.gitRemote}
+                <p class="check" class:ok={check.result.authenticated}>
+                  {t(
+                    check.result.authenticated
+                      ? "settings.tokens.test.remote"
+                      : "settings.tokens.test.anonymous",
+                    { remote: row.gitRemote.remote, repo: row.gitRemote.repo },
+                  )}
+                </p>
+              {/if}
+            {/if}
 
             {#if editing === row.host}
               <form
@@ -534,6 +648,17 @@
                   {t("settings.tokens.secret")}
                   <input type="password" autocomplete="off" bind:value={secret} />
                 </label>
+                {#if row.tokenPage}
+                  {@const url = row.tokenPage}
+                  <button
+                    type="button"
+                    class="link"
+                    title={t("settings.tokens.create.title")}
+                    onclick={() => openTokenPage(url)}
+                  >
+                    {t("settings.tokens.create", { host: row.host })} ↗
+                  </button>
+                {/if}
 
                 <div class="actions">
                   {#if row.stored}
@@ -856,6 +981,33 @@
   .slider .ghost:disabled {
     opacity: 0.45;
     cursor: default;
+  }
+  /* Verdict du dernier test, sous la ligne de l'hôte. */
+  .check {
+    margin: 0.5rem 0 0;
+    font-size: 0.76rem;
+    color: var(--text-faint);
+  }
+  .check.ok {
+    color: var(--ok-soft);
+  }
+  .check.warn {
+    color: var(--warn);
+  }
+  .check.failed {
+    color: var(--danger-soft);
+  }
+
+  /* Un lien, pas une action du formulaire : ni cadre, ni fond. */
+  .link {
+    align-self: flex-start;
+    padding: 0;
+    background: none;
+    color: var(--accent);
+    font-size: 0.76rem;
+  }
+  .link:hover {
+    text-decoration: underline;
   }
   .primary {
     background: var(--accent);

@@ -480,6 +480,16 @@ export interface RemoteInfo {
   forge: ForgeKind | null;
 }
 
+/** Résultat du bouton *Test* d'un hôte, dans les Réglages (miroir de `dto::CredentialCheck`). */
+export interface CredentialCheck {
+  /** Compte auquel appartient le jeton — quand c'est une forge qui répond. */
+  login: string | null;
+  /** Portées recommandées que le jeton n'a pas ; vide si rien ne manque ou si la forge ne le dit pas. */
+  missingScopes: string[];
+  /** `false` : le serveur a répondu sans réclamer d'identifiants, ils n'ont pas été éprouvés. */
+  authenticated: boolean;
+}
+
 /** Forge reconnue par le backend. Une seule pour l'instant. */
 export type ForgeKind = "gitHub";
 

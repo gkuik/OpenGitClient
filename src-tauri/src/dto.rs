@@ -861,6 +861,22 @@ pub struct RemoteInfo {
     pub forge: Option<crate::forge::ForgeKind>,
 }
 
+/// Résultat du bouton *Test* d'un hôte, dans les Réglages.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CredentialCheck {
+    /// Compte auquel appartient le jeton — quand c'est une forge qui répond.
+    /// Un serveur Git ne dit pas qui il a reconnu, seulement qu'il a accepté.
+    pub login: Option<String>,
+    /// Portées recommandées que le jeton n'a pas (`repo`, `workflow`). Vide
+    /// quand rien ne manque, ou quand la forge ne publie pas ces portées.
+    pub missing_scopes: Vec<String>,
+    /// Le serveur a-t-il réclamé des identifiants ? `false` veut dire qu'il a
+    /// répondu sans en demander : la connexion marche, mais les identifiants
+    /// enregistrés n'ont pas été mis à l'épreuve.
+    pub authenticated: bool,
+}
+
 /// Profil d'auteur : une identité Git réutilisable d'un dépôt à l'autre.
 ///
 /// Sérialisé dans `profiles.json` à côté des récents et de la session, d'où le

@@ -25,7 +25,7 @@ pub mod github;
 
 use serde::{Deserialize, Serialize};
 
-use crate::dto::PullRequestReport;
+use crate::dto::{CredentialCheck, PullRequestReport};
 use crate::error::AppError;
 
 /// Forge reconnue derrière un dépôt distant.
@@ -58,6 +58,14 @@ impl ForgeRemote {
     pub fn slug(&self) -> String {
         format!("{}/{}", self.owner, self.repo)
     }
+}
+
+/// Compte auquel appartient un jeton, tel que la forge le décrit.
+pub struct ForgeAccount {
+    pub login: String,
+    /// Portées du jeton, quand la forge les publie — `None` pour un jeton qui
+    /// n'en a pas au sens classique (« fine-grained » chez GitHub).
+    pub scopes: Option<Vec<String>>,
 }
 
 /// Ce qu'on sait demander à une forge. Volontairement minuscule : lister les
@@ -156,7 +164,7 @@ pub fn open(remote: &ForgeRemote) -> Result<Box<dyn ForgeBackend>, AppError> {
 
 /// L'URL peut-elle être ouverte dans le navigateur du système ?
 ///
-/// Garde-fou de `open_pull_request` : seules les pages web d'une forge reconnue
+/// Garde-fou de `open_forge_page` : seules les pages web d'une forge reconnue
 /// passent. Les URLs viennent pourtant de nos propres réponses — mais c'est
 /// justement le genre de chaîne qu'on ne veut pas voir devenir un « ouvre
 /// n'importe quoi » si une réponse d'API change de forme.
@@ -166,6 +174,67 @@ pub fn is_openable(url: &str) -> bool {
     };
     let host = rest.split(['/', '?', '#']).next().unwrap_or_default();
     is_github_host(host)
+}
+
+/// L'hôte est-il une forge reconnue ? Même règle que [`detect`], sur un hôte nu.
+pub fn is_forge_host(host: &str) -> bool {
+    is_github_host(host)
+}
+
+/// Vérifie le jeton enregistré pour cet hôte auprès de l'API de la forge.
+///
+/// Ne demande rien de propre à un dépôt : le jeton est celui de l'hôte, et un
+/// hôte ajouté à la main dans les Réglages n'a aucun dépôt ouvert derrière lui.
+/// **Bloquant sur le réseau** : jamais dans le corps synchrone d'une commande.
+pub fn check_token(host: &str) -> Result<CredentialCheck, AppError> {
+    if !is_forge_host(host) {
+        return Err(AppError::ForgeUnsupported);
+    }
+    let token = crate::credentials::get(host)
+        .map(|c| c.secret)
+        .ok_or_else(|| AppError::ForgeToken(host.to_string()))?;
+    let account = github::account(&api_base(host), host, &token)?;
+    Ok(CredentialCheck {
+        missing_scopes: missing_scopes(account.scopes.as_deref()),
+        login: Some(account.login),
+        authenticated: true,
+    })
+}
+
+/// Portées recommandées ([`TOKEN_SCOPES`]) que le jeton n'a pas. Rien quand la
+/// forge ne publie pas les portées du jeton : on ne signale pas un manque
+/// qu'on ne voit pas.
+fn missing_scopes(granted: Option<&[String]>) -> Vec<String> {
+    let Some(granted) = granted else {
+        return Vec::new();
+    };
+    TOKEN_SCOPES
+        .split(',')
+        .filter(|wanted| !granted.iter().any(|g| g == wanted))
+        .map(str::to_string)
+        .collect()
+}
+
+/// Portées cochées d'avance sur la page de création d'un jeton : `repo` pour
+/// lire les pull requests d'un dépôt privé et pour le transport HTTPS,
+/// `workflow` parce que GitHub refuse sans elle tout push qui touche à
+/// `.github/workflows/` — un refus qu'on découvrirait au pire moment.
+const TOKEN_SCOPES: &str = "repo,workflow";
+
+/// Page de la forge qui crée un jeton pour cet hôte, portées pré-cochées.
+///
+/// `None` pour un hôte qui n'est pas une forge reconnue : on ne devine pas
+/// l'adresse d'une page de réglages chez quelqu'un qu'on ne connaît pas. Une
+/// instance Enterprise sert la même page sous son propre domaine. Le jeton
+/// proposé est un jeton *classique* : seul ce formulaire accepte ses portées en
+/// paramètres, celui des jetons « fine-grained » n'en lit aucune.
+pub fn token_page(host: &str) -> Option<String> {
+    if !is_forge_host(host) {
+        return None;
+    }
+    Some(format!(
+        "https://{host}/settings/tokens/new?scopes={TOKEN_SCOPES}&description=OpenGitClient"
+    ))
 }
 
 #[cfg(test)]
@@ -219,5 +288,27 @@ mod tests {
         assert!(!is_openable("http://github.com/o/r/pull/12"));
         assert!(!is_openable("https://exemple.test/o/r/pull/12"));
         assert!(!is_openable("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn token_page_is_built_for_forges_only() {
+        assert_eq!(
+            token_page("github.com").as_deref(),
+            Some("https://github.com/settings/tokens/new?scopes=repo,workflow&description=OpenGitClient")
+        );
+        let enterprise = token_page("github.psa-cloud.com").unwrap();
+        assert!(enterprise.starts_with("https://github.psa-cloud.com/settings/tokens/new?"));
+        // Elle doit passer le garde-fou d'ouverture, sinon le lien serait mort.
+        assert!(is_openable(&enterprise));
+        assert!(token_page("gitlab.com").is_none());
+    }
+
+    #[test]
+    fn reports_only_the_scopes_it_can_see_missing() {
+        let granted = vec!["repo".to_string(), "gist".to_string()];
+        assert_eq!(missing_scopes(Some(&granted)), ["workflow"]);
+        assert!(missing_scopes(Some(&["repo".into(), "workflow".into()])).is_empty());
+        // Jeton fine-grained : aucune portée publiée, aucun manque à signaler.
+        assert!(missing_scopes(None).is_empty());
     }
 }
