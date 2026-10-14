@@ -25,8 +25,16 @@
     tirets à la création (`flowBranchName`), d'où un contrôle plus souple.
   */
   const flow = $derived(prompt?.flow ?? null);
+  /** Renommage : le nom actuel. La barre est la même, le champ part de lui. */
+  const rename = $derived(prompt?.rename ?? null);
   const label = $derived(
-    prompt ? (flow ? t(`flow.start.${flow}`, { from: prompt.from }) : t("branch.create.label", { from: prompt.from })) : "",
+    !prompt
+      ? ""
+      : rename !== null
+        ? t("branch.rename.label", { from: rename })
+        : flow
+          ? t(`flow.start.${flow}`, { from: prompt.from })
+          : t("branch.create.label", { from: prompt.from }),
   );
   const placeholder = $derived(flow ? t(`flow.start.name.${flow}`) : t("branch.create.name"));
 
@@ -39,15 +47,22 @@
   $effect(() => {
     if (!prompt) return;
     void prompt.oid;
-    name = "";
+    name = prompt.rename ?? "";
     input?.focus();
+    // Un renommage part du nom actuel, sélectionné : taper le remplace, les
+    // flèches le retouchent.
+    if (prompt.rename !== undefined) input?.select();
   });
 
   // Un nom vide ou avec un espace n'est pas une référence : le bouton reste
   // gris plutôt que de laisser le backend refuser après coup. Le reste des
   // règles (`..`, `~`, `:`…) est vérifié par le backend, qui nomme le refus.
   const valid = $derived(
-    name.trim().length > 0 && (flow !== null || !/\s/.test(name.trim())) && !repo.checkingOut,
+    name.trim().length > 0 &&
+      (flow !== null || !/\s/.test(name.trim())) &&
+      !repo.checkingOut &&
+      // Le même nom ne renomme rien.
+      name.trim() !== rename,
   );
 
   function submit() {
@@ -89,7 +104,7 @@
       onkeydown={onKey}
     />
     <button type="submit" class="submit" disabled={!valid}>
-      {t("branch.create.submit")}
+      {rename !== null ? t("branch.rename.submit") : t("branch.create.submit")}
     </button>
     <button type="button" class="cancel" onclick={() => repo.cancelBranch()}>
       {t("action.cancel")}

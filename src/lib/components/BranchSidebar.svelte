@@ -114,7 +114,7 @@
   // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
   // ici, une fois pour la colonne, comme celui des stashes.
   const MERGE_MENU_W = 300;
-  const MERGE_MENU_H = 300;
+  const MERGE_MENU_H = 520;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const mergeMenuPos = $derived(
@@ -162,6 +162,68 @@
   async function runPull(branch: string) {
     branchMerge.close();
     await repo.pull(pullEntryMode, branch);
+  }
+
+  // ── Autres entrées du menu d'une branche ────────────────────────────────────
+  // Chacune referme le menu puis délègue au store : rien ici ne parle au
+  // backend, sauf le presse-papiers, qui est l'affaire de l'interface.
+
+  // Un « Finish » écrit le working directory : il attend que rien d'autre ne
+  // l'écrive, et qu'aucune fusion ne soit en cours.
+  const canFinish = $derived(
+    !repo.checkingOut && !repo.busy && !repo.mergingBranches && !repo.flowRunning && !repo.merging,
+  );
+
+  function runBranchCheckout(name: string, remote: boolean) {
+    branchMerge.close();
+    void (remote ? repo.checkoutRemoteBranch(name) : repo.checkoutBranch(name));
+  }
+
+  function runFinish() {
+    branchMerge.close();
+    repo.askFinish();
+  }
+
+  function runBranchPush(name: string) {
+    branchMerge.close();
+    void repo.push("normal", name);
+  }
+
+  function tagAt(oid: string) {
+    branchMerge.close();
+    if (oid) repo.askTagAt(oid);
+  }
+
+  function renameBranch(name: string) {
+    branchMerge.close();
+    repo.askRename(name);
+  }
+
+  function openBranchInBrowser(name: string, remote: boolean) {
+    branchMerge.close();
+    void repo.openBranchOnForge(name, remote);
+  }
+
+  /**
+   * Copie le nom tel que la ligne l'affiche — `origin/feature/x` pour une
+   * branche de suivi. L'API du presse-papiers d'abord ; le vieux
+   * `execCommand` en repli, pour un webview qui la refuserait.
+   */
+  async function copyName(name: string) {
+    branchMerge.close();
+    try {
+      await navigator.clipboard.writeText(name);
+    } catch {
+      const area = document.createElement("textarea");
+      area.value = name;
+      area.style.position = "fixed";
+      area.style.opacity = "0";
+      document.body.append(area);
+      area.select();
+      document.execCommand("copy");
+      area.remove();
+    }
+    repo.noteCopied(name);
   }
 
   // ── Menu contextuel d'une pull request ──────────────────────────────────────
@@ -588,33 +650,116 @@
     role="menu"
   >
     {#if !request.fromDrop}
+      {@const isHead = !request.remote && repo.repoInfo?.branch === request.target}
+      {@const entry = request.remote ? null : repo.branches.find((b) => b.name === request.target)}
+      {@const flowKind = isHead && repo.flowEnabled ? repo.currentFlowKind : null}
+      {@const tip = tipOf(request.target, request.remote)}
+      <!-- Ce qu'on fait **de** la branche : y aller, la terminer, l'échanger
+           avec son distant. -->
       <button
         class="ctx-item"
         role="menuitem"
-        disabled={!tipOf(request.target, request.remote) || repo.checkingOut || repo.busy}
+        disabled={isHead || !canCheckoutTag}
+        title={isHead ? t("branches.menu.checkout.head") : undefined}
+        onclick={() => runBranchCheckout(request.target, request.remote)}
+      >
+        {@render checkoutIcon()}
+        <span>{t("branches.menu.checkout")}</span>
+      </button>
+      {#if flowKind}
+        <!-- Git Flow : le « Finish » du menu de la barre, sur la branche
+             même — seulement checkoutée, comme là-bas. -->
+        <button
+          class="ctx-item"
+          role="menuitem"
+          disabled={!canFinish || repo.changeCount > 0}
+          title={repo.changeCount > 0
+            ? t("flow.finish.dirty")
+            : canFinish
+              ? undefined
+              : t("branches.menu.finish.busy")}
+          onclick={runFinish}
+        >
+          {@render flowFinishIcon()}
+          <span>{t(`flow.finish.${flowKind}`)}</span>
+        </button>
+      {/if}
+      {#if !request.remote}
+        <!-- Sur une autre branche que la courante, l'infobulle dit ce qui change :
+             la référence avance sans checkout, et on ne bascule qu'en cas de fusion. -->
+        <button
+          class="ctx-item"
+          role="menuitem"
+          disabled={!canPull}
+          title={!canPull
+            ? t("branches.pull.busy")
+            : isHead
+              ? t(`toolbar.pull.${pullEntryMode}.hint`)
+              : t("branches.pull.other.hint")}
+          onclick={() => runPull(request.target)}
+        >
+          {@render pullIcon()}
+          <span>{t(`toolbar.pull.${pullEntryMode}`)}</span>
+        </button>
+        <!-- Publie cette branche-là, courante ou non ; sans amont, la barre
+             d'upstream demande où, comme pour le bouton Push. -->
+        <button
+          class="ctx-item"
+          role="menuitem"
+          disabled={!canPull || !tip}
+          title={canPull
+            ? t("branches.menu.push.hint", { branch: request.target })
+            : t("branches.pull.busy")}
+          onclick={() => runBranchPush(request.target)}
+        >
+          {@render pushIcon()}
+          <span>{t("branches.menu.push")}</span>
+        </button>
+      {/if}
+      <div class="ctx-sep"></div>
+      <!-- Ce qu'on fait **à partir** de la branche, ou de son nom. -->
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={!tip || repo.checkingOut || repo.busy}
         onclick={() => branchFrom(request.target, request.remote)}
       >
         {@render newBranchIcon()}
         <span>{t("branches.menu.createBranch")}</span>
       </button>
-    {/if}
-    {#if !request.fromDrop && !request.remote}
-      {@const isHead = repo.repoInfo?.branch === request.target}
-      <!-- Sur une autre branche que la courante, l'infobulle dit ce qui change :
-           la référence avance sans checkout, et on ne bascule qu'en cas de fusion. -->
       <button
         class="ctx-item"
         role="menuitem"
-        disabled={!canPull}
-        title={!canPull
-          ? t("branches.pull.busy")
-          : isHead
-            ? t(`toolbar.pull.${pullEntryMode}.hint`)
-            : t("branches.pull.other.hint")}
-        onclick={() => runPull(request.target)}
+        disabled={!tip}
+        onclick={() => tagAt(tip)}
       >
-        {@render pullIcon()}
-        <span>{t(`toolbar.pull.${pullEntryMode}`)}</span>
+        {@render menuTagIcon()}
+        <span>{t("branches.menu.createTag")}</span>
+      </button>
+      {#if !request.remote}
+        <button class="ctx-item" role="menuitem" onclick={() => renameBranch(request.target)}>
+          {@render renameIcon()}
+          <span>{t("branches.menu.rename")}</span>
+        </button>
+      {/if}
+      <button class="ctx-item" role="menuitem" onclick={() => copyName(request.target)}>
+        {@render copyIcon()}
+        <span>{t("branches.menu.copy")}</span>
+      </button>
+      <!-- Une branche locale n'est sur la forge que par son amont. -->
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={!repo.prSupported || (!request.remote && !entry?.upstream)}
+        title={!repo.prSupported
+          ? t("toolbar.forge.none")
+          : !request.remote && !entry?.upstream
+            ? t("branches.menu.openForge.none")
+            : undefined}
+        onclick={() => openBranchInBrowser(request.target, request.remote)}
+      >
+        {@render externalIcon()}
+        <span>{t("branches.menu.openForge")}</span>
       </button>
     {/if}
     {#if request.source !== request.target}
@@ -932,6 +1077,38 @@
   <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="8" cy="8" r="2.25" />
     <path d="M8 1.75v3.5M8 10.75v3.5" />
+  </svg>
+{/snippet}
+
+<!-- Icônes des entrées ajoutées au menu d'une branche, à la taille du menu. -->
+{#snippet menuTagIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
+    <path d="M2 2.75a.75.75 0 0 1 .75-.75h4.4a1 1 0 0 1 .7.3l5.9 5.9a1 1 0 0 1 0 1.4l-4.4 4.4a1 1 0 0 1-1.4 0L2.3 8.1a1 1 0 0 1-.3-.7z" />
+    <circle cx="5.25" cy="5.25" r="1" />
+  </svg>
+{/snippet}
+<!-- Un crayon : le nom se réécrit. -->
+{#snippet renameIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M10.5 2.5l3 3-8 8H2.5v-3z" />
+    <path d="M9 4l3 3" />
+  </svg>
+{/snippet}
+<!-- Deux feuilles : une copie. -->
+{#snippet copyIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <rect x="5.5" y="5.5" width="8.5" height="8.5" rx="1.25" />
+    <path d="M10.5 3.25v-.5a1 1 0 0 0-1-1h-6.75a1 1 0 0 0-1 1V9.5a1 1 0 0 0 1 1h.5" />
+  </svg>
+{/snippet}
+<!-- Celle du menu Git Flow de la barre : une branche qui rejoint la ligne
+     principale, et une coche. -->
+{#snippet flowFinishIcon()}
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4.5" cy="12.5" r="1.75" />
+    <path d="M4.5 1.75v9" />
+    <path d="M9.5 2.5c0 3-5 3.5-5 7" />
+    <path d="M10 11l1.75 1.75L15 9.5" />
   </svg>
 {/snippet}
 

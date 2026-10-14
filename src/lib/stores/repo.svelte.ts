@@ -423,7 +423,16 @@ export class RepoStore {
    * Barre de création d'une branche. `flow` en fait une branche Git Flow : le
    * préfixe est imposé, et seul le nom se tape.
    */
-  branchPrompt = $state<{ oid: string | null; from: string; flow?: FlowKind } | null>(null);
+  /**
+   * Barre de branche ouverte : création (depuis `oid`, ou HEAD), création Git
+   * Flow (`flow`), ou renommage (`rename` : le nom actuel, `from` le reprend).
+   */
+  branchPrompt = $state<{
+    oid: string | null;
+    from: string;
+    flow?: FlowKind;
+    rename?: string;
+  } | null>(null);
   checkingOut = $state(false);
   /**
    * Fusion de branche à branche en cours. Distinct de `checkingOut` : elle en
@@ -1087,6 +1096,7 @@ export class RepoStore {
   async createBranch(name: string) {
     const prompt = this.branchPrompt;
     if (!prompt) return;
+    if (prompt.rename !== undefined) return this.renameBranch(prompt.rename, name);
     const branch = prompt.flow ? flowBranchName(prompt.flow, name) : name.trim();
     const ok = await this.runCheckout(() =>
       api.createBranch(this.repoId, branch, prompt.oid),
@@ -1094,6 +1104,54 @@ export class RepoStore {
     if (!ok) return;
     this.branchPrompt = null;
     this.setOpStatus(t("op.branch.created", { branch }), "ok");
+  }
+
+  /**
+   * Ouvre la barre de branche en renommage (menu d'une branche locale) : même
+   * place, même mécanique que la création, le champ pré-rempli du nom actuel.
+   */
+  askRename(name: string) {
+    this.upstreamPrompt = null;
+    this.finishPrompt = null;
+    this.branchPrompt = { oid: null, from: name, rename: name };
+  }
+
+  /**
+   * Renomme une branche locale. La barre reste ouverte sur un nom pris ou
+   * invalide, comme à la création. Rien ne bouge sur le disque : les listes et
+   * les pastilles du graph sont à relire, et `repoInfo` aussi quand c'est la
+   * courante — son nom est affiché partout.
+   */
+  private async renameBranch(name: string, newName: string) {
+    const target = newName.trim();
+    this.error = null;
+    try {
+      await api.renameBranch(this.repoId, name, target);
+    } catch (e) {
+      this.error = e as AppError;
+      return;
+    }
+    this.branchPrompt = null;
+    this.setOpStatus(t("op.branch.renamed", { branch: name, name: target }), "ok");
+    if (this.repoInfo?.branch === name) {
+      this.repoInfo = await api.getRepoInfo(this.repoId).catch(() => this.repoInfo);
+    }
+    await this.loadBranches();
+    await this.loadGraph();
+  }
+
+  /** Ouvre la page d'une branche sur sa forge (menu d'une branche). */
+  async openBranchOnForge(name: string, remote: boolean) {
+    try {
+      await api.openBranchPage(this.repoId, name, remote);
+    } catch (e) {
+      this.error = e as AppError;
+    }
+  }
+
+  /** Compte rendu d'une copie dans le presse-papiers, dans la barre du dépôt. */
+  noteCopied(text: string) {
+    this.setOpStatus(t("op.copied", { text }), "neutral");
   }
 
   // ── Tags ────────────────────────────────────────────────────────────────────
@@ -1126,7 +1184,11 @@ export class RepoStore {
    */
   askTagAtHead() {
     const oid = this.repoInfo?.head;
-    if (!oid) return;
+    if (oid) this.askTagAt(oid);
+  }
+
+  /** Même dialogue sur un commit désigné par son oid — la tête d'une branche. */
+  askTagAt(oid: string) {
     const commit = this.graph.find((c) => c.oid === oid);
     this.tagPrompt = {
       oid,
@@ -1695,8 +1757,11 @@ export class RepoStore {
    * eu lieu, et le prochain appel repart de `"normal"`. C'est ce qui empêche le
    * bouton de devenir un force push par inadvertance.
    */
-  async push(mode: PushMode = "normal") {
+  async push(mode: PushMode = "normal", branch?: string) {
     if (this.busyRemote || !this.repoInfo) return;
+    // Retenue pour la barre d'upstream et pour une relance après saisie
+    // d'identifiants : c'est cette branche-là qui doit partir, pas la courante.
+    this.pushBranchName = branch;
 
     // Premier push d'une branche : rien n'est envoyé avant que la barre
     // d'upstream ait eu sa réponse — vers quel distant, sous quel nom. C'est
@@ -1704,7 +1769,9 @@ export class RepoStore {
     // envoi, d'où la question plutôt qu'un choix silencieux. Sans distant du
     // tout, la barre n'aurait rien à proposer : le push part et rapporte
     // `NoRemote`, comme avant.
-    const head = this.branches.find((b) => b.isHead);
+    const head = branch
+      ? this.branches.find((b) => b.name === branch)
+      : this.branches.find((b) => b.isHead);
     if (head && head.upstream === null && this.upstreamPrompt === null) {
       let remotes: string[] = [];
       try {
@@ -1737,6 +1804,9 @@ export class RepoStore {
     this.upstreamPrompt = null;
   }
 
+  /** Branche publiée par le dernier push lancé ; `undefined` : la courante. */
+  private pushBranchName: string | undefined;
+
   private async runPush(mode: PushMode, remote?: string, target?: string) {
     if (this.busyRemote || !this.repoInfo) return;
     this.pushing = true;
@@ -1744,7 +1814,7 @@ export class RepoStore {
     this.setOpStatus(null);
     try {
       await this.waitAutoFetch();
-      await api.pushBranch(this.repoId, mode, remote, target);
+      await api.pushBranch(this.repoId, mode, remote, target, this.pushBranchName);
     } catch (e) {
       this.pushing = false;
       this.error = e as AppError;
@@ -2265,7 +2335,7 @@ export class RepoStore {
       this.credentialsPrompt = null;
       this.autoFetchPause = null;
       await (prompt.op === "push"
-        ? this.push()
+        ? this.push("normal", this.pushBranchName)
         : prompt.op === "pull"
           ? this.pull(this.pullMode, this.pullBranch)
           : prompt.op === "tag" && this.tagPush

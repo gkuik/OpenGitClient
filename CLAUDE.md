@@ -280,7 +280,7 @@ Each result comes back as an event — `repo://fetched`, `repo://pushed` — not
 Push adds three things fetch doesn't need:
 
 - **`push_update_reference` is mandatory, not decorative.** A server can refuse one ref (non-fast-forward, protected branch, hook) while `push()` itself returns `Ok`. Without reading that callback, a rejection would be reported as a success. The client-side refusal is a separate path — libgit2 compares the advertised refs before sending anything and returns `ErrorCode::NotFastForward` — and both funnel into `AppError::PushRejected`.
-- **An explicit refspec** (`refs/heads/<b>:refs/heads/<b>`), not the remote's configured ones: only the current branch is published, never every head. The leading `+` appears only for a `PushMode` the user picked entry by entry in the button's context menu — never by default.
+- **An explicit refspec** (`refs/heads/<b>:refs/heads/<t>`), not the remote's configured ones: one branch is published, never every head — the current one from the Push button, or the one a branch menu's **Push** names (`push(Some(branch), …)`). With no `remote`/`target` given, a branch with an upstream goes **to its upstream, under the upstream's name**: a branch first published under another name keeps pushing there instead of creating a second remote branch under its local name. The leading `+` appears only for a `PushMode` the user picked entry by entry in the button's context menu — never by default.
 - **`PushMode` is an argument, never a preference.** Unlike `PullMode` it is not persisted, not remembered between calls, and the store's `push()` defaults it back to `"normal"`: a force retained from one time to the next would turn the Push button into a trap.
 - **`ForceWithLease` is a real lease, not a label.** libgit2 has no such mode, so it is implemented in the `push_negotiation` callback: it fires between the negotiation and the upload, and hands over each ref's *current* value on the server. Comparing that to our `refs/remotes/<remote>/<branch>` and returning an error aborts the push **before a single byte is sent** — which is exactly what `--force-with-lease` promises. A missing remote branch gives a zero oid on both sides, so creating one is not a lease break. Careful with the names: `PushUpdate::src()` is what the server holds *now*, `dst()` the value we want to write — the reverse of the first reading, and the tests are what caught it.
 - **A broken lease is its own error** (`PushLeaseStale`, carrying the oid the remote is actually at), not a `PushRejected`: nothing was refused by the server, we refused ourselves, and the answer is to fetch and look at what arrived.
@@ -574,9 +574,24 @@ the menu too (it used to be refused as a self-merge): Pull alone, the merge
 entries being dropped when source and target coincide — and with no current
 branch at all (detached or unborn HEAD), the source falls back to the target,
 so the menu still opens without its merge entries. A drop keeps the early
-return and never shows Pull. **Create branch from here…** sits on top of every
-right-click menu, local rows and remote rows alike; a remote row's menu holds
-nothing else (`MergeRequest.remote`), since neither pull nor merge applies to it.
+return and never shows Pull.
+
+The right-click menu reads top to bottom as *what to do with the branch*, *what
+to do from it*, merging, then deleting. **Local**: Checkout (greyed on the
+current branch), the Git Flow **Finish** of its kind (only on the checked-out
+branch of a kind, as in the bar's menu), Pull, Push (`repo.push("normal",
+branch)` — the upstream bar asks where on a first push, as for the button) ·
+Create branch from here…, Create tag here… (the tag dialog on its tip,
+`askTagAt`), Rename… (the branch bar in rename mode, prefilled and selected —
+`rename_branch` is `git branch -m`: HEAD and the upstream follow, the remote
+branch keeps its name), Copy branch name, Open on GitHub (through its upstream,
+greyed without one — `open_branch_page`, which builds `/tree/<branch>` in Rust
+like every forge page) · the merge entries · Delete branch. **Remote**: Checkout,
+Create branch from here…, Create tag here…, Copy branch name, Open on GitHub ·
+Delete on <remote> (`MergeRequest.remote`: neither pull nor merge applies to
+it). Copy writes the row's name as shown (`origin/x` for a remote row) to the
+clipboard from the frontend, with an `execCommand` fallback, and says so in the
+bar's report.
 
 **Pulling a branch that is not checked out** is `pull(Some(branch), mode)`, and
 it borrows `merge_branches`' rule rather than the HEAD path's: the branch's own
@@ -1202,7 +1217,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes the current branch only and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes one branch — the current one, or another from its menu — and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. **The repository on screen is auto-fetched**, every minute by default (see *Auto-fetch*). Nothing is auto-*pulled*.
 
@@ -1232,8 +1247,8 @@ right-clicked — fast-forwarding without a checkout when it can, switching to t
 target when it must, and leaving a conflict in the worktree for the same
 resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
 (`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branches are **created** (see
-*Creating a branch* above) and **deleted** (see *Deleting a branch* below);
-renaming is still nowhere, and nothing rebases.
+*Creating a branch* above), **renamed** from their menu, and **deleted** (see
+*Deleting a branch* below); nothing rebases.
 
 The graph is **read-only** but for two entries: no checkout-from-commit, reset or revert from it. The exception is a commit row's context menu, whose two entries create a branch there (through the branch bar, then the same SAFE switch as anywhere else) or a tag — a tag writes one ref and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
