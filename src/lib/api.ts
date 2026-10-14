@@ -315,6 +315,9 @@ export const api = {
   getGraphLines: () => call<GraphLineStyle>("get_graph_lines"),
   setGraphLines: (style: GraphLineStyle) => call<void>("set_graph_lines", { style }),
   /** Arrondi des tracés arrondi et courbe, en pourcentage (0 → 100). */
+  /** Effet néon du graph (préférence globale ; désactivé par défaut). */
+  getGraphNeon: () => call<boolean>("get_graph_neon"),
+  setGraphNeon: (neon: boolean) => call<void>("set_graph_neon", { neon }),
   getGraphRoundness: () => call<number>("get_graph_roundness"),
   setGraphRoundness: (roundness: number) => call<void>("set_graph_roundness", { roundness }),
   getAutoFetchMinutes: () => call<number>("get_auto_fetch_minutes"),

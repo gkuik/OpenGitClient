@@ -1,6 +1,6 @@
 // Tracé des lignes du graph quand elles changent de colonne : angle droit
 // arrondi (par défaut), angle droit vif, courbe en S ou diagonale droite — et
-// l'arrondi des deux tracés qui en ont un.
+// l'arrondi des deux tracés qui en ont un, et l'effet néon.
 //
 // Préférence globale, persistée dans `prefs.json` comme le thème. Le canvas la
 // lit dans `draw()`, ce qui suffit à le redessiner quand elle change.
@@ -30,6 +30,9 @@ class GraphLinesStore {
    */
   roundness = $state(GRAPH_ROUNDNESS_DEFAULT);
 
+  /** Effet néon : les lignes et les points luisent de leur couleur. */
+  neon = $state(false);
+
   private saveTimer: ReturnType<typeof setTimeout> | null = null;
 
   /** Charge la préférence ; jusque-là, et sans backend, le défaut s'applique. */
@@ -41,6 +44,14 @@ class GraphLinesStore {
       })
       .catch(() => {
         /* préférence illisible : tracé par défaut */
+      });
+    api
+      .getGraphNeon()
+      .then((neon) => {
+        this.neon = neon;
+      })
+      .catch(() => {
+        /* préférence illisible : pas de néon */
       });
     api
       .getGraphRoundness()
@@ -60,6 +71,13 @@ class GraphLinesStore {
     this.style = style;
     api.setGraphLines(style).catch(() => {
       /* préférence non enregistrée : le tracé tient pour la session */
+    });
+  }
+
+  setNeon(neon: boolean) {
+    this.neon = neon;
+    api.setGraphNeon(neon).catch(() => {
+      /* préférence non enregistrée : l'effet tient pour la session */
     });
   }
 

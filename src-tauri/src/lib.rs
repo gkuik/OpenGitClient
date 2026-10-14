@@ -74,6 +74,8 @@ pub fn run() {
             commands::set_sidebar_widths,
             commands::get_graph_lines,
             commands::set_graph_lines,
+            commands::get_graph_neon,
+            commands::set_graph_neon,
             commands::get_graph_roundness,
             commands::set_graph_roundness,
             commands::get_auto_fetch_minutes,

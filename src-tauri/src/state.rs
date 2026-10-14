@@ -323,6 +323,16 @@ impl AppState {
 
     /// Arrondi du tracé du graph, en pourcentage — ramené dans ses bornes à la
     /// lecture comme à l'écriture, le fichier pouvant avoir été édité à la main.
+    /// Effet néon du graph.
+    pub fn graph_neon(&self) -> bool {
+        self.prefs.graph_neon
+    }
+
+    pub fn set_graph_neon(&mut self, neon: bool) -> Result<(), AppError> {
+        self.prefs.graph_neon = neon;
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     pub fn graph_roundness(&self) -> u8 {
         self.prefs.graph_roundness.min(GRAPH_ROUNDNESS_MAX)
     }
@@ -517,6 +527,8 @@ struct Prefs {
     graph_lines: GraphLineStyle,
     /// Arrondi de ce tracé, en pourcentage (tracés arrondi et courbe).
     graph_roundness: u8,
+    /// Effet néon sur les lignes et les points du graph. Désactivé par défaut.
+    graph_neon: bool,
     /// Intervalle de l'auto-fetch, en minutes ; 0 le désactive.
     auto_fetch_minutes: u8,
     /// Éléments de la barre du dépôt, dans l'ordre. `None` tant qu'elle n'a
@@ -542,6 +554,7 @@ impl Default for Prefs {
             graph_columns: GraphColumns::default(),
             graph_lines: GraphLineStyle::default(),
             graph_roundness: GRAPH_ROUNDNESS_DEFAULT,
+            graph_neon: false,
             // Écrit à la main lui aussi : dérivé, il vaudrait 0, et un
             // `prefs.json` d'avant ce réglage démarrerait sans auto-fetch.
             auto_fetch_minutes: AUTO_FETCH_MINUTES_DEFAULT,
