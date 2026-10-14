@@ -113,6 +113,49 @@
   const unavailable = $derived(repo.busyRemote || !repo.repoInfo);
 
   /*
+    Compteurs qui montent : la pastille de Pull (`↓`) ou de Push (`↑`) rebondit
+    quand son nombre augmente — un auto-fetch a ramené des commits à tirer, un
+    commit en a ajouté à publier. Jamais quand il baisse : moins de travail en
+    attente n'a rien à signaler. Ni d'un onglet à l'autre, ni pendant le
+    chargement d'un dépôt, où les nombres partent de zéro sans que rien ne soit
+    arrivé.
+
+    L'animation passe par `Element.animate` plutôt que par une classe : la
+    pastille peut naître avec le nombre (0 → 2), et une classe posée au montage
+    rejouerait le rebond à chaque retour sur l'onglet.
+  */
+  let barEl = $state<HTMLElement | null>(null);
+  const reducedMotion =
+    typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  let lastGap: { repoId: string; loaded: boolean; ahead: number; behind: number } | null = null;
+
+  $effect(() => {
+    const gap = {
+      repoId: repo.repoId,
+      loaded: repo.loaded,
+      ahead: repo.currentGap?.ahead ?? 0,
+      behind: repo.currentGap?.behind ?? 0,
+    };
+    const prev = lastGap;
+    lastGap = gap;
+    if (!prev?.loaded || prev.repoId !== gap.repoId || reducedMotion?.matches) return;
+    if (gap.behind > prev.behind) bump("pull");
+    if (gap.ahead > prev.ahead) bump("push");
+  });
+
+  function bump(op: "pull" | "push") {
+    barEl?.querySelector(`.action[data-op="${op}"] .badge`)?.animate(
+      [
+        { transform: "scale(1)" },
+        { transform: "scale(1.45)", offset: 0.35 },
+        { transform: "scale(0.92)", offset: 0.7 },
+        { transform: "scale(1)" },
+      ],
+      { duration: 450, easing: "ease-out" },
+    );
+  }
+
+  /*
     Auto-fetch : Fetch s'allume exactement comme pour un fetch cliqué — fond
     d'accent, icône qui tourne, barre de progression —, et se désactive, un
     second fetch n'ayant rien à faire. Pull et Push, eux, restent cliquables :
@@ -213,7 +256,7 @@
   }}
 />
 
-<div class="repobar">
+<div class="repobar" bind:this={barEl}>
   <!-- Barre de progression indéterminée, juste sous le filet du bas : visible
        où qu'on regarde dans la fenêtre, tant qu'une opération distante — ou
        une fusion — tourne. Toujours dans le DOM, pour que son apparition et sa

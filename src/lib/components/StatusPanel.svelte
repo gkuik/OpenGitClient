@@ -1,4 +1,6 @@
 <script lang="ts">
+  import { tick } from "svelte";
+  import { measureRows, playRows } from "../flip";
   import { t } from "../i18n.svelte";
   import { repo } from "../stores/repo.svelte";
   import { fileMenu } from "../fileMenu.svelte";
@@ -8,6 +10,30 @@
   // Sections repliables (état local à la sidebar).
   let unstagedOpen = $state(true);
   let stagedOpen = $state(true);
+
+  // ── Lignes qui glissent ─────────────────────────────────────────────────────
+  // Avant que le statut ne change le DOM, chaque ligne est mesurée ; une fois
+  // la liste refaite, chacune part de sa place d'avant (voir `flip.ts`). Un
+  // fichier indexé glisse ainsi de « non indexés » à « indexés », et ses
+  // voisines referment le trou au lieu d'y sauter — quoi qu'ait changé le
+  // statut : un bouton, « Stage all », ou un éditeur qui enregistre.
+  let sectionsEl = $state<HTMLElement | null>(null);
+  const reducedMotion =
+    typeof matchMedia === "function" ? matchMedia("(prefers-reduced-motion: reduce)") : null;
+  /** Dépôt du dernier statut vu : un changement d'onglet n'est pas un mouvement. */
+  let flipRepo: string | null = null;
+
+  $effect.pre(() => {
+    void repo.status;
+    const id = repo.repoId;
+    const el = sectionsEl;
+    const same = flipRepo === id;
+    flipRepo = id;
+    if (!el || !same || reducedMotion?.matches) return;
+    const before = measureRows(el);
+    if (!before) return;
+    void tick().then(() => playRows(el, before));
+  });
 
   const unstagedCount = $derived(repo.unstagedEntries.length);
   const stagedCount = $derived(repo.stagedEntries.length);
@@ -156,7 +182,7 @@
       indépendamment ; le trait qui sépare « non indexés » d'« indexés » vient de
       leur en-tête commun, comme dans la colonne de gauche.
     -->
-    <div class="sections">
+    <div class="sections" bind:this={sectionsEl}>
       <section class:collapsed={!unstagedOpen}>
         <SectionHeader
           label={t("status.unstaged")}

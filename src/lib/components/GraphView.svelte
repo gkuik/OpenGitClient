@@ -23,6 +23,7 @@
     durationOf,
     freshCommits,
     morphProgress,
+    movedLocalRefs,
     movedRemoteRefs,
     newLocalBranches,
     pulseProgress,
@@ -330,14 +331,18 @@
   function noticeChanges(repoId: string, next: GraphLayout) {
     const now = snapshot(repoId, next);
     const fresh = freshCommits(seen, now, next);
-    const moves = movedRemoteRefs(seen, now);
+    const moves = [
+      ...movedRemoteRefs(seen, now).map((move) => ({ move, local: false })),
+      ...movedLocalRefs(seen, now).map((move) => ({ move, local: true })),
+    ];
     const born = newLocalBranches(seen, now);
     seen = now;
     if (reducedMotion?.matches) return;
     const start = performance.now();
     if (fresh.length > 0) growCommits(next, fresh, start);
-    // Après les commits : une branche distante qui arrive sur un commit
-    // nouveau (fetch) se pose avec son point.
+    // Après les commits : une branche qui arrive sur un commit nouveau — la
+    // distante après un fetch, la locale après un commit — se pose avec son
+    // point.
     if (moves.length > 0) launchFlights(next, moves, start);
     if (born.length > 0) welcomeBranches(next, born, start);
   }
@@ -376,15 +381,23 @@
     animate();
   }
 
-  // ── Branches distantes qui glissent ────────────────────────────────────────
+  // ── Branches qui glissent ──────────────────────────────────────────────────
   /*
-    Une branche distante arrivée sur un autre commit — un push l'amène sur le
-    commit local qu'on vient de publier, un fetch sur ce qu'il a téléchargé —
-    ne saute pas d'une rangée à l'autre : une copie de sa pastille glisse de
-    son ancienne place vers la nouvelle, de bas en haut, puis s'efface pendant
-    que l'icône du serveur se pose sur la pastille d'arrivée (ou la pastille
-    entière, quand aucune branche locale ne l'accueille). Au premier push,
-    rien ne glisse : l'icône se pose sur place.
+    Une branche arrivée sur un autre commit ne saute pas d'une rangée à
+    l'autre : une copie de sa pastille glisse de son ancienne place vers la
+    nouvelle, puis s'efface pendant que l'arrivée se pose.
+
+    - **Distante** — un push l'amène sur le commit local qu'on vient de
+      publier, un fetch sur ce qu'il a téléchargé : c'est l'icône du serveur
+      qui se pose sur la pastille d'arrivée (ou la pastille entière, quand
+      aucune branche locale ne l'accueille). Au premier push, rien ne glisse :
+      l'icône se pose sur place.
+    - **Locale** — un commit la fait monter d'un cran, un pull en avance
+      rapide ou un merge sur une branche inactive plus haut : la copie porte
+      son nom (et la coche si c'est la branche courante), et c'est la pastille
+      entière qui se pose (`badgeLandings`) — l'icône d'écran seule ne dirait
+      pas qu'une branche est arrivée. Une branche *nouvelle* n'est pas un
+      déplacement : elle monte à sa place (plus bas).
 
     Tout est en CSS, posé en style : la copie (`flights`) part de sa place
     d'avant (`--dx`, `--dy`) et va vers celle de la pastille d'arrivée, mesurée
@@ -409,11 +422,17 @@
   /** Marge horizontale d'une cellule (`.cell`), en rem. */
   const CELL_PAD_REM = 0.5;
   let flights = $state.raw<Flight[]>([]);
-  /** Arrivées à animer : `oid|clé de pastille` → retard en ms. */
+  /** Arrivées distantes à animer : `oid|clé de pastille` → retard en ms. */
   let landings = $state.raw<Map<string, number>>(new Map());
+  /** Arrivées locales — la pastille entière : `oid|clé de pastille` → retard. */
+  let badgeLandings = $state.raw<Map<string, number>>(new Map());
   let flightTimer: ReturnType<typeof setTimeout> | undefined;
 
-  function launchFlights(next: GraphLayout, moves: RefMove[], start: number) {
+  function launchFlights(
+    next: GraphLayout,
+    moves: { move: RefMove; local: boolean }[],
+    start: number,
+  ) {
     const index = new Map<string, number>();
     next.rows.forEach((r, i) => {
       if (r.kind === "commit") index.set(r.commit.oid, i);
@@ -421,15 +440,16 @@
     const refsCol = placed.find((c) => c.id === "refs");
     const spacer = scroller?.firstElementChild as HTMLElement | null;
     const lands = new Map<string, number>();
+    const wholeLands = new Map<string, number>();
     const out: Flight[] = [];
-    for (const m of moves) {
+    for (const { move: m, local } of moves) {
       const to = index.get(m.to);
       const row = to !== undefined ? next.rows[to] : undefined;
       if (to === undefined || row?.kind !== "commit") continue;
       // Rien à faire arriver sur une pastille cachée sous le « +n ».
       const badge = groupRefs(row.commit.refs)
         .slice(0, MAX_REFS)
-        .find((b) => b.remotes.includes(m.name));
+        .find((b) => (local ? b.local && b.name === m.name : b.remotes.includes(m.name)));
       if (!badge) continue;
       // Elle se pose quand le commit est là : tout de suite s'il l'était,
       // avec son point s'il apparaît.
@@ -439,7 +459,7 @@
       // L'arrivée commence un peu avant la fin du glissement : la copie
       // s'efface pendant que l'icône se pose, sans blanc entre les deux.
       const overlap = from !== undefined ? SLIDE_MS * 0.15 : 0;
-      lands.set(`${m.to}|${badge.key}`, Math.round(landAt - start - overlap));
+      (local ? wholeLands : lands).set(`${m.to}|${badge.key}`, Math.round(landAt - start - overlap));
       if (from === undefined || !refsCol || !spacer) continue;
       const rowEl = spacer.querySelector<HTMLElement>(`[data-oid="${m.to}"]`);
       const badgeEl = rowEl?.querySelector<HTMLElement>(`[data-badge="${CSS.escape(badge.key)}"]`);
@@ -452,16 +472,28 @@
       const startRight = refsCol.x + refsCol.width - CELL_PAD_REM * font.rootPx;
       const fromRow = next.rows[from];
       out.push({
-        key: `${m.name}@${start}`,
-        badge: {
-          name: m.name,
-          isHead: false,
-          local: false,
-          tag: false,
-          remotes: [m.name],
-          title: m.name,
-          key: "r:" + m.name,
-        },
+        key: `${local ? "l" : "r"}:${m.name}@${start}`,
+        // Une locale voyage seule, sans les distantes qui l'attendaient peut-
+        // être à l'arrivée : c'est elle qui bouge, pas elles.
+        badge: local
+          ? {
+              name: m.name,
+              isHead: badge.isHead,
+              local: true,
+              tag: false,
+              remotes: [],
+              title: m.name,
+              key: "l:" + m.name,
+            }
+          : {
+              name: m.name,
+              isHead: false,
+              local: false,
+              tag: false,
+              remotes: [m.name],
+              title: m.name,
+              key: "r:" + m.name,
+            },
         color: lanes[fromRow.color],
         top: rowEl.offsetTop + (br.top - rr.top),
         right: spacer.clientWidth - right,
@@ -472,14 +504,16 @@
       });
     }
     landings = lands;
+    badgeLandings = wholeLands;
     flights = out;
     clearTimeout(flightTimer);
     flightTimer = setTimeout(
       () => {
         flights = [];
         landings = new Map();
+        badgeLandings = new Map();
       },
-      Math.max(0, ...lands.values()) + LAND_MS + 50,
+      Math.max(0, ...lands.values(), ...wholeLands.values()) + LAND_MS + 50,
     );
   }
 
@@ -1407,10 +1441,12 @@
             <span class="sep-label">{sep.label}</span>
           </div>
         {/each}
-        <!-- Pastilles distantes en train de glisser vers leur nouveau commit. -->
+        <!-- Pastilles en train de glisser vers leur nouveau commit. -->
         {#each flights as f (f.key)}
           <span
-            class="ref remote flight"
+            class="ref flight"
+            class:head={f.badge.isHead}
+            class:remote={!f.badge.local}
             style="--lane: {f.color}; top: {f.top}px; right: {f.right}px; height: {f.height}px; --dx: {f.dx}px; --dy: {f.dy}px"
             style:animation="graph-ref-flight {SLIDE_MS}ms {EASE_IN_OUT} {f.delay}ms both"
             aria-hidden="true"
@@ -1498,6 +1534,10 @@
         {@const land = landings.get(row.commit.oid + "|" + b.key)}
         {@const landing =
           land !== undefined ? `graph-ref-land ${LAND_MS}ms ease-out ${land}ms both` : undefined}
+        <!-- Une branche locale qui arrive ici : la pastille entière se pose. -->
+        {@const landed = badgeLandings.get(row.commit.oid + "|" + b.key)}
+        {@const landingWhole =
+          landed !== undefined ? `graph-ref-land ${LAND_MS}ms ease-out ${landed}ms both` : undefined}
         <!-- Une branche qui vient d'être créée : sa pastille monte à sa place. -->
         {@const rise = rising.get(row.commit.oid + "|" + b.key)}
         {@const risingIn =
@@ -1510,7 +1550,7 @@
           class:remote={!b.local && !b.tag}
           class:tag={b.tag}
           style="--lane: {lanes[row.color]}"
-          style:animation={risingIn ?? (b.local ? undefined : landing)}
+          style:animation={risingIn ?? landingWhole ?? (b.local ? undefined : landing)}
           title={b.title}
           onmouseenter={(e) => onBadgeEnter(e, b, lanes[row.color])}
           onmouseleave={() => (peek = null)}

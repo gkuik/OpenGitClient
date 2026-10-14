@@ -52,6 +52,8 @@
 <div
   class="row"
   class:selected
+  data-flip="f:{entry.path}"
+  data-flip-section={staged ? "s" : "u"}
   role="button"
   tabindex="0"
   style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
@@ -92,6 +94,16 @@
   }
   .row.selected {
     background: var(--accent-bg);
+  }
+  /* Le fichier qu'on vient d'indexer ou de désindexer, arrivé dans l'autre
+     section (voir `flip.ts`) : un fond qui s'éteint dit où il s'est posé. */
+  .row:global(.flip-landed) {
+    animation: file-landed 900ms ease-out;
+  }
+  @keyframes file-landed {
+    from {
+      background: var(--accent-bg);
+    }
   }
   .badge {
     flex: none;
