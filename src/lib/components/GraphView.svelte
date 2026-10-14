@@ -12,15 +12,30 @@
     type GraphRow,
   } from "../graph/layout";
   import {
+    LAND_MS,
+    OPEN_LEAD_MS,
     OPEN_MS,
-    delayOf,
+    PULSE_MS,
+    RISE_MS,
+    SLIDE_MS,
+    climb,
+    dotProgress,
     durationOf,
     freshCommits,
+    morphProgress,
+    movedRemoteRefs,
+    newLocalBranches,
+    pulseProgress,
     openProgress,
     openedAbove,
-    progress,
     snapshot,
+    trailFront,
+    trailsOf,
+    type Fresh,
+    type NewBranch,
+    type RefMove,
     type Seen,
+    type Trails,
   } from "../graph/appear";
   import { flowBands, flowTips } from "../gitflow";
   import { groupRefs, type RefBadge } from "../graph/refs";
@@ -233,9 +248,11 @@
        glisse vers le bas depuis où il était, au lieu d'y sauter, et les
        rangées nouvelles s'ouvrent en accordéon — les lignes qui les
        traversent s'étirent, sans jamais se rompre ;
-    2. **les commits poussent**, de bas en haut (`appearing`) : la ligne monte
-       depuis le parent, le point apparaît quand elle l'atteint. Le commit
-       qu'on vient de faire, lui, n'ouvre rien : il remplit le cercle WIP.
+    2. **les commits poussent**, de bas en haut (`appearing`) : chaque ligne
+       nouvelle monte depuis le point du parent — sur autant de rangées qu'il
+       faut, celle de la branche fusionnée d'un merge comprise —, et le point
+       apparaît quand ses lignes l'atteignent. Le commit qu'on vient de faire,
+       lui, n'ouvre rien : il remplit le cercle WIP.
 
     Le canvas lit l'horloge à chaque image (une boucle `requestAnimationFrame`
     tant qu'il reste quelque chose à animer) ; les rangées du DOM ont la même
@@ -249,10 +266,32 @@
   */
   /** `easeInOutCubic` en CSS : le DOM glisse sur la même courbe que le canvas. */
   const EASE_IN_OUT = "cubic-bezier(0.65, 0, 0.35, 1)";
+  /** Monte avec un rebond léger (~4 %) : la pastille se pose, elle ne saute pas. */
+  const EASE_RISE = "cubic-bezier(0.34, 1.3, 0.64, 1)";
   /** Durée du fondu et du surlignage du texte d'une rangée nouvelle. */
   const FRESH_TEXT_MS = 1800;
-  /** Commits en train de pousser : départ (horloge de `performance.now`) et genre. */
-  const appearing = new Map<string, { start: number; morph: boolean }>();
+  /**
+   * Commits en train de pousser. `at` : arrivée de leurs lignes sur leur point
+   * (horloge de `performance.now`) — ou départ du remplissage, pour le cercle
+   * WIP ; `msPerRow` : vitesse de leurs lignes.
+   */
+  const appearing = new Map<string, { at: number; morph: boolean; msPerRow: number }>();
+  /**
+   * Lignes nouvelles des commits qui poussent, recalculées quand l'affichage
+   * ou l'ensemble des commits change : un rechargement en pleine animation
+   * (la surveillance du disque rapporte nos propres écritures ~300 ms après)
+   * déplace les colonnes, pas les commits.
+   */
+  let trailCache: { layout: GraphLayout; version: number; trails: Trails } | null = null;
+  let appearingVersion = 0;
+  function currentTrails(): Trails {
+    if (trailCache?.layout !== layout || trailCache.version !== appearingVersion) {
+      const growing = new Set<string>();
+      for (const [oid, a] of appearing) if (!a.morph) growing.add(oid);
+      trailCache = { layout, version: appearingVersion, trails: trailsOf(layout, growing) };
+    }
+    return trailCache.trails;
+  }
   /** Place en train de s'ouvrir : depuis quand, et pour quels commits. */
   let opening = $state.raw<{ start: number; oids: Set<string> } | null>(null);
   /** Rangées dont le texte s'anime, avec leur retard en ms. */
@@ -280,7 +319,9 @@
       frame = 0;
       draw();
       const stillOpening = opening !== null && performance.now() - opening.start < OPEN_MS;
-      if (appearing.size > 0 || stillOpening) frame = requestAnimationFrame(step);
+      if (appearing.size > 0 || stillOpening || pulses.size > 0) {
+        frame = requestAnimationFrame(step);
+      }
     };
     frame = requestAnimationFrame(step);
   }
@@ -289,15 +330,33 @@
   function noticeChanges(repoId: string, next: GraphLayout) {
     const now = snapshot(repoId, next);
     const fresh = freshCommits(seen, now, next);
+    const moves = movedRemoteRefs(seen, now);
+    const born = newLocalBranches(seen, now);
     seen = now;
-    if (fresh.length === 0 || reducedMotion?.matches) return;
+    if (reducedMotion?.matches) return;
     const start = performance.now();
+    if (fresh.length > 0) growCommits(next, fresh, start);
+    // Après les commits : une branche distante qui arrive sur un commit
+    // nouveau (fetch) se pose avec son point.
+    if (moves.length > 0) launchFlights(next, moves, start);
+    if (born.length > 0) welcomeBranches(next, born, start);
+  }
+
+  /** Lance l'ouverture de la place et la pousse des commits `fresh`. */
+  function growCommits(next: GraphLayout, fresh: Fresh[], start: number) {
+    // Le commit qui remplit le cercle WIP prend sa place : rien à ouvrir.
+    const toOpen = new Set(fresh.filter((f) => !f.morph).map((f) => f.oid));
+    // Les lignes montent une fois la place ouverte.
+    const base = start + (toOpen.size > 0 ? OPEN_LEAD_MS : 0);
+    const plan = climb(next, toOpen, trailsOf(next, toOpen));
     const delays = new Map<string, number>();
     for (const f of fresh) {
-      const delay = delayOf(f);
-      appearing.set(f.oid, { start: start + delay, morph: f.morph });
-      delays.set(f.oid, delay);
+      const at = f.morph ? start : base + (plan.arrive.get(f.oid) ?? 0);
+      appearing.set(f.oid, { at, morph: f.morph, msPerRow: plan.msPerRow });
+      // Le texte arrive avec le point.
+      delays.set(f.oid, Math.round(at - start));
     }
+    appearingVersion++;
     freshRows = delays;
     clearTimeout(freshTimer);
     // Passé le plus long retard et le fondu, plus rien à marquer.
@@ -305,8 +364,6 @@
       () => (freshRows = new Map()),
       Math.max(...delays.values()) + FRESH_TEXT_MS,
     );
-    // Le commit qui remplit le cercle WIP prend sa place : rien à ouvrir.
-    const toOpen = new Set(fresh.filter((f) => !f.morph).map((f) => f.oid));
     clearTimeout(openTimer);
     if (toOpen.size > 0) {
       opening = { start, oids: toOpen };
@@ -316,6 +373,144 @@
     } else {
       opening = null;
     }
+    animate();
+  }
+
+  // ── Branches distantes qui glissent ────────────────────────────────────────
+  /*
+    Une branche distante arrivée sur un autre commit — un push l'amène sur le
+    commit local qu'on vient de publier, un fetch sur ce qu'il a téléchargé —
+    ne saute pas d'une rangée à l'autre : une copie de sa pastille glisse de
+    son ancienne place vers la nouvelle, de bas en haut, puis s'efface pendant
+    que l'icône du serveur se pose sur la pastille d'arrivée (ou la pastille
+    entière, quand aucune branche locale ne l'accueille). Au premier push,
+    rien ne glisse : l'icône se pose sur place.
+
+    Tout est en CSS, posé en style : la copie (`flights`) part de sa place
+    d'avant (`--dx`, `--dy`) et va vers celle de la pastille d'arrivée, mesurée
+    dans le DOM juste après le rendu du nouvel affichage ; l'arrivée
+    (`landings`) attend la fin du glissement pour apparaître. La place d'avant
+    n'existe plus dans le DOM : c'est le bord droit de la colonne, où une
+    pastille distante seule sur sa rangée se trouve.
+  */
+  interface Flight {
+    key: string;
+    badge: RefBadge;
+    color: string;
+    /** Place d'arrivée, dans le contenu défilant. */
+    top: number;
+    right: number;
+    height: number;
+    /** D'où elle part, relativement à l'arrivée. */
+    dx: number;
+    dy: number;
+    delay: number;
+  }
+  /** Marge horizontale d'une cellule (`.cell`), en rem. */
+  const CELL_PAD_REM = 0.5;
+  let flights = $state.raw<Flight[]>([]);
+  /** Arrivées à animer : `oid|clé de pastille` → retard en ms. */
+  let landings = $state.raw<Map<string, number>>(new Map());
+  let flightTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function launchFlights(next: GraphLayout, moves: RefMove[], start: number) {
+    const index = new Map<string, number>();
+    next.rows.forEach((r, i) => {
+      if (r.kind === "commit") index.set(r.commit.oid, i);
+    });
+    const refsCol = placed.find((c) => c.id === "refs");
+    const spacer = scroller?.firstElementChild as HTMLElement | null;
+    const lands = new Map<string, number>();
+    const out: Flight[] = [];
+    for (const m of moves) {
+      const to = index.get(m.to);
+      const row = to !== undefined ? next.rows[to] : undefined;
+      if (to === undefined || row?.kind !== "commit") continue;
+      // Rien à faire arriver sur une pastille cachée sous le « +n ».
+      const badge = groupRefs(row.commit.refs)
+        .slice(0, MAX_REFS)
+        .find((b) => b.remotes.includes(m.name));
+      if (!badge) continue;
+      // Elle se pose quand le commit est là : tout de suite s'il l'était,
+      // avec son point s'il apparaît.
+      const dotAt = appearing.get(m.to)?.at ?? start;
+      const from = m.from !== null ? index.get(m.from) : undefined;
+      const landAt = from !== undefined ? Math.max(dotAt, start + SLIDE_MS) : dotAt;
+      // L'arrivée commence un peu avant la fin du glissement : la copie
+      // s'efface pendant que l'icône se pose, sans blanc entre les deux.
+      const overlap = from !== undefined ? SLIDE_MS * 0.15 : 0;
+      lands.set(`${m.to}|${badge.key}`, Math.round(landAt - start - overlap));
+      if (from === undefined || !refsCol || !spacer) continue;
+      const rowEl = spacer.querySelector<HTMLElement>(`[data-oid="${m.to}"]`);
+      const badgeEl = rowEl?.querySelector<HTMLElement>(`[data-badge="${CSS.escape(badge.key)}"]`);
+      if (!rowEl || !badgeEl) continue;
+      // Écarts mesurés dans la rangée : insensibles au glissement qu'elle
+      // pourrait être en train de faire.
+      const rr = rowEl.getBoundingClientRect();
+      const br = badgeEl.getBoundingClientRect();
+      const right = br.right - rr.left;
+      const startRight = refsCol.x + refsCol.width - CELL_PAD_REM * font.rootPx;
+      const fromRow = next.rows[from];
+      out.push({
+        key: `${m.name}@${start}`,
+        badge: {
+          name: m.name,
+          isHead: false,
+          local: false,
+          tag: false,
+          remotes: [m.name],
+          title: m.name,
+          key: "r:" + m.name,
+        },
+        color: lanes[fromRow.color],
+        top: rowEl.offsetTop + (br.top - rr.top),
+        right: spacer.clientWidth - right,
+        height: br.height,
+        dx: startRight - right,
+        dy: (from - to) * ROW_H,
+        delay: Math.round(landAt - start - SLIDE_MS),
+      });
+    }
+    landings = lands;
+    flights = out;
+    clearTimeout(flightTimer);
+    flightTimer = setTimeout(
+      () => {
+        flights = [];
+        landings = new Map();
+      },
+      Math.max(0, ...lands.values()) + LAND_MS + 50,
+    );
+  }
+
+  // ── Branches nouvelles ─────────────────────────────────────────────────────
+  /*
+    Une branche créée — barre, menus, Git Flow, branche distante extraite, ou
+    terminal — n'a pas de commit à elle : ce qui naît, c'est sa pastille. Elle
+    monte à sa place depuis un peu plus bas (`rising`, `graph-ref-rise`), et
+    une onde part du point d'où elle naît (`pulses`, sur le canvas) : c'est là
+    que la branche commence. Sur un commit qui apparaît lui-même, les deux
+    attendent son point.
+  */
+  /** Pastilles de branches nouvelles : `oid|clé de pastille` → retard en ms. */
+  let rising = $state.raw<Map<string, number>>(new Map());
+  /** Ondes en cours : commit → départ (horloge de `performance.now`). */
+  const pulses = new Map<string, number>();
+  let riseTimer: ReturnType<typeof setTimeout> | undefined;
+
+  function welcomeBranches(next: GraphLayout, born: NewBranch[], start: number) {
+    const rise = new Map<string, number>();
+    for (const b of born) {
+      const at = appearing.get(b.at)?.at ?? start;
+      rise.set(`${b.at}|l:${b.name}`, Math.round(at - start));
+      pulses.set(b.at, at);
+    }
+    rising = rise;
+    clearTimeout(riseTimer);
+    riseTimer = setTimeout(
+      () => (rising = new Map()),
+      Math.max(0, ...rise.values()) + Math.max(RISE_MS, PULSE_MS) + 50,
+    );
     animate();
   }
 
@@ -350,6 +545,8 @@
     cancelAnimationFrame(frame);
     clearTimeout(freshTimer);
     clearTimeout(openTimer);
+    clearTimeout(flightTimer);
+    clearTimeout(riseTimer);
   });
   const counts = $derived(repo.changeCounts);
   /*
@@ -831,8 +1028,15 @@
     // Les animations finies sont retirées toutes, visibles ou non : une
     // rangée nouvelle hors de l'écran ferait sinon tourner la boucle sans fin.
     for (const [oid, a] of appearing) {
-      if (now - a.start >= durationOf(a.morph)) appearing.delete(oid);
+      if (now - a.at >= durationOf(a.morph)) {
+        appearing.delete(oid);
+        appearingVersion++;
+      }
     }
+    for (const [oid, at] of pulses) {
+      if (now - at >= PULSE_MS) pulses.delete(oid);
+    }
+    const trails = currentTrails();
     // Ouverture de la place des rangées nouvelles : `open` va de 0 à 1. Une
     // rangée qui s'ouvre est écrasée à `open` de sa hauteur ; une rangée sous
     // `n` rangées qui s'ouvrent est remontée de `(1 − open) · n` rangées — là
@@ -858,16 +1062,27 @@
         ctx.save();
         ctx.translate(0, top);
         ctx.scale(1, open);
-        drawRow(ctx, row, 0, w, now);
+        drawRow(ctx, row, i, 0, w, now, trails);
         ctx.restore();
       } else {
-        drawRow(ctx, row, top, w, now);
+        drawRow(ctx, row, i, top, w, now, trails);
       }
     }
   }
 
-  /** Une rangée du canvas, à l'ordonnée `top`, à l'étape où en est son apparition. */
-  function drawRow(ctx: CanvasRenderingContext2D, row: GraphRow, top: number, w: number, now: number) {
+  /**
+   * La rangée `index` du canvas, à l'ordonnée `top`, à l'étape où en est son
+   * apparition.
+   */
+  function drawRow(
+    ctx: CanvasRenderingContext2D,
+    row: GraphRow,
+    index: number,
+    top: number,
+    w: number,
+    now: number,
+    trails: Trails,
+  ) {
     const mid = top + ROW_H / 2;
     const isWip = row.kind === "wip";
     // Le nœud WIP est un cercle vide : son segment part de sous le cercle et
@@ -877,14 +1092,10 @@
     const x = laneX(row.lane);
     const color = lanes[row.color];
 
-    // Où en est l'apparition de ce commit, s'il apparaît.
-    let anim: { reveal: number; dot: number; alpha: number; morph: boolean } | null = null;
-    if (row.kind === "commit") {
-      const a = appearing.get(row.commit.oid);
-      if (a) anim = { ...progress(now - a.start, a.morph), morph: a.morph };
-    }
+    const a = row.kind === "commit" ? appearing.get(row.commit.oid) : undefined;
 
-    if (anim?.morph) {
+    if (a?.morph) {
+      const anim = morphProgress(now - a.at);
       for (const edge of row.edges) {
         if (edge.kind !== "out" || edge.fromLane !== row.lane) {
           strokeEdge(ctx, edge, row.lane, top, mid, outY, dotR);
@@ -908,32 +1119,55 @@
       ctx.globalAlpha = 1;
       if (anim.dot > 0) fillDot(ctx, x, mid, DOT_R * anim.dot, color);
     } else {
-      // Un commit qui pousse : ses propres lignes — celles qui arrivent sur
-      // son point ou en repartent — se tracent de bas en haut, en partant du
-      // parent. Ce qui ne fait que traverser la rangée est déjà là : c'était
-      // là avant lui.
-      const own = (e: GraphEdge) =>
-        (e.kind === "out" && e.fromLane === row.lane) || (e.kind === "in" && e.toLane === row.lane);
-      for (const edge of row.edges) {
-        if (!anim || !own(edge)) strokeEdge(ctx, edge, row.lane, top, mid, outY, dotR);
-      }
-      if (anim && anim.reveal > 0) {
+      // Un segment d'une ligne nouvelle n'est dessiné que sous le bout de
+      // cette ligne, qui monte du parent vers le commit qui la tire. Le
+      // reste — ce qui était là avant — est dessiné tel quel.
+      const segments = row.kind === "commit" ? trails.byRow.get(row.commit.oid) : undefined;
+      row.edges.forEach((edge, ei) => {
+        const t = segments?.get(ei);
+        const trail = t !== undefined ? trails.list[t] : undefined;
+        const owner = trail ? appearing.get(trail.child) : undefined;
+        if (!trail || !owner || owner.morph) {
+          strokeEdge(ctx, edge, row.lane, top, mid, outY, dotR);
+          return;
+        }
+        const front = trailFront(trail, now - owner.at, owner.msPerRow);
+        if (front >= trail.bottom) return;
         ctx.save();
         ctx.beginPath();
-        ctx.rect(0, top + ROW_H * (1 - anim.reveal), w, ROW_H * anim.reveal);
+        const y = top + (front - index) * ROW_H;
+        ctx.rect(0, y, w, top + ROW_H - y);
         ctx.clip();
-        for (const edge of row.edges) {
-          if (own(edge)) strokeEdge(ctx, edge, row.lane, top, mid, outY, dotR);
-        }
+        strokeEdge(ctx, edge, row.lane, top, mid, outY, dotR);
         ctx.restore();
-      }
+      });
 
       if (isWip) strokeWipRing(ctx, x, mid, color);
-      else if (!anim) fillDot(ctx, x, mid, DOT_R, color);
-      else if (anim.dot > 0) {
-        ctx.globalAlpha = anim.alpha;
-        fillDot(ctx, x, mid, DOT_R * anim.dot, color);
+      else if (!a) fillDot(ctx, x, mid, DOT_R, color);
+      else {
+        // Le point apparaît quand ses lignes l'atteignent.
+        const p = dotProgress(now - a.at);
+        if (p.dot > 0) {
+          ctx.globalAlpha = p.alpha;
+          fillDot(ctx, x, mid, DOT_R * p.dot, color);
+          ctx.globalAlpha = 1;
+        }
+      }
+    }
+
+    // L'onde d'une branche qui naît ici : un anneau qui s'élargit et s'éteint.
+    const pulse = row.kind === "commit" ? pulses.get(row.commit.oid) : undefined;
+    if (pulse !== undefined) {
+      const p = pulseProgress(now - pulse);
+      if (p.alpha > 0) {
+        ctx.beginPath();
+        ctx.arc(x, mid, DOT_R + 2 + 9 * p.radius, 0, Math.PI * 2);
+        ctx.strokeStyle = color;
+        ctx.globalAlpha = 0.7 * p.alpha;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
         ctx.globalAlpha = 1;
+        ctx.lineWidth = LINE_W;
       }
     }
 
@@ -1141,6 +1375,7 @@
           {@const motion = rowMotion(row, first + i)}
           <div
             class="row"
+            data-oid={row.kind === "commit" ? row.commit.oid : undefined}
             class:wip={row.kind === "wip"}
             class:selected={isSelected(row)}
             style="top: {(first + i) * ROW_H}px; height: {ROW_H}px; grid-template-columns: {template}"
@@ -1171,6 +1406,17 @@
             <span class="sep-line"></span>
             <span class="sep-label">{sep.label}</span>
           </div>
+        {/each}
+        <!-- Pastilles distantes en train de glisser vers leur nouveau commit. -->
+        {#each flights as f (f.key)}
+          <span
+            class="ref remote flight"
+            style="--lane: {f.color}; top: {f.top}px; right: {f.right}px; height: {f.height}px; --dx: {f.dx}px; --dy: {f.dy}px"
+            style:animation="graph-ref-flight {SLIDE_MS}ms {EASE_IN_OUT} {f.delay}ms both"
+            aria-hidden="true"
+          >
+            {@render badgeBody(f.badge)}
+          </span>
         {/each}
       </div>
     </div>
@@ -1247,18 +1493,29 @@
         </span>
       {/if}
       {#each badges.slice(0, MAX_REFS) as b (b.key)}
+        <!-- Une branche distante qui arrive ici : l'icône du serveur se pose
+             sur une pastille locale, la pastille entière sinon. -->
+        {@const land = landings.get(row.commit.oid + "|" + b.key)}
+        {@const landing =
+          land !== undefined ? `graph-ref-land ${LAND_MS}ms ease-out ${land}ms both` : undefined}
+        <!-- Une branche qui vient d'être créée : sa pastille monte à sa place. -->
+        {@const rise = rising.get(row.commit.oid + "|" + b.key)}
+        {@const risingIn =
+          rise !== undefined ? `graph-ref-rise ${RISE_MS}ms ${EASE_RISE} ${rise}ms both` : undefined}
         <!-- svelte-ignore a11y_no_static_element_interactions -->
         <span
           class="ref"
+          data-badge={b.key}
           class:head={b.isHead}
           class:remote={!b.local && !b.tag}
           class:tag={b.tag}
           style="--lane: {lanes[row.color]}"
+          style:animation={risingIn ?? (b.local ? undefined : landing)}
           title={b.title}
           onmouseenter={(e) => onBadgeEnter(e, b, lanes[row.color])}
           onmouseleave={() => (peek = null)}
         >
-          {@render badgeBody(b)}
+          {@render badgeBody(b, b.local ? landing : undefined)}
         </span>
       {/each}
     </span>
@@ -1278,7 +1535,7 @@
 <!-- Contenu d'une pastille : la coche de HEAD, le nom, puis l'écran (« ici »)
      et le nuage (« sur le serveur »). Partagé par la pastille et sa copie
      entière au survol. -->
-{#snippet badgeBody(b: RefBadge)}
+{#snippet badgeBody(b: RefBadge, cloudAnimation?: string)}
   {#if b.isHead}<span class="mark" aria-hidden="true">✓</span>{/if}
   {#if b.tag}
     <!-- Étiquette, en tête : un tag se reconnaît avant de se lire. -->
@@ -1305,6 +1562,7 @@
   {#if b.remotes.length > 0}
     <svg
       class="ic"
+      style:animation={cloudAnimation}
       viewBox="0 0 16 16"
       fill="none"
       stroke="currentColor"
@@ -1718,6 +1976,51 @@
      une référence distante — sinon le texte de la colonne voisine transparaîtrait
      à travers. Elle ne capte pas la souris : la vraie pastille, dessous, reste
      celle qu'on survole. */
+  /* Copie d'une pastille distante qui glisse vers son nouveau commit
+     (`flights`) : posée à l'arrivée, elle part de sa place d'avant. Au-dessus
+     des rangées, sans capter la souris. */
+  .ref.flight {
+    position: absolute;
+    z-index: 2;
+    max-width: none;
+    pointer-events: none;
+  }
+  @keyframes -global-graph-ref-flight {
+    0% {
+      opacity: 0.85;
+      transform: translate(var(--dx, 0px), var(--dy, 0px));
+    }
+    85% {
+      opacity: 0.85;
+      transform: none;
+    }
+    100% {
+      opacity: 0;
+      transform: none;
+    }
+  }
+  /* Pastille d'une branche qui vient d'être créée : elle monte à sa place. */
+  @keyframes -global-graph-ref-rise {
+    from {
+      opacity: 0;
+      transform: translateY(0.6em) scale(0.85);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
+  /* Ce qui arrive se pose : l'icône du serveur, ou la pastille entière. */
+  @keyframes -global-graph-ref-land {
+    from {
+      opacity: 0;
+      transform: scale(0.4);
+    }
+    to {
+      opacity: 1;
+      transform: none;
+    }
+  }
   .ref.peek {
     position: absolute;
     z-index: 6;
