@@ -319,8 +319,8 @@
                 >
                   <Chevron {open} />
                   {@render remoteIcon()}
+                  <!-- Pas de compte ici : l'en-tête de la section le porte déjà. -->
                   <span class="rname">{group.remote}</span>
-                  <span class="rcount">{group.branches.length}</span>
                 </button>
                 {#if open}
                   {#each group.nodes as node (node.type === "dir" ? "d:" + node.path : "b:" + node.branch.name)}
@@ -924,11 +924,6 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
-  }
-  .rcount {
-    flex: none;
-    font-size: 0.72rem;
-    color: var(--text-faint);
   }
   .stash {
     display: flex;
