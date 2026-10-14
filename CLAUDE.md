@@ -58,7 +58,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `graph/appear.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts`, `autoFetch.ts`, `flip.ts` and `i18n.svelte.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `graph/appear.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts`, `autoFetch.ts`, `flip.ts`, `toolbar.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -769,6 +769,50 @@ opens **that repository's** settings: `RepoSettingsView`, *Display name*,
   the form stays open so a taken name is fixed in place — hence store methods
   returning `AppError | null`.
 
+### The repository bar is customisable, Finder-style
+
+Right-clicking the bar — its background, the name, the report, any button
+without a menu of its own (Git Flow included: its left click already opens its
+menu) — opens one entry, **Customize toolbar…**; Pull's and Push's own menus end
+with it too. The bar then switches to edit mode and `ToolbarCustomizer` lays a
+scrim over the window with a panel under the bar: the palette (the six actions,
+**Separator**, **Space**), the default set as one draggable block, and **Done**.
+Modal like a macOS sheet: Done or Escape closes it.
+
+- **The bar is a list of items** (`src/lib/toolbar.ts`, pure and tested): an
+  action appears at most once, separators and spaces as often as wanted. An
+  empty list is an empty bar — allowed, by decision, even though it serves no
+  purpose. No display mode (icon only, text only): the buttons stay as they are.
+- **One layout for every repository**, in `prefs.json` as `toolbar:
+  Option<Vec<String>>`. `None` means *never customised*, which is distinct from
+  an empty bar — and it is why the default set lives **only** in the frontend
+  (`DEFAULT_TOOLBAR`): an action added by a later version appears by itself for
+  anyone who never touched their bar. Restoring the default writes `None` back.
+  Items travel as strings, sanitised on both sides (`sanitize_toolbar` /
+  `normalizeToolbar`): an unknown one is dropped instead of failing the whole
+  `prefs.json` parse, a duplicated action keeps its first place.
+- **Separators are only drawn between two actions** (`visibleToolbar`), and one
+  at most between the same two. Git Flow vanishes on a repository where it is
+  disabled, and the separator before it would otherwise hang at the end of the
+  bar — that is exactly how the old hard-coded bar behaved. In edit mode the
+  bar shows everything it holds, Git Flow greyed where disabled.
+- **The drag is `branchMerge`'s pattern** (`toolbar.svelte.ts`, a module rune):
+  pointer events, a 4px threshold, pointer capture, the trailing click swallowed
+  by `consumeClick()`. The geometry is measured on `pointerdown` — the tab bar's
+  rule — and the insertion index counts the slots whose middle is left of the
+  cursor, so it cannot oscillate. Released over the bar (its height plus a
+  14px slack: the panel sits right under it), an item is inserted or moved —
+  dragging an action already in the bar from the palette *moves* it; released
+  elsewhere, an item taken from the bar is removed. The default block replaces
+  the whole bar. Keyboard: a palette item's click (or Enter) appends it, Delete
+  on a bar item removes it.
+- **Three layers**: scrim 60, bar 61 (`.repobar.editing`), panel 62. The panel is
+  `fixed` under the bar rather than inside it, because the scrim has to pass
+  *between* the bar and everything else.
+- The action icons moved to `ToolbarIcon.svelte`, and `ToolbarTile.svelte` draws
+  an item as it looks in the bar, inert — the palette, the bar in edit mode and
+  the dragged ghost all use it, so what is dropped is what will be seen.
+
 ### Git Flow: pinned graph columns, and work branches started and finished from the bar
 
 Enabled per repository in its settings, and **the app's own setting**: a
@@ -1101,7 +1145,7 @@ The **Settings screen** (gear, far right of the tab bar) holds *Appearance*, *Te
 
 **Only HTTP(S) remotes appear there — plus every host with a forge behind it**, and `RemoteInfo.uses_http` / `RemoteInfo.forge` are what decide. An SSH remote has a host too, but a token would never be used for its fetches: listing it invites a pointless entry, *unless* its API needs one, which is exactly what a GitHub remote cloned over SSH is. `uses_http` alone still stops `NoCredentials` on an SSH remote from opening the token dialog: that case gets an actionable message about ssh-agent and `~/.ssh` instead. Stashes are **created** from the commit box's Stash tab or the repository bar's Stash button, and **applied / popped / dropped** from the STASHES section (right-click or the ⋮ button). Drop is confirmed inline in the context menu (two clicks), not via a native dialog, since no confirm capability is declared.
 
-**The repository bar** (`RepoBar`, under the tab bar and over the three columns) holds Pull / Push / Fetch, then — past a thin divider, because they are local — **Branch** and **Stash**. Stash stashes at once, GitKraken-style (`quickStash`): under the name being typed in the commit box's Stash tab if there is one, otherwise Git's own `WIP on <branch>`; it is greyed while there is nothing to stash. The three remote ones are all working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters. It is a `1fr auto 1fr` grid — repository name, then the buttons, then the report of the last operation — so the buttons sit at the middle of the *window* whatever the length of the name or of the message; `justify-content` on one row would shift them as soon as either grew. It renders only for a repository tab: the welcome screen, the new-tab page and Settings have no bar, which is why it lives in a `.repo` wrapper inside `App.svelte` rather than as a third row of `.app` — a row declared but empty would move those three views down.
+**The repository bar** (`RepoBar`, under the tab bar and over the three columns) holds, by default, Pull / Push / Fetch, then — past a thin divider, because they are local — **Branch** and **Stash**, then Git Flow; the user can rearrange it (see *The repository bar is customisable*). Stash stashes at once, GitKraken-style (`quickStash`): under the name being typed in the commit box's Stash tab if there is one, otherwise Git's own `WIP on <branch>`; it is greyed while there is nothing to stash. The three remote ones are all working, and all three disabled *together* while any of them runs (`busyRemote`) — the backend holds one reservation for all remote work. Pull and Push carry the current branch's behind/ahead counters. It is a `1fr auto 1fr` grid — repository name, then the buttons, then the report of the last operation — so the buttons sit at the middle of the *window* whatever the length of the name or of the message; `justify-content` on one row would shift them as soon as either grew. It renders only for a repository tab: the welcome screen, the new-tab page and Settings have no bar, which is why it lives in a `.repo` wrapper inside `App.svelte` rather than as a third row of `.app` — a row declared but empty would move those three views down.
 
 **A remote operation is visible from start to end.** `RepoStore.runningOp` names the one that runs (the backend allows one per repository), so only its button stays lit — accent background, still disabled — with its icon moving the way it acts: Fetch spins, Pull bobs down, Push bobs up; the other two just grey out. A 2px indeterminate bar slides just under the bar's bottom border while anything remote (or a merge) runs. On completion, `finish()` sets `flash` — the button's icon is replaced for `FLASH_MS` (1.5 s) by a check (done, or nothing to do), a `!` (needs a look: conflict, divergence, credentials to enter) or a cross (failed), its background tinted to match — and the report on the right takes the tone of the outcome (`opTone`: green when something moved, grey when there was nothing to do, amber when it needs attention; failures still go to the error banner). A tab carries a spinner while its repository runs a remote operation, and **a coloured dot when one finished while the tab was hidden** (`unseenOutcome`, set by `TabsStore` when it routes the event to a tab that isn't active, cleared by `activate()`). `prefers-reduced-motion` keeps the colours and drops the motion.
 

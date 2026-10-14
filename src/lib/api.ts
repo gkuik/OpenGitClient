@@ -309,6 +309,13 @@ export const api = {
    */
   getGraphColumns: () => call<GraphColumnsDto>("get_graph_columns"),
   setGraphColumns: (columns: GraphColumnsDto) => call<void>("set_graph_columns", { columns }),
+  /**
+   * Éléments de la barre du dépôt (préférence globale, persistée) ; `null` tant
+   * qu'elle n'a jamais été personnalisée. Le backend écarte l'inconnu et les
+   * actions en double, comme `normalizeToolbar`.
+   */
+  getToolbar: () => call<string[] | null>("get_toolbar"),
+  setToolbar: (items: string[] | null) => call<void>("set_toolbar", { items }),
   setSidebarWidths: (widths: SidebarWidths) =>
     call<void>("set_sidebar_widths", { widths }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */

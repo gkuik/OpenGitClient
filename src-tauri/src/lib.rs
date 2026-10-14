@@ -79,6 +79,8 @@ pub fn run() {
             commands::set_auto_fetch_minutes,
             commands::get_graph_columns,
             commands::set_graph_columns,
+            commands::get_toolbar,
+            commands::set_toolbar,
             commands::get_remote_info,
             commands::list_remotes,
             commands::list_remote_entries,

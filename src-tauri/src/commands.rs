@@ -682,6 +682,21 @@ pub fn get_graph_columns(state: State<'_, Mutex<AppState>>) -> Result<GraphColum
     Ok(lock(&state)?.graph_columns())
 }
 
+/// Barre du dépôt (préférence globale, persistée) : la liste de ses éléments,
+/// `None` tant qu'elle n'a jamais été personnalisée.
+#[tauri::command]
+pub fn get_toolbar(state: State<'_, Mutex<AppState>>) -> Result<Option<Vec<String>>, AppError> {
+    Ok(lock(&state)?.toolbar())
+}
+
+#[tauri::command]
+pub fn set_toolbar(
+    items: Option<Vec<String>>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.set_toolbar(items)
+}
+
 #[tauri::command]
 pub fn set_graph_columns(
     columns: GraphColumns,
