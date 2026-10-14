@@ -1,0 +1,9 @@
+# Signature des builds de développement macOS par une identité stable, pour que
+# le trousseau cesse de redemander son mot de passe à chaque recompilation —
+# voir `scripts/dev-sign-linker.sh`. Sans le certificat, le script ne fait que
+# l'édition de liens habituelle.
+[target.aarch64-apple-darwin]
+linker = "scripts/dev-sign-linker.sh"
+
+[target.x86_64-apple-darwin]
+linker = "scripts/dev-sign-linker.sh"
