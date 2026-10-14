@@ -383,7 +383,7 @@ pub struct AutoFetchEvent {
 pub struct PushReport {
     /// Distant réellement poussé (résolu par le backend si non précisé).
     pub remote: String,
-    /// Branche poussée — toujours la branche courante.
+    /// Branche poussée — la courante, ou celle du menu d'une branche.
     pub branch: String,
     /// Nom de la branche sur le distant. Égal à `branch` sauf si la barre
     /// d'upstream en a demandé un autre au premier push ; le compte rendu le

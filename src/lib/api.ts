@@ -226,21 +226,33 @@ export const api = {
    * `mode` n'est forcé que sur demande explicite de l'utilisateur, entrée par
    * entrée dans le menu du bouton : il n'est ni persisté ni mémorisé d'un appel
    * à l'autre. `remote` et `target` viennent de la barre d'upstream, au premier
-   * push d'une branche : absents, le backend résout le distant et reprend le
-   * nom local.
+   * push d'une branche : absents, le backend suit l'amont de la branche, ou à
+   * défaut résout le distant et reprend le nom local. `branch` publie une autre
+   * branche que la courante (menu d'une branche).
    */
   pushBranch: (
     repoId: string,
     mode: PushMode = "normal",
     remote?: string,
     target?: string,
+    branch?: string,
   ) =>
     call<void>("push_branch", {
       repoId,
+      branch: branch ?? null,
       mode,
       remote: remote ?? null,
       target: target ?? null,
     }),
+  /** Renomme une branche locale (`git branch -m`). */
+  renameBranch: (repoId: string, name: string, newName: string) =>
+    call<void>("rename_branch", { repoId, name, newName }),
+  /**
+   * Ouvre la page d'une branche sur sa forge : une branche locale par son
+   * amont, une branche de suivi (`remote`) par son propre distant.
+   */
+  openBranchPage: (repoId: string, name: string, remote: boolean) =>
+    call<void>("open_branch_page", { repoId, name, remote }),
   /** Noms des distants déclarés — le choix de la barre d'upstream. Aucun réseau. */
   listRemotes: (repoId: string) => call<string[]>("list_remotes", { repoId }),
   // Gestion des distants (paramètres du dépôt). Chaque écriture renvoie la

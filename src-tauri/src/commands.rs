@@ -376,6 +376,43 @@ pub fn delete_local_branch(
     lock(&state)?.backend(&repo_id)?.delete_local_branch(&name, force)
 }
 
+/// Renomme une branche locale (`git branch -m`). Instantané.
+#[tauri::command]
+pub fn rename_branch(
+    repo_id: String,
+    name: String,
+    new_name: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.backend(&repo_id)?.rename_branch(&name, &new_name)
+}
+
+/// Ouvre la page d'une branche sur sa forge — locale par son amont, distante
+/// par son propre distant. Comme pour le dépôt, le webview ne fournit qu'un
+/// nom de branche ; l'adresse est construite ici et passe le garde-fou
+/// d'`open_forge_page`. Une branche locale sans amont n'est nulle part sur la
+/// forge : `NoUpstream`.
+#[tauri::command]
+pub fn open_branch_page(
+    repo_id: String,
+    name: String,
+    remote: bool,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let (url, branch) = {
+        let guard = lock(&state)?;
+        let backend = guard.backend(&repo_id)?;
+        let (remote_name, branch) = backend
+            .branch_on_remote(&name, remote)?
+            .ok_or(AppError::NoUpstream)?;
+        (backend.remote_info(Some(&remote_name))?.url, branch)
+    };
+    let page = crate::forge::detect(&url)
+        .ok_or(AppError::ForgeUnsupported)?
+        .branch_url(&branch);
+    open_forge_page(page)
+}
+
 /// Nom de l'événement portant le résultat d'une suppression de branche distante.
 const REMOTE_BRANCH_DELETE_EVENT: &str = "repo://remote-branch-deleted";
 
@@ -798,6 +835,7 @@ const PUSH_EVENT: &str = "repo://pushed";
 #[tauri::command]
 pub fn push_branch(
     repo_id: String,
+    branch: Option<String>,
     remote: Option<String>,
     target: Option<String>,
     mode: PushMode,
@@ -815,7 +853,9 @@ pub fn push_branch(
     let path = PathBuf::from(&repo_id);
     std::thread::spawn(move || {
         let outcome = crate::git::open_repository(&path)
-            .and_then(|backend| backend.push(remote.as_deref(), target.as_deref(), mode));
+            .and_then(|backend| {
+                backend.push(branch.as_deref(), remote.as_deref(), target.as_deref(), mode)
+            });
 
         if let Some(state) = app.try_state::<Mutex<AppState>>() {
             if let Ok(mut guard) = state.lock() {

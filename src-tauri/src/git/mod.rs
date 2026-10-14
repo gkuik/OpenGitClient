@@ -188,6 +188,18 @@ pub trait GitBackend: Send {
     /// ([`AppError::BranchCheckedOut`]). La branche distante n'est pas touchée.
     fn delete_local_branch(&self, name: &str, force: bool) -> Result<(), AppError>;
 
+    /// Renomme une branche **locale** (`git branch -m`). Son suivi et sa
+    /// configuration suivent (libgit2 renomme la section `branch.<nom>`), HEAD
+    /// aussi si c'est la courante ; la branche distante, elle, garde son nom.
+    /// Le nouveau nom est vérifié d'abord : [`AppError::InvalidBranchName`],
+    /// [`AppError::BranchExists`].
+    fn rename_branch(&self, name: &str, new_name: &str) -> Result<(), AppError>;
+
+    /// Où une branche vit sur un distant : `(distant, nom là-bas)`. Pour une
+    /// branche de suivi (`remote`), le sien ; pour une branche locale, celui de
+    /// son amont — `None` si elle n'en a pas. Lecture pure, aucun réseau.
+    fn branch_on_remote(&self, name: &str, remote: bool) -> Result<Option<(String, String)>, AppError>;
+
     /// Supprime une branche **sur son distant** (`git push <distant> --delete`),
     /// `name` étant le nom de suivi (`origin/feature/x`). Le distant est celui
     /// de la référence, pas celui qu'un fetch interrogerait. La référence de
@@ -305,8 +317,11 @@ pub trait GitBackend: Send {
     /// le corps d'une commande.
     fn fetch_all(&self) -> Result<FetchAllReport, AppError>;
 
-    /// Publie la **branche courante** sur le dépôt distant (`git push`), et pose
-    /// son suivi si elle n'en avait pas (`push -u`).
+    /// Publie une branche sur le dépôt distant (`git push`) — `branch`, ou la
+    /// **branche courante** sans lui (le bouton Push) —, et pose son suivi si
+    /// elle n'en avait pas (`push -u`). Une seule branche, jamais toutes les
+    /// têtes ; sans `remote` ni `target`, elle part vers son amont, sous le nom
+    /// qu'il porte.
     ///
     /// En [`PushMode::Normal`], un refus du distant remonte tel quel en
     /// [`AppError::PushRejected`], à charge pour l'utilisateur de récupérer les
@@ -322,10 +337,12 @@ pub trait GitBackend: Send {
     /// `target` est le nom de la branche **sur le distant**, quand il diffère
     /// du nom local : c'est ce que la barre d'upstream demande au premier push
     /// (GitKraken : « What remote/branch should X push to and pull from? »).
-    /// Absent, la branche est publiée sous son propre nom. Le suivi posé après
+    /// Absent, la branche est publiée sous le nom de son amont, ou à défaut sous
+    /// son propre nom. Le suivi posé après
     /// coup pointe sur `<remote>/<target>`.
     fn push(
         &self,
+        branch: Option<&str>,
         remote: Option<&str>,
         target: Option<&str>,
         mode: PushMode,

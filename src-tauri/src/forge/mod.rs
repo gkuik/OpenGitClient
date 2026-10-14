@@ -65,6 +65,17 @@ impl ForgeRemote {
     pub fn web_url(&self) -> String {
         format!("https://{}/{}", self.host, self.slug())
     }
+
+    /// Page d'une branche sur la forge. Les « / » d'un nom de branche restent
+    /// des séparateurs — GitHub les attend tels quels —, seuls les caractères
+    /// qui couperaient l'URL (`%`, `#`, `?`) sont encodés.
+    pub fn branch_url(&self, branch: &str) -> String {
+        let encoded = branch
+            .replace('%', "%25")
+            .replace('#', "%23")
+            .replace('?', "%3F");
+        format!("{}/tree/{encoded}", self.web_url())
+    }
 }
 
 /// Compte auquel appartient un jeton, tel que la forge le décrit.
@@ -304,6 +315,19 @@ mod tests {
         let enterprise = detect("https://github.psa-cloud.com/ouw00/app.git").unwrap();
         assert_eq!(enterprise.web_url(), "https://github.psa-cloud.com/ouw00/app");
         assert!(is_openable(&enterprise.web_url()));
+    }
+
+    #[test]
+    fn branch_url_keeps_slashes_and_escapes_what_would_cut_the_url() {
+        let remote = detect("git@github.com:owner/repo.git").unwrap();
+        assert_eq!(
+            remote.branch_url("feature/x"),
+            "https://github.com/owner/repo/tree/feature/x"
+        );
+        assert_eq!(
+            remote.branch_url("fix/#12?"),
+            "https://github.com/owner/repo/tree/fix/%2312%3F"
+        );
     }
 
     #[test]

@@ -119,6 +119,8 @@ pub fn run() {
             commands::open_repository_page,
             commands::delete_local_branch,
             commands::delete_remote_branch,
+            commands::rename_branch,
+            commands::open_branch_page,
             commands::get_external_apps,
             commands::set_external_app,
             commands::reveal_repository,
