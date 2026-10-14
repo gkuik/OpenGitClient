@@ -13,13 +13,17 @@
     soient la longueur du nom et celle du message, alors qu'un centrage par
     répartition les décalerait dès que l'un des deux grandit.
   */
-  import type { Snippet } from "svelte";
   import { elapsed } from "../autoFetch";
   import { autoFetch } from "../autoFetch.svelte";
   import { i18n, t } from "../i18n.svelte";
   import { FLOW_KINDS, flowBase, flowTargets } from "../gitflow";
   import { repo, tabs, type Outcome, type RemoteOp } from "../stores/repo.svelte";
+  import { visibleToolbar, type ToolbarItem } from "../toolbar";
+  import { itemLabel, toolbar } from "../toolbar.svelte";
   import type { PullMode, PushMode } from "../types";
+  import ToolbarCustomizer from "./ToolbarCustomizer.svelte";
+  import ToolbarIcon from "./ToolbarIcon.svelte";
+  import ToolbarTile from "./ToolbarTile.svelte";
 
   // ── Menu du bouton Pull ─────────────────────────────────────────────────────
   // L'entrée « rebase » est là pour dire ce qui existera, mais désactivée : il
@@ -54,7 +58,7 @@
   /** Position du menu du bouton Pull, en coordonnées fenêtre. */
   let pullMenu = $state<{ x: number; y: number } | null>(null);
   const PULL_MENU_W = 268;
-  const PULL_MENU_H = 168;
+  const PULL_MENU_H = 210;
 
   /** Ouvre le menu au point demandé, entièrement ramené dans la fenêtre. */
   function openPullMenu(x: number, y: number) {
@@ -84,7 +88,7 @@
   /** Entrée armée : le second clic l'exécute. */
   let confirmPush = $state<PushMode | null>(null);
   const PUSH_MENU_W = 300;
-  const PUSH_MENU_H = 132;
+  const PUSH_MENU_H = 174;
 
   function openPushMenu(x: number, y: number) {
     pushMenu = {
@@ -125,6 +129,42 @@
     flowMenu = null;
     run();
   }
+
+  // ── Menu de la barre elle-même ──────────────────────────────────────────────
+  //
+  // Le clic droit sur la barre — son fond, le nom, le compte rendu, un bouton
+  // sans menu à lui — ouvre « Customize toolbar… », comme celui de la barre
+  // d'outils du Finder. Pull et Push gardent leur propre menu, qui finit par la
+  // même entrée ; Git Flow, dont le menu s'ouvre déjà au clic gauche, laisse
+  // son clic droit à la barre.
+  let toolbarMenu = $state<{ x: number; y: number } | null>(null);
+  const TOOLBAR_MENU_W = 200;
+  const TOOLBAR_MENU_H = 44;
+
+  function openToolbarMenu(x: number, y: number) {
+    toolbarMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - TOOLBAR_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - TOOLBAR_MENU_H - 8)),
+    };
+  }
+
+  /** Ferme tous les menus et passe la barre en personnalisation. */
+  function customize() {
+    toolbarMenu = null;
+    pullMenu = null;
+    pushMenu = null;
+    confirmPush = null;
+    flowMenu = null;
+    toolbar.startEditing();
+  }
+
+  /** Ce que la barre affiche hors personnalisation. */
+  const shown = $derived(visibleToolbar(toolbar.items, repo.flowEnabled));
+
+  /** L'élément de la barre en cours de glissement, pâli à sa place. */
+  const lifted = $derived(
+    toolbar.drag?.source.kind === "bar" ? toolbar.drag.source.index : null,
+  );
 
   /*
     Le dépôt n'est pas encore chargé le temps d'un aller-retour à l'ouverture
@@ -275,10 +315,32 @@
     pushMenu = null;
     confirmPush = null;
     flowMenu = null;
+    toolbarMenu = null;
+    // Échap pendant un glissement l'abandonne seulement (`toolbar.svelte.ts`) ;
+    // sinon il referme la personnalisation, comme Done.
+    if (toolbar.editing && !toolbar.drag) toolbar.stopEditing();
   }}
 />
 
-<div class="repobar" bind:this={barEl}>
+<!-- Le clic droit et la touche Menu remontent jusqu'ici quand rien en dessous
+     ne les a pris (`defaultPrevented`) : c'est le menu de la barre. -->
+<!-- svelte-ignore a11y_no_static_element_interactions -->
+<div
+  class="repobar"
+  class:editing={toolbar.editing}
+  bind:this={barEl}
+  oncontextmenu={(e) => {
+    if (e.defaultPrevented) return;
+    e.preventDefault();
+    if (!toolbar.editing) openToolbarMenu(e.clientX, e.clientY);
+  }}
+  onkeydown={(e) => {
+    if (e.key !== "ContextMenu" || e.defaultPrevented || toolbar.editing) return;
+    e.preventDefault();
+    const r = (e.target as HTMLElement).getBoundingClientRect();
+    openToolbarMenu(r.left, r.bottom + 2);
+  }}
+>
   <!-- Barre de progression indéterminée, juste sous le filet du bas : visible
        où qu'on regarde dans la fenêtre, tant qu'une opération distante — ou
        une fusion — tourne. Toujours dans le DOM, pour que son apparition et sa
@@ -310,77 +372,57 @@
     </button>
   </div>
 
-  <div class="actions">
-    {@render action({
-      label: "Pull",
-      op: "pull",
-      icon: pullIcon,
-      hint: currentPull.hint,
-      run: currentPull.mode ? () => repo.pull(currentPull.mode!) : undefined,
-      busy: unavailable,
-      count: repo.currentGap?.behind,
-      menu: { open: openPullMenu, hint: t("toolbar.pull.menu.hint") },
-    })}
-    {@render action({
-      label: t("toolbar.push"),
-      op: "push",
-      icon: pushIcon,
-      hint: t("toolbar.push.hint"),
-      run: () => repo.push(),
-      busy: unavailable,
-      count: repo.currentGap?.ahead,
-      menu: { open: openPushMenu, hint: t("toolbar.push.menu.hint") },
-    })}
-    {@render action({
-      label: t("toolbar.fetch"),
-      op: "fetch",
-      icon: fetchIcon,
-      hint: fetchHint,
-      run: () => repo.fetch(),
-      busy: unavailable || autoFetchShown,
-    })}
-    <!-- Les trois boutons de gauche parlent au distant ; celui-ci reste local.
-         Un filet les sépare pour le dire. -->
-    <span class="group-sep" aria-hidden="true"></span>
-    {@render action({
-      label: t("toolbar.branch"),
-      icon: branchIcon,
-      hint: t("toolbar.branch.hint"),
-      run: () => repo.askBranch(),
-      // Il faut un commit où poser la branche (pas de HEAD non né), et rien
-      // qui écrive déjà le working directory.
-      busy: !repo.repoInfo?.head || repo.checkingOut || repo.busy || repo.mergingBranches,
-    })}
-    {@render action({
-      label: t("toolbar.stash"),
-      icon: stashIcon,
-      hint: repo.changeCount === 0 ? t("toolbar.stash.nothing") : t("toolbar.stash.hint"),
-      run: () => repo.quickStash(),
-      // Rien à remiser, ou quelque chose écrit déjà le working directory.
-      busy:
-        repo.changeCount === 0 ||
-        repo.stashing ||
-        repo.checkingOut ||
-        repo.busy ||
-        repo.mergingBranches ||
-        !repo.repoInfo,
-    })}
-    {#if repo.flowEnabled}
-      <!-- Git Flow, troisième groupe : des branches de travail, créées depuis
-           leur branche pérenne et ramenées dedans — un seul bouton, à menu. -->
-      <span class="group-sep" aria-hidden="true"></span>
-      {@render action({
-        label: t("flow.menu"),
-        icon: flowIcon,
-        hint: t("flow.menu.hint"),
-        busy: flowBusy,
-        active: repo.flowRunning,
-        menu: { open: openFlowMenu, hint: "" },
-        dropdown: true,
-        wide: true,
-      })}
+  <!--
+    Les éléments de la barre, dans l'ordre choisi (`toolbar.ts`) — par défaut
+    les trois actions distantes, un filet, les deux locales, un filet, Git Flow.
+    Les filets disent la frontière entre ce qui parle au distant et ce qui
+    reste local ; ils ne sont rendus qu'entre deux actions (`visibleToolbar`).
+  -->
+  <div class="actions" class:editing={toolbar.editing} class:drop-all={toolbar.drag?.source.kind === "default" && toolbar.drag.over}>
+    {#if toolbar.editing}
+      <!-- En personnalisation, la barre montre **tout** ce qu'elle contient —
+           Git Flow compris sur un dépôt où il est désactivé, grisé — et ses
+           éléments se glissent au lieu d'agir. Suppr les retire au clavier. -->
+      {#each toolbar.items as item, i (i)}
+        <div
+          class="tb-slot"
+          class:lifted={lifted === i}
+          data-tb-index={i}
+          role="button"
+          tabindex="0"
+          aria-label={itemLabel(item)}
+          title={item === "gitflow" && !repo.flowEnabled
+            ? `${t("toolbar.custom.flowOff")}\n${t("toolbar.custom.remove.hint")}`
+            : t("toolbar.custom.remove.hint")}
+          onpointerdown={(e) => toolbar.startDrag(e, { kind: "bar", index: i }, barEl)}
+          onkeydown={(e) => {
+            if (e.key !== "Delete" && e.key !== "Backspace") return;
+            e.preventDefault();
+            toolbar.remove(i);
+          }}
+        >
+          <ToolbarTile {item} inBar muted={item === "gitflow" && !repo.flowEnabled} />
+        </div>
+      {:else}
+        <p class="tb-empty">{t("toolbar.custom.empty")}</p>
+      {/each}
+    {:else}
+      {#each shown as item, i (i)}
+        {#if item === "separator"}
+          <span class="group-sep" aria-hidden="true"></span>
+        {:else if item === "space"}
+          <span class="space" aria-hidden="true"></span>
+        {:else}
+          {@render toolbarAction(item)}
+        {/if}
+      {/each}
     {/if}
   </div>
+
+  <!-- Marque d'insertion du glissement en cours, sur la barre. -->
+  {#if toolbar.drag?.over && toolbar.drag.marker !== null}
+    <span class="tb-marker" style="left: {toolbar.drag.marker}px" aria-hidden="true"></span>
+  {/if}
 
   <!-- Compte rendu partagé par les trois : le backend ne laisse pas un fetch et
        un push se croiser sur un même dépôt. Sans lui, un fetch qui ne ramène
@@ -439,6 +481,8 @@
         <span>{entry.label}</span>
       </button>
     {/each}
+    <div class="ctx-sep"></div>
+    {@render customizeEntry()}
   </div>
 {/if}
 
@@ -495,8 +539,46 @@
         {confirmPush === "force" ? t("toolbar.push.force.confirm") : t("toolbar.push.force")}
       </span>
     </button>
+    <div class="ctx-sep"></div>
+    {@render customizeEntry()}
   </div>
 {/if}
+
+<!-- Menu de la barre : une seule entrée, celle du Finder. -->
+{#if toolbarMenu}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => (toolbarMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      toolbarMenu = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu toolbar-menu"
+    style="left: {toolbarMenu.x}px; top: {toolbarMenu.y}px"
+    role="menu"
+  >
+    {@render customizeEntry()}
+  </div>
+{/if}
+
+{#if toolbar.editing}
+  <ToolbarCustomizer bar={barEl} />
+{/if}
+
+<!-- « Customize toolbar… » : seule entrée du menu de la barre, dernière de
+     ceux de Pull et de Push. -->
+{#snippet customizeEntry()}
+  <button class="ctx-item" role="menuitem" onclick={customize}>
+    <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="1.5" y="3" width="13" height="4.5" rx="1" />
+      <path d="M4 10.5v3M8 10.5v3M12 10.5v3" />
+    </svg>
+    <span>{t("toolbar.customize")}</span>
+  </button>
+{/snippet}
 
 <!--
   Menu du bouton Git Flow. Le « Finish » d'abord, seul et séparé : c'est le
@@ -574,6 +656,79 @@
   </svg>
 {/snippet}
 
+<!-- Un bouton d'action de la barre, par son identifiant : ce qui le distingue
+     des autres — son action, son indisponibilité, son menu — est ici. -->
+{#snippet toolbarAction(item: ToolbarItem)}
+  {#if item === "pull"}
+    {@render action({
+      label: t("toolbar.pull"),
+      op: "pull",
+      icon: "pull",
+      hint: currentPull.hint,
+      run: currentPull.mode ? () => repo.pull(currentPull.mode!) : undefined,
+      busy: unavailable,
+      count: repo.currentGap?.behind,
+      menu: { open: openPullMenu, hint: t("toolbar.pull.menu.hint") },
+    })}
+  {:else if item === "push"}
+    {@render action({
+      label: t("toolbar.push"),
+      op: "push",
+      icon: "push",
+      hint: t("toolbar.push.hint"),
+      run: () => repo.push(),
+      busy: unavailable,
+      count: repo.currentGap?.ahead,
+      menu: { open: openPushMenu, hint: t("toolbar.push.menu.hint") },
+    })}
+  {:else if item === "fetch"}
+    {@render action({
+      label: t("toolbar.fetch"),
+      op: "fetch",
+      icon: "fetch",
+      hint: fetchHint,
+      run: () => repo.fetch(),
+      busy: unavailable || autoFetchShown,
+    })}
+  {:else if item === "branch"}
+    {@render action({
+      label: t("toolbar.branch"),
+      icon: "branch",
+      hint: t("toolbar.branch.hint"),
+      run: () => repo.askBranch(),
+      // Il faut un commit où poser la branche (pas de HEAD non né), et rien
+      // qui écrive déjà le working directory.
+      busy: !repo.repoInfo?.head || repo.checkingOut || repo.busy || repo.mergingBranches,
+    })}
+  {:else if item === "stash"}
+    {@render action({
+      label: t("toolbar.stash"),
+      icon: "stash",
+      hint: repo.changeCount === 0 ? t("toolbar.stash.nothing") : t("toolbar.stash.hint"),
+      run: () => repo.quickStash(),
+      // Rien à remiser, ou quelque chose écrit déjà le working directory.
+      busy:
+        repo.changeCount === 0 ||
+        repo.stashing ||
+        repo.checkingOut ||
+        repo.busy ||
+        repo.mergingBranches ||
+        !repo.repoInfo,
+    })}
+  {:else if item === "gitflow"}
+    {@render action({
+      label: t("flow.menu"),
+      icon: "gitflow",
+      hint: t("flow.menu.hint"),
+      busy: flowBusy,
+      active: repo.flowRunning,
+      menu: { open: openFlowMenu, hint: "" },
+      dropdown: true,
+      wide: true,
+    })}
+  {/if}
+{/snippet}
+
 <!--
   Un bouton de la barre : icône au-dessus du libellé.
 
@@ -597,7 +752,7 @@
    * seule. Absente pour un bouton local (Branch).
    */
   op?: RemoteOp;
-  icon: Snippet;
+  icon: ToolbarItem;
   hint: string;
   run?: () => void;
   busy?: boolean;
@@ -639,7 +794,7 @@
     class:flash-warn={flash === "warn"}
     class:flash-danger={flash === "danger"}
     title={a.menu?.hint ? `${hint}\n${a.menu.hint}` : hint}
-    oncontextmenu={a.menu
+    oncontextmenu={a.menu && !a.dropdown
       ? (e) => {
           e.preventDefault();
           a.menu!.open(e.clientX, e.clientY);
@@ -660,7 +815,7 @@
             a.menu?.open(r.left, r.bottom + 2);
           }
         : a.run}
-      onkeydown={a.menu
+      onkeydown={a.menu && !a.dropdown
         ? (e) => {
             // Équivalent clavier du clic droit, comme sur une ligne de stash.
             if (e.key !== "ContextMenu") return;
@@ -676,7 +831,7 @@
         {#if flash}
           {@render outcomeIcon(flash, "action-ic flash-ic")}
         {:else}
-          {@render a.icon()}
+          <span class="action-ic"><ToolbarIcon item={a.icon} /></span>
         {/if}
       {/key}
       {#if a.dropdown}
@@ -712,38 +867,6 @@
   </svg>
 {/snippet}
 
-{#snippet pullIcon()}
-  <!-- Flèche descendante vers une base : le distant vient jusqu'au local. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M8 1.75v7.5" />
-    <path d="M4.75 6 8 9.25 11.25 6" />
-    <path d="M3 13.25h10" />
-  </svg>
-{/snippet}
-
-{#snippet branchIcon()}
-  <!-- Une branche qui se détache d'une ligne : celle de la sidebar, agrandie. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="4.5" cy="3.5" r="1.75" />
-    <circle cx="4.5" cy="12.5" r="1.75" />
-    <circle cx="11.5" cy="5" r="1.75" />
-    <path d="M4.5 5.25v5.5" />
-    <path d="M9.75 6.4A5 5 0 0 1 6.2 11.9" />
-  </svg>
-{/snippet}
-
-{#snippet flowIcon()}
-  <!-- Deux lignes pérennes et une branche de l'une à l'autre : le va-et-vient
-       des branches de travail entre `develop` et `main`. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <circle cx="4" cy="3.5" r="1.75" />
-    <circle cx="12" cy="12.5" r="1.75" />
-    <path d="M4 5.25v9" />
-    <path d="M12 1.75v9" />
-    <path d="M4 6.5c0 3 8 2 8 4.25" />
-  </svg>
-{/snippet}
-
 {#snippet flowNewIcon()}
   <!-- La branche du bouton Branch, avec un « + » : une branche de travail
        qui commence. -->
@@ -764,31 +887,6 @@
     <path d="M4.5 1.75v9" />
     <path d="M9.5 2.5c0 3-5 3.5-5 7" />
     <path d="M10 11l1.75 1.75L15 9.5" />
-  </svg>
-{/snippet}
-
-{#snippet stashIcon()}
-  <!-- Le bac de rangement de la section STASHES, agrandi. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linejoin="round">
-    <path d="M2.5 3.5h11a1 1 0 0 1 1 1v7a1 1 0 0 1-1 1h-11a1 1 0 0 1-1-1v-7a1 1 0 0 1 1-1z" />
-    <path d="M1.5 8.75h3.2l1 1.6h4.6l1-1.6h3.2" stroke-linecap="round" />
-  </svg>
-{/snippet}
-
-{#snippet fetchIcon()}
-  <!-- Flèche circulaire : rapatrie les références sans toucher au working dir. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M13.4 9.2A5.5 5.5 0 1 1 12 4.2" />
-    <path d="M9.4 4.6 12 4.2l-.4-2.6" />
-  </svg>
-{/snippet}
-
-{#snippet pushIcon()}
-  <!-- Flèche montante depuis une base : le local part vers le distant. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
-    <path d="M8 14.25v-7.5" />
-    <path d="M4.75 10 8 6.75 11.25 10" />
-    <path d="M3 2.75h10" />
   </svg>
 {/snippet}
 
@@ -875,7 +973,89 @@
     align-items: center;
     gap: 0.4rem;
   }
-  /* Filet entre les actions distantes et les locales. */
+  /* Un espace : une place vide, de la largeur de son double en personnalisation. */
+  .space {
+    flex: none;
+    width: 24px;
+  }
+
+  /*
+    Personnalisation. La barre passe au-dessus du voile (60) et sous le panneau
+    (62) : c'est elle qu'on remplit, elle doit rester nette. Sa zone d'actions
+    se dessine — en pointillés, puis en accent quand la barre par défaut la
+    survole, celle-ci remplaçant tout.
+  */
+  .repobar.editing {
+    z-index: 61;
+  }
+  /* Le cadre de la zone est un pseudo-élément, pas une bordure ni un
+     rembourrage : rien de ce qui se dessine en personnalisation ne doit
+     changer la mise en page, sinon les boutons s'écartent en y entrant. Il
+     déborde à l'horizontale, où la barre a de la place, et reste en retrait
+     de 2px à la verticale — la zone fait déjà la hauteur de la barre. */
+  .actions.editing {
+    position: relative;
+    /* Contexte d'empilement : le cadre passe derrière les boutons (`-1`)
+       sans tomber sous le fond de la barre. */
+    z-index: 0;
+    min-height: 48px;
+  }
+  .actions.editing::before {
+    content: "";
+    position: absolute;
+    z-index: -1;
+    inset: 2px -6px;
+    border: 1px dashed var(--text-faint);
+    border-radius: 6px;
+    pointer-events: none;
+  }
+  /* Vide, la zone garde une largeur où déposer. */
+  .actions.editing:has(.tb-empty) {
+    min-width: 160px;
+    justify-content: center;
+  }
+  .actions.drop-all::before {
+    border: 2px solid var(--accent);
+    background: var(--accent-bg);
+  }
+  .tb-slot {
+    flex: none;
+    display: flex;
+    border-radius: 5px;
+    cursor: grab;
+    touch-action: none;
+  }
+  .tb-slot:hover {
+    background: var(--bg-raised);
+  }
+  /* L'élément tenu reste à sa place, pâli : l'étiquette qui suit le curseur
+     le représente. */
+  .tb-slot.lifted {
+    opacity: 0.3;
+  }
+  .tb-empty {
+    margin: 0;
+    padding: 0 0.75rem;
+    font-size: 0.74rem;
+    color: var(--text-faint);
+    white-space: nowrap;
+  }
+  .tb-marker {
+    position: absolute;
+    top: 6px;
+    bottom: 6px;
+    width: 2px;
+    margin-left: -1px;
+    border-radius: 1px;
+    background: var(--accent);
+    pointer-events: none;
+  }
+  .toolbar-menu {
+    min-width: 200px;
+  }
+  /* Filet entre les actions distantes et les locales. Son encombrement est
+     repris par `.sep-tile` (`ToolbarTile`) en personnalisation : à garder en
+     accord, sinon les boutons s'écartent en y entrant. */
   .group-sep {
     flex: none;
     width: 1px;
@@ -1010,6 +1190,7 @@
     pointer-events: none;
   }
   .action-ic {
+    display: block;
     width: 20px;
     height: 20px;
   }

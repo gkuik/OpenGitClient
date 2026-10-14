@@ -587,6 +587,35 @@ pub const GRAPH_MESSAGE_COLUMN: &str = "message";
 pub const GRAPH_COL_W_MIN: f32 = 2.5;
 pub const GRAPH_COL_W_MAX: f32 = 40.0;
 
+/// Éléments de la barre du dépôt. Les actions y figurent une fois au plus, les
+/// éléments de mise en page autant qu'on veut.
+///
+/// Des chaînes, comme les colonnes du graph : un élément retiré par une version
+/// ultérieure — ou tapé à la main — ne doit pas faire échouer la lecture de tout
+/// `prefs.json`. Il est simplement écarté. L'ordre par défaut, lui, ne vit que
+/// dans le frontend (`toolbar.ts`) : tant qu'on n'a rien changé, rien n'est
+/// enregistré.
+pub const TOOLBAR_ACTIONS: [&str; 6] = ["pull", "push", "fetch", "branch", "stash", "gitflow"];
+pub const TOOLBAR_SPACERS: [&str; 2] = ["separator", "space"];
+
+/// Ramène une barre lue ou reçue à quelque chose d'affichable : l'inconnu part,
+/// une action en double ne garde que sa première place. Une liste vide reste
+/// vide — une barre sans bouton est un choix, pas une erreur.
+pub fn sanitize_toolbar(items: Vec<String>) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    for item in items {
+        let action = TOOLBAR_ACTIONS.contains(&item.as_str());
+        if !action && !TOOLBAR_SPACERS.contains(&item.as_str()) {
+            continue;
+        }
+        if action && out.contains(&item) {
+            continue;
+        }
+        out.push(item);
+    }
+    out
+}
+
 /// Disposition du tableau du graph — commune à tous les dépôts, persistée dans
 /// `prefs.json`.
 ///
@@ -978,6 +1007,28 @@ mod graph_line_style_tests {
         assert_eq!(known, GraphLineStyle::Diagonal);
         let unknown: GraphLineStyle = serde_json::from_str("\"zigzag\"").unwrap();
         assert_eq!(unknown, GraphLineStyle::Rounded);
+    }
+}
+
+#[cfg(test)]
+mod toolbar_tests {
+    use super::*;
+
+    fn items(list: &[&str]) -> Vec<String> {
+        list.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn unknown_items_and_duplicate_actions_are_dropped() {
+        let got = sanitize_toolbar(items(&[
+            "push", "rebase", "separator", "push", "separator", "space",
+        ]));
+        assert_eq!(got, ["push", "separator", "separator", "space"]);
+    }
+
+    #[test]
+    fn an_empty_toolbar_stays_empty() {
+        assert!(sanitize_toolbar(Vec::new()).is_empty());
     }
 }
 

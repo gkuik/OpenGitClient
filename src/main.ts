@@ -8,6 +8,7 @@ import { graphColumns } from "./lib/graphColumns.svelte";
 import { graphLines } from "./lib/graphLines.svelte";
 import { layout } from "./lib/layout.svelte";
 import { theme } from "./lib/theme.svelte";
+import { toolbar } from "./lib/toolbar.svelte";
 
 // Avant le montage : la palette doit être posée sur `<html>` dès le premier
 // rendu, sinon l'application apparaîtrait en sombre le temps de la corriger.
@@ -25,6 +26,8 @@ layout.init();
 graphColumns.init();
 // Tracé des lignes du graph : même chose.
 graphLines.init();
+// Barre du dépôt : par défaut d'abord, personnalisation ensuite.
+toolbar.init();
 // Intervalle de l'auto-fetch : le premier tour de la minuterie attend de toute
 // façon qu'un dépôt soit chargé.
 autoFetch.init();

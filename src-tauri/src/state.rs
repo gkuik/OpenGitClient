@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    GitFlowConfig, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
+    sanitize_toolbar, GitFlowConfig, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
     ThemeMode, AUTO_FETCH_MINUTES_DEFAULT, AUTO_FETCH_MINUTES_MAX, FONT_SIZE_DEFAULT,
     FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT, GRAPH_ROUNDNESS_MAX,
 };
@@ -279,6 +279,17 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Barre du dépôt, nettoyée à la lecture ; `None` si jamais personnalisée.
+    pub fn toolbar(&self) -> Option<Vec<String>> {
+        self.prefs.toolbar.clone().map(sanitize_toolbar)
+    }
+
+    /// Change la barre du dépôt et la persiste ; `None` la remet par défaut.
+    pub fn set_toolbar(&mut self, items: Option<Vec<String>>) -> Result<(), AppError> {
+        self.prefs.toolbar = items.map(sanitize_toolbar);
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     /// Tracé des lignes du graph.
     pub fn graph_lines(&self) -> GraphLineStyle {
         self.prefs.graph_lines
@@ -488,6 +499,10 @@ struct Prefs {
     graph_roundness: u8,
     /// Intervalle de l'auto-fetch, en minutes ; 0 le désactive.
     auto_fetch_minutes: u8,
+    /// Éléments de la barre du dépôt, dans l'ordre. `None` tant qu'elle n'a
+    /// jamais été personnalisée — distinct d'une liste vide, qui est une barre
+    /// vide voulue.
+    toolbar: Option<Vec<String>>,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -506,6 +521,7 @@ impl Default for Prefs {
             // Écrit à la main lui aussi : dérivé, il vaudrait 0, et un
             // `prefs.json` d'avant ce réglage démarrerait sans auto-fetch.
             auto_fetch_minutes: AUTO_FETCH_MINUTES_DEFAULT,
+            toolbar: None,
         }
     }
 }
