@@ -814,6 +814,11 @@
     padding: 0 0.75rem;
     border-bottom: 1px solid var(--border);
     background: var(--bg);
+    /* Une barre d'outils, comme la barre d'onglets : rien à y copier. Posé sur
+       la barre entière et non sur les seuls boutons, sinon une sélection
+       commencée sur le nom du dépôt s'étendrait jusqu'aux libellés. */
+    user-select: none;
+    -webkit-user-select: none;
   }
   /* Nom et roue dentée : la roue suit le nom au lieu d'être repoussée au bout
      de la cellule, et c'est le nom qui s'abrège quand la place manque. */
