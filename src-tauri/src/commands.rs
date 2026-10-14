@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
-    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
+    AutoFetchEvent, BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
@@ -428,6 +428,59 @@ pub fn fetch_remote(
     Ok(())
 }
 
+/// Nom de l'événement portant le résultat d'un auto-fetch (voir `src/lib/api.ts`).
+const AUTO_FETCH_EVENT: &str = "repo://auto-fetched";
+
+/// Auto-fetch : récupère **tous** les distants en tâche de fond.
+///
+/// Même mécanique que [`fetch_remote`] — réservation réseau partagée, thread
+/// dédié qui rouvre son propre backend, réservation relâchée avant
+/// l'émission — mais un événement à lui : personne n'a cliqué, le frontend ne
+/// rend donc pas compte de son issue comme de celle d'un Fetch. C'est le frontend qui décide quand
+/// l'appeler ; le backend ne tient aucune minuterie, il n'en saurait pas plus
+/// que lui sur l'onglet affiché ni sur ce que l'utilisateur est en train de
+/// faire.
+#[tauri::command]
+pub fn auto_fetch(
+    repo_id: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    {
+        let mut guard = lock(&state)?;
+        guard.backend(&repo_id)?;
+        if !guard.begin_network(&repo_id) {
+            return Err(AppError::NetworkBusy);
+        }
+    }
+
+    let path = PathBuf::from(&repo_id);
+    std::thread::spawn(move || {
+        let outcome = crate::git::open_repository(&path).and_then(|backend| backend.fetch_all());
+
+        if let Some(state) = app.try_state::<Mutex<AppState>>() {
+            if let Ok(mut guard) = state.lock() {
+                guard.end_network(&repo_id);
+            }
+        }
+
+        let (report, error) = match outcome {
+            Ok(report) => (Some(report), None),
+            Err(e) => (None, Some(e)),
+        };
+        let _ = app.emit(
+            AUTO_FETCH_EVENT,
+            AutoFetchEvent {
+                repo_id,
+                report,
+                error,
+            },
+        );
+    });
+
+    Ok(())
+}
+
 /// Nom de l'événement portant le résultat d'un pull (voir `src/lib/api.ts`).
 const PULL_EVENT: &str = "repo://pulled";
 
@@ -608,6 +661,18 @@ pub fn get_graph_roundness(state: State<'_, Mutex<AppState>>) -> Result<u8, AppE
 #[tauri::command]
 pub fn set_graph_roundness(roundness: u8, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
     lock(&state)?.set_graph_roundness(roundness)
+}
+
+/// Intervalle de l'auto-fetch, en minutes (préférence globale, persistée,
+/// ramenée dans ses bornes) ; 0 le désactive.
+#[tauri::command]
+pub fn get_auto_fetch_minutes(state: State<'_, Mutex<AppState>>) -> Result<u8, AppError> {
+    Ok(lock(&state)?.auto_fetch_minutes())
+}
+
+#[tauri::command]
+pub fn set_auto_fetch_minutes(minutes: u8, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.set_auto_fetch_minutes(minutes)
 }
 
 /// Disposition du tableau du graph (préférence globale, persistée). Le backend

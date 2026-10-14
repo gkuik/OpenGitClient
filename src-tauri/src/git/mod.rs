@@ -9,7 +9,7 @@
 use std::path::{Path, PathBuf};
 
 use crate::dto::{
-    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchReport, FileContent, FileDiff,
+    BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchAllReport, FetchReport, FileContent, FileDiff,
     FileSource, Identity,
     MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry, TagEntry, TagPushReport,
@@ -265,6 +265,15 @@ pub trait GitBackend: Send {
     /// indéfiniment si la connexion ne répond pas. Voir `commands::fetch_remote`,
     /// qui l'exécute sur un thread dédié.
     fn fetch(&self, remote: Option<&str>) -> Result<FetchReport, AppError>;
+
+    /// Récupère **tous** les distants déclarés, l'un après l'autre — l'auto-fetch.
+    ///
+    /// Un distant en échec n'arrête pas les suivants : son erreur voyage dans le
+    /// rapport, à côté de ce que les autres ont fait bouger. Seule l'absence de
+    /// tout distant ([`AppError::NoRemote`]) ou un dépôt illisible échoue en
+    /// entier. Mêmes contraintes réseau que [`GitBackend::fetch`] : jamais dans
+    /// le corps d'une commande.
+    fn fetch_all(&self) -> Result<FetchAllReport, AppError>;
 
     /// Publie la **branche courante** sur le dépôt distant (`git push`), et pose
     /// son suivi si elle n'en avait pas (`push -u`).

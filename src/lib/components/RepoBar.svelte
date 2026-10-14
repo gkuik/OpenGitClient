@@ -14,6 +14,8 @@
     répartition les décalerait dès que l'un des deux grandit.
   */
   import type { Snippet } from "svelte";
+  import { elapsed } from "../autoFetch";
+  import { autoFetch } from "../autoFetch.svelte";
   import { i18n, t } from "../i18n.svelte";
   import { FLOW_KINDS, flowBase, flowTargets } from "../gitflow";
   import { repo, tabs, type Outcome, type RemoteOp } from "../stores/repo.svelte";
@@ -110,13 +112,24 @@
   */
   const unavailable = $derived(repo.busyRemote || !repo.repoInfo);
 
+  /*
+    Auto-fetch : Fetch s'allume exactement comme pour un fetch cliqué — fond
+    d'accent, icône qui tourne, barre de progression —, et se désactive, un
+    second fetch n'ayant rien à faire. Pull et Push, eux, restent cliquables :
+    leur clic attend la fin de l'auto-fetch au lieu d'échouer. Pas quand un
+    geste de l'utilisateur tourne déjà : c'est son bouton qui est allumé.
+  */
+  const autoFetchShown = $derived(repo.autoFetchShown && !repo.runningOp);
+
   /**
    * Couleur du compte rendu : l'issue de la dernière opération. Pendant qu'une
    * opération tourne, le texte reste neutre — c'est le bouton et la barre de
    * progression qui travaillent.
    */
   const tone = $derived(
-    repo.runningOp || repo.mergingBranches || repo.flowRunning ? null : repo.opTone,
+    repo.runningOp || autoFetchShown || repo.mergingBranches || repo.flowRunning
+      ? null
+      : repo.opTone,
   );
 
   /*
@@ -147,12 +160,47 @@
           ? t("toolbar.status.pulling")
           : repo.pushingTag
             ? t("toolbar.status.pushingTag")
-            : repo.mergingBranches
+            : autoFetchShown
+              ? t("toolbar.status.autoFetching")
+              : repo.mergingBranches
               ? t("toolbar.status.merging")
               : repo.flowRunning && repo.flowFinish
                 ? t("flow.finish.running", { branch: repo.flowFinish.branch })
                 : repo.opStatus,
   );
+
+  /*
+    Horloge de l'infobulle de Fetch — « Last fetch: 3 minutes ago ». Elle n'a
+    pas à être plus fine que la minute, l'unité la plus petite qu'elle affiche.
+  */
+  let now = $state(Date.now());
+  $effect(() => {
+    const id = setInterval(() => (now = Date.now()), 30_000);
+    return () => clearInterval(id);
+  });
+  const relative = $derived(new Intl.RelativeTimeFormat(i18n.locale, { numeric: "auto" }));
+
+  /**
+   * Seconde ligne de l'infobulle de Fetch : l'état de l'auto-fetch, puis à
+   * quand remonte le dernier passage sur le réseau — auto ou manuel, c'est le
+   * même `lastFetchAt` qui décide de la prochaine échéance.
+   */
+  const fetchHint = $derived.by(() => {
+    const auto =
+      repo.autoFetchPause === "credentials"
+        ? t("toolbar.fetch.auto.paused")
+        : repo.autoFetchPause === "noRemote"
+          ? t("toolbar.fetch.auto.noRemote")
+          : autoFetch.minutes === 0
+            ? t("toolbar.fetch.auto.off")
+            : t("toolbar.fetch.auto", { n: autoFetch.minutes });
+    const lines = [t("toolbar.fetch.hint"), auto];
+    if (repo.lastFetchAt > 0) {
+      const { value, unit } = elapsed(now - repo.lastFetchAt);
+      lines.push(t("toolbar.fetch.last", { when: relative.format(value, unit) }));
+    }
+    return lines.join("\n");
+  });
 </script>
 
 <!-- Échap referme les deux menus, comme ceux de la colonne des branches. -->
@@ -172,7 +220,7 @@
        disparition se fassent en fondu plutôt qu'en saut. -->
   <div
     class="progress"
-    class:on={repo.busyRemote || repo.mergingBranches || repo.flowRunning}
+    class:on={repo.busyRemote || autoFetchShown || repo.mergingBranches || repo.flowRunning}
     aria-hidden="true"
   ></div>
 
@@ -222,9 +270,9 @@
       label: t("toolbar.fetch"),
       op: "fetch",
       icon: fetchIcon,
-      hint: t("toolbar.fetch.hint"),
+      hint: fetchHint,
       run: () => repo.fetch(),
-      busy: unavailable,
+      busy: unavailable || autoFetchShown,
     })}
     <!-- Les trois boutons de gauche parlent au distant ; celui-ci reste local.
          Un filet les sépare pour le dire. -->
@@ -459,7 +507,8 @@
   wide?: boolean;
 })}
   {@const disabled = !a.run || a.busy}
-  {@const running = a.op !== undefined && repo.runningOp === a.op}
+  {@const running =
+    a.op !== undefined && (repo.runningOp === a.op || (a.op === "fetch" && autoFetchShown))}
   {@const flash = a.op !== undefined && repo.flash?.op === a.op ? repo.flash.outcome : null}
   {@const hint = a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
   <!--

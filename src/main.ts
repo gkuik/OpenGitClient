@@ -1,6 +1,7 @@
 import { mount } from "svelte";
 import "./app.css";
 import App from "./App.svelte";
+import { autoFetch } from "./lib/autoFetch.svelte";
 import { font } from "./lib/font.svelte";
 import { i18n } from "./lib/i18n.svelte";
 import { graphColumns } from "./lib/graphColumns.svelte";
@@ -24,6 +25,9 @@ layout.init();
 graphColumns.init();
 // Tracé des lignes du graph : même chose.
 graphLines.init();
+// Intervalle de l'auto-fetch : le premier tour de la minuterie attend de toute
+// façon qu'un dépôt soit chargé.
+autoFetch.init();
 
 const app = mount(App, {
   target: document.getElementById("app")!,
