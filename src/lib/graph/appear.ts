@@ -85,13 +85,15 @@ export function freshCommits(prev: Seen | null, next: Seen, layout: GraphLayout)
   return out;
 }
 
-// ── Références distantes déplacées ───────────────────────────────────────────
+// ── Branches déplacées ───────────────────────────────────────────────────────
 
 /**
- * Une branche distante qui a changé de commit — un push l'amène sur le commit
- * local qu'on vient de publier, un fetch sur ce qu'il a téléchargé. `from` est
- * le commit d'où elle part, `null` quand elle n'existait pas (premier push) ou
- * que son ancien commit n'est plus affiché (push forcé) : elle apparaît alors
+ * Une branche qui a changé de commit. Distante, un push l'amène sur le commit
+ * local qu'on vient de publier, un fetch sur ce qu'il a téléchargé ; locale,
+ * un commit la fait avancer d'un cran, un pull en avance rapide ou un merge
+ * sur une branche inactive la portent plus haut. `from` est le commit d'où
+ * elle part, `null` quand elle n'existait pas (premier push) ou que son ancien
+ * commit n'est plus affiché (push forcé, reset lointain) : elle apparaît alors
  * sur place au lieu de glisser.
  */
 export interface RefMove {
@@ -118,6 +120,24 @@ export function movedRemoteRefs(prev: Seen | null, next: Seen): RefMove[] {
     if (was === to) continue;
     const from = was !== undefined && next.oids.has(was) ? was : null;
     out.push({ name, from, to });
+  }
+  return out;
+}
+
+/**
+ * Branches locales arrivées sur un autre commit. Contrairement aux distantes,
+ * une branche **absente** de l'affichage précédent n'est pas un déplacement :
+ * c'est une naissance, que `newLocalBranches` traite à part — elle monte à sa
+ * place au lieu de glisser. Ne restent que celles qui existaient déjà.
+ */
+export function movedLocalRefs(prev: Seen | null, next: Seen): RefMove[] {
+  if (!reloaded(prev, next)) return [];
+  const before = localRefs(prev.commits);
+  const out: RefMove[] = [];
+  for (const [name, to] of localRefs(next.commits)) {
+    const was = before.get(name);
+    if (was === undefined || was === to) continue;
+    out.push({ name, from: next.oids.has(was) ? was : null, to });
   }
   return out;
 }

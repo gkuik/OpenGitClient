@@ -11,6 +11,7 @@ import {
   easeOutBack,
   freshCommits,
   morphProgress,
+  movedLocalRefs,
   movedRemoteRefs,
   newLocalBranches,
   PULSE_MS,
@@ -107,6 +108,39 @@ describe("movedRemoteRefs", () => {
     const before = view("r", history());
     expect(movedRemoteRefs(before.seen, view("r", history()).seen)).toEqual([]);
     expect(movedRemoteRefs(before.seen, view("autre", history()).seen)).toEqual([]);
+  });
+});
+
+describe("movedLocalRefs", () => {
+  const head = (name: string): GraphRef => ({ name, kind: "head" });
+
+  it("commit : la branche courante avance d'un cran", () => {
+    const before = view("r", [at(c("B", "A"), head("main")), c("A")]);
+    const after = view("r", [at(c("C", "B"), head("main")), c("B", "A"), c("A")]);
+    expect(movedLocalRefs(before.seen, after.seen)).toEqual([{ name: "main", from: "B", to: "C" }]);
+  });
+
+  it("avance rapide d'une branche inactive, sans toucher aux autres", () => {
+    const before = view("r", [at(c("C", "B"), head("develop")), c("B", "A"), at(c("A"), local("main"))]);
+    const after = view("r", [at(c("C", "B"), head("develop"), local("main")), c("B", "A"), c("A")]);
+    expect(movedLocalRefs(before.seen, after.seen)).toEqual([{ name: "main", from: "A", to: "C" }]);
+  });
+
+  it("ancien commit plus affiché : la branche se pose sur place", () => {
+    const before = view("r", [at(c("B", "A"), local("x")), c("A")]);
+    const after = view("r", [at(c("Z"), local("x"))]);
+    expect(movedLocalRefs(before.seen, after.seen)).toEqual([{ name: "x", from: null, to: "Z" }]);
+  });
+
+  it("une naissance n'est pas un déplacement, ni un checkout, ni un autre onglet", () => {
+    const before = view("r", [at(c("B", "A"), head("main")), at(c("A"), local("old"))]);
+    // Checkout de `old` : HEAD change de branche, aucune ne change de commit.
+    const checkout = view("r", [at(c("B", "A"), local("main")), at(c("A"), head("old"))]);
+    expect(movedLocalRefs(before.seen, checkout.seen)).toEqual([]);
+    const born = view("r", [at(c("B", "A"), head("main"), local("neuve")), at(c("A"), local("old"))]);
+    expect(movedLocalRefs(before.seen, born.seen)).toEqual([]);
+    const other = view("autre", [at(c("C", "B"), head("main")), c("B", "A"), c("A")]);
+    expect(movedLocalRefs(before.seen, other.seen)).toEqual([]);
   });
 });
 

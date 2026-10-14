@@ -34,6 +34,8 @@
   {@const open = repo.isDirOpen(node.path)}
   <button
     class="dir"
+    data-flip="d:{node.path}"
+    data-flip-section={staged ? "s" : "u"}
     style="padding-left: calc(var(--row-inset) + {depth * 12}px)"
     onclick={() => repo.toggleDir(node.path)}
     oncontextmenu={openMenu}
