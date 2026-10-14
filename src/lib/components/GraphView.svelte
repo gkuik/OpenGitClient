@@ -88,6 +88,20 @@
    * n'y est pas.
    */
   const GHOST_ALPHA = 0.35;
+  /*
+    Effet néon (Settings › Graph, désactivé par défaut) : chaque ligne et chaque
+    point luit de sa propre couleur — l'ombre du canvas, floue et sans
+    décalage. En pixels CSS ; plus discret en thème clair, où un halo coloré sur
+    du blanc tourne vite au flou.
+  */
+  const NEON_BLUR = 8;
+  const NEON_BLUR_LIGHT = 4;
+  /**
+   * Halo de la passe en cours, en pixels **du canvas** : `shadowBlur` ignore la
+   * transformation, d'où le facteur `devicePixelRatio` appliqué dans `draw()`.
+   * 0 sans néon — une ombre nulle ne coûte rien au tracé.
+   */
+  let glow = 0;
   /** Marge horizontale de la gouttière, de chaque côté des lanes. */
   const PAD_X = 8;
   /*
@@ -945,6 +959,8 @@
     const x1 = laneX(edge.fromLane);
     const x2 = laneX(edge.toLane);
     ctx.strokeStyle = lanes[edge.color];
+    ctx.shadowColor = lanes[edge.color];
+    ctx.shadowBlur = glow;
     if (edge.ghost) {
       // Prolongement Git Flow : une verticale atténuée, qui s'arrête au
       // bord du point quand elle l'atteint — le cercle WIP est vide, elle
@@ -1001,6 +1017,8 @@
     ctx.beginPath();
     ctx.arc(x, mid, WIP_R, 0, Math.PI * 2);
     ctx.strokeStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
     ctx.stroke();
     ctx.setLineDash([]);
   }
@@ -1014,7 +1032,11 @@
     ctx.beginPath();
     ctx.arc(x, mid, r, 0, Math.PI * 2);
     ctx.fillStyle = color;
+    ctx.shadowColor = color;
+    ctx.shadowBlur = glow;
     ctx.fill();
+    // L'anneau sombre ne luit pas : il est là pour détacher le point.
+    ctx.shadowBlur = 0;
     ctx.strokeStyle = ring;
     ctx.lineWidth = 2;
     ctx.stroke();
@@ -1055,6 +1077,11 @@
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
     ctx.lineWidth = LINE_W;
+    // Lu ici, comme le tracé et le thème : changer le réglage redessine.
+    glow = graphLines.neon ? (theme.dark ? NEON_BLUR : NEON_BLUR_LIGHT) * dpr : 0;
+    ctx.shadowOffsetX = 0;
+    ctx.shadowOffsetY = 0;
+    ctx.shadowBlur = 0;
 
     const now = performance.now();
     // Les animations finies sont retirées toutes, visibles ou non : une
@@ -1195,6 +1222,8 @@
         ctx.beginPath();
         ctx.arc(x, mid, DOT_R + 2 + 9 * p.radius, 0, Math.PI * 2);
         ctx.strokeStyle = color;
+        ctx.shadowColor = color;
+        ctx.shadowBlur = glow;
         ctx.globalAlpha = 0.7 * p.alpha;
         ctx.lineWidth = 1.5;
         ctx.stroke();

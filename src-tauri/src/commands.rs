@@ -751,6 +751,17 @@ pub fn set_graph_lines(
     lock(&state)?.set_graph_lines(style)
 }
 
+/// Effet néon du graph (préférence globale, persistée ; désactivé par défaut).
+#[tauri::command]
+pub fn get_graph_neon(state: State<'_, Mutex<AppState>>) -> Result<bool, AppError> {
+    Ok(lock(&state)?.graph_neon())
+}
+
+#[tauri::command]
+pub fn set_graph_neon(neon: bool, state: State<'_, Mutex<AppState>>) -> Result<(), AppError> {
+    lock(&state)?.set_graph_neon(neon)
+}
+
 /// Arrondi des tracés arrondi et courbe du graph, en pourcentage (préférence
 /// globale, persistée, ramenée dans ses bornes).
 #[tauri::command]

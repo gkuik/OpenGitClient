@@ -411,6 +411,29 @@
           {t("settings.graph.roundness.reset")}
         </button>
       </div>
+
+      <!-- Néon : désactivé par défaut. Deux positions exclusives, donc le
+           segmenté du thème plutôt qu'une case à cocher. -->
+      <div class="slider">
+        <span>{t("settings.graph.neon")}</span>
+        <div class="seg neon" role="group" aria-label={t("settings.graph.neon")}>
+          <button
+            class:active={!graphLines.neon}
+            aria-pressed={!graphLines.neon}
+            onclick={() => graphLines.setNeon(false)}
+          >
+            {t("settings.graph.neon.off")}
+          </button>
+          <button
+            class:active={graphLines.neon}
+            aria-pressed={graphLines.neon}
+            title={t("settings.graph.neon.hint")}
+            onclick={() => graphLines.setNeon(true)}
+          >
+            {t("settings.graph.neon.on")}
+          </button>
+        </div>
+      </div>
     </section>
 
     <!-- Auto-fetch : le réglage de GitKraken, mêmes bornes, même défaut. Un
@@ -818,6 +841,11 @@
     border: 1px solid var(--border);
     border-radius: 6px;
     overflow: hidden;
+  }
+  /* Dans une rangée de réglage, le segmenté n'a pas à repousser la suite :
+     c'est la rangée qui porte la marge. */
+  .seg.neon {
+    margin-bottom: 0;
   }
   .seg button {
     border: none;

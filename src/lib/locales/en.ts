@@ -501,6 +501,10 @@ export const en = {
   "settings.graph.roundness.hint": "Only for rounded corners and curves",
   "settings.graph.roundness.reset": "Reset",
   "settings.graph.roundness.reset.hint": "Back to the default roundness, {n} %",
+  "settings.graph.neon": "Neon effect",
+  "settings.graph.neon.off": "Off",
+  "settings.graph.neon.on": "On",
+  "settings.graph.neon.hint": "Lines and dots glow in their own colour",
   "settings.autoFetch": "Auto-fetch",
   "settings.autoFetch.intro":
     "The repository on screen fetches all of its remotes in the background at this interval. Only remote branches and tags move — {nothing}. A remote asking for credentials pauses it until the next Fetch.",
