@@ -104,6 +104,28 @@
     void repo.push(mode);
   }
 
+  // ── Menu du bouton Git Flow ─────────────────────────────────────────────────
+  //
+  // Un seul bouton pour tout Git Flow, et son menu s'ouvre au clic gauche : le
+  // bouton n'a pas d'action propre à lancer, contrairement à Pull et Push. En
+  // tête, le « Finish » de la branche courante quand elle est d'une sorte Git
+  // Flow ; dessous, toujours, les quatre « New ».
+  let flowMenu = $state<{ x: number; y: number } | null>(null);
+  const FLOW_MENU_W = 240;
+  const FLOW_MENU_H = 190;
+
+  function openFlowMenu(x: number, y: number) {
+    flowMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - FLOW_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - FLOW_MENU_H - 8)),
+    };
+  }
+
+  function runFlow(run: () => void) {
+    flowMenu = null;
+    run();
+  }
+
   /*
     Le dépôt n'est pas encore chargé le temps d'un aller-retour à l'ouverture
     d'un onglet. La barre reste en place — sa hauteur ne doit pas sauter — mais
@@ -176,10 +198,9 @@
   );
 
   /*
-    Git Flow : un bouton par sorte de branche de travail, qui devient son
-    « Finish » quand on est sur une branche de cette sorte. Créer ou terminer
-    écrit le working directory : indisponible tant qu'une autre écriture
-    tourne, comme Branch et Stash.
+    Git Flow : créer ou terminer une branche de travail écrit le working
+    directory — le bouton est indisponible tant qu'une autre écriture tourne,
+    comme Branch et Stash.
   */
   const flowBusy = $derived(
     !repo.repoInfo ||
@@ -246,13 +267,14 @@
   });
 </script>
 
-<!-- Échap referme les deux menus, comme ceux de la colonne des branches. -->
+<!-- Échap referme les menus, comme ceux de la colonne des branches. -->
 <svelte:window
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     pullMenu = null;
     pushMenu = null;
     confirmPush = null;
+    flowMenu = null;
   }}
 />
 
@@ -345,40 +367,18 @@
     })}
     {#if repo.flowEnabled}
       <!-- Git Flow, troisième groupe : des branches de travail, créées depuis
-           leur branche pérenne et ramenées dedans. -->
+           leur branche pérenne et ramenées dedans — un seul bouton, à menu. -->
       <span class="group-sep" aria-hidden="true"></span>
-      {#each FLOW_KINDS as kind (kind)}
-        {@const finishing = repo.currentFlowKind === kind}
-        {@const branch = repo.repoInfo?.branch ?? ""}
-        {#if finishing}
-          {@render action({
-            label: t(`flow.finish.${kind}`),
-            icon: flowFinishIcon,
-            hint:
-              repo.changeCount > 0
-                ? t("flow.finish.dirty")
-                : t("flow.finish.hint", {
-                    branch,
-                    targets: lists.format(flowTargets(kind, repo.flowConfig)),
-                  }),
-            run: () => repo.askFinish(),
-            // Une branche se termine sur un working directory propre — c'est
-            // ce que demande git flow, et une fusion ne doit pas emporter
-            // du travail en cours vers `main`.
-            busy: flowBusy || repo.changeCount > 0,
-            wide: true,
-          })}
-        {:else}
-          {@render action({
-            label: t(`flow.new.${kind}`),
-            icon: flowNewIcon,
-            hint: t(`flow.new.hint.${kind}`, { base: flowBase(kind, repo.flowConfig) }),
-            run: () => repo.askFlowBranch(kind),
-            busy: flowBusy,
-            wide: true,
-          })}
-        {/if}
-      {/each}
+      {@render action({
+        label: t("flow.menu"),
+        icon: flowIcon,
+        hint: t("flow.menu.hint"),
+        busy: flowBusy,
+        active: repo.flowRunning,
+        menu: { open: openFlowMenu, hint: "" },
+        dropdown: true,
+        wide: true,
+      })}
     {/if}
   </div>
 
@@ -498,6 +498,61 @@
   </div>
 {/if}
 
+<!--
+  Menu du bouton Git Flow. Le « Finish » d'abord, seul et séparé : c'est le
+  geste qui conclut le travail en cours, quand il y en a un. Il exige un
+  working directory propre — c'est ce que demande git flow, et une fusion ne
+  doit pas emporter du travail en cours vers `main`.
+-->
+{#if flowMenu}
+  {@const kind = repo.flowEnabled ? repo.currentFlowKind : null}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => (flowMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      flowMenu = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu flow-menu"
+    style="left: {flowMenu.x}px; top: {flowMenu.y}px"
+    role="menu"
+  >
+    {#if kind}
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={flowBusy || repo.changeCount > 0}
+        title={repo.changeCount > 0
+          ? t("flow.finish.dirty")
+          : t("flow.finish.hint", {
+              branch: repo.repoInfo?.branch ?? "",
+              targets: lists.format(flowTargets(kind, repo.flowConfig)),
+            })}
+        onclick={() => runFlow(() => repo.askFinish())}
+      >
+        {@render flowFinishIcon()}
+        <span>{t(`flow.finish.${kind}`)}</span>
+      </button>
+      <div class="ctx-sep"></div>
+    {/if}
+    {#each FLOW_KINDS as k (k)}
+      <button
+        class="ctx-item"
+        role="menuitem"
+        disabled={flowBusy}
+        title={t(`flow.new.hint.${k}`, { base: flowBase(k, repo.flowConfig) })}
+        onclick={() => runFlow(() => repo.askFlowBranch(k))}
+      >
+        {@render flowNewIcon()}
+        <span>{t(`flow.new.${k}`)}</span>
+      </button>
+    {/each}
+  </div>
+{/if}
+
 <!-- La flèche du push, avec une coche : on n'écrase que ce qu'on a vérifié. -->
 {#snippet leaseIcon()}
   <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
@@ -531,6 +586,9 @@
   les branches de la colonne de gauche. Il n'y a donc plus rien à voir dessus —
   d'où la seconde ligne d'infobulle, seul endroit qui puisse encore annoncer le
   menu maintenant que la flèche a disparu.
+
+  `dropdown` en fait un menu déroulant (Git Flow) : le clic gauche l'ouvre sous
+  le bouton, qui n'a pas d'action à lui, et un ▾ l'annonce à côté du libellé.
 -->
 {#snippet action(a: {
   label: string;
@@ -548,12 +606,18 @@
   menu?: { hint: string; open: (x: number, y: number) => void };
   /** Libellé trop long pour un carré (Git Flow) : le bouton s'élargit. */
   wide?: boolean;
+  /** Le clic gauche ouvre `menu` sous le bouton, au lieu d'une action. */
+  dropdown?: boolean;
+  /** Allumé comme un bouton en cours, hors des opérations distantes (Finish). */
+  active?: boolean;
 })}
-  {@const disabled = !a.run || a.busy}
+  {@const live = a.run !== undefined || a.dropdown === true}
+  {@const disabled = !live || a.busy}
   {@const running =
-    a.op !== undefined && (repo.runningOp === a.op || (a.op === "fetch" && autoFetchShown))}
+    a.active === true ||
+    (a.op !== undefined && (repo.runningOp === a.op || (a.op === "fetch" && autoFetchShown)))}
   {@const flash = a.op !== undefined && repo.flash?.op === a.op ? repo.flash.outcome : null}
-  {@const hint = a.run ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
+  {@const hint = live ? a.hint : `${a.hint} (${t("common.notAvailable")})`}
   <!--
     Le cadre porte l'infobulle et le clic droit ; le bouton ne porte que
     l'action. Ce partage n'est pas cosmétique : WebKit n'émet aucun événement de
@@ -574,7 +638,7 @@
     class:flash-neutral={flash === "neutral"}
     class:flash-warn={flash === "warn"}
     class:flash-danger={flash === "danger"}
-    title={a.menu ? `${hint}\n${a.menu.hint}` : hint}
+    title={a.menu?.hint ? `${hint}\n${a.menu.hint}` : hint}
     oncontextmenu={a.menu
       ? (e) => {
           e.preventDefault();
@@ -590,7 +654,12 @@
       {disabled}
       aria-busy={running}
       aria-haspopup={a.menu ? "menu" : undefined}
-      onclick={a.run}
+      onclick={a.dropdown
+        ? (e) => {
+            const r = e.currentTarget.getBoundingClientRect();
+            a.menu?.open(r.left, r.bottom + 2);
+          }
+        : a.run}
       onkeydown={a.menu
         ? (e) => {
             // Équivalent clavier du clic droit, comme sur une ligne de stash.
@@ -610,7 +679,16 @@
           {@render a.icon()}
         {/if}
       {/key}
-      <span>{a.label}</span>
+      {#if a.dropdown}
+        <span class="drop">
+          <span>{a.label}</span>
+          <svg class="drop-ic" viewBox="0 0 16 16" fill="currentColor" aria-hidden="true">
+            <path d="M3.5 6 8 10.5 12.5 6Z" />
+          </svg>
+        </span>
+      {:else}
+        <span>{a.label}</span>
+      {/if}
       {#if a.count}
         <span class="badge">{a.count}</span>
       {/if}
@@ -654,10 +732,22 @@
   </svg>
 {/snippet}
 
+{#snippet flowIcon()}
+  <!-- Deux lignes pérennes et une branche de l'une à l'autre : le va-et-vient
+       des branches de travail entre `develop` et `main`. -->
+  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+    <circle cx="4" cy="3.5" r="1.75" />
+    <circle cx="12" cy="12.5" r="1.75" />
+    <path d="M4 5.25v9" />
+    <path d="M12 1.75v9" />
+    <path d="M4 6.5c0 3 8 2 8 4.25" />
+  </svg>
+{/snippet}
+
 {#snippet flowNewIcon()}
   <!-- La branche du bouton Branch, avec un « + » : une branche de travail
        qui commence. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="4.5" cy="3.5" r="1.75" />
     <circle cx="4.5" cy="12.5" r="1.75" />
     <path d="M4.5 5.25v5.5" />
@@ -669,7 +759,7 @@
 {#snippet flowFinishIcon()}
   <!-- Une branche qui rejoint la ligne principale, et une coche : elle
        revient d'où elle était partie, et elle est terminée. -->
-  <svg class="action-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
+  <svg class="ctx-ic" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">
     <circle cx="4.5" cy="12.5" r="1.75" />
     <path d="M4.5 1.75v9" />
     <path d="M9.5 2.5c0 3-5 3.5-5 7" />
@@ -900,8 +990,8 @@
     font-size: 0.7rem;
     cursor: pointer;
   }
-  /* Git Flow : « New feature », « Finish release »… ne tiennent pas dans un
-     carré de 48px. La hauteur reste celle des autres. */
+  /* Git Flow : son libellé et son ▾ ne tiennent pas dans un carré de 48px. La
+     hauteur reste celle des autres. */
   .action.wide {
     width: auto;
     min-width: 48px;
@@ -917,6 +1007,18 @@
   .action-ic {
     width: 20px;
     height: 20px;
+  }
+  /* Libellé d'un bouton à menu déroulant, suivi de son ▾. */
+  .drop {
+    display: flex;
+    align-items: center;
+    gap: 0.15rem;
+  }
+  .drop-ic {
+    display: block;
+    width: 0.6rem;
+    height: 0.6rem;
+    color: var(--text-faint);
   }
 
   /*
@@ -1049,6 +1151,10 @@
   }
   .ctx-item.danger:hover:not(:disabled) {
     background: var(--danger-bg);
+  }
+
+  .flow-menu {
+    min-width: 200px;
   }
 
   /* Menu du bouton Pull : le chrome commun est dans `app.css`, ne reste ici que

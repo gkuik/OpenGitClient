@@ -351,6 +351,8 @@ export const en = {
     "Removes the remote and its remote branches from this repository. Nothing is deleted on the server: adding it back and fetching brings everything back.",
 
   // ── Git Flow ──────────────────────────────────────────────────────────────
+  "flow.menu": "Git Flow",
+  "flow.menu.hint": "Start a work branch, or finish the current one",
   "flow.new.feature": "New feature",
   "flow.new.bugfix": "New bugfix",
   "flow.new.release": "New release",

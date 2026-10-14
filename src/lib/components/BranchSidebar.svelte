@@ -1082,11 +1082,6 @@
   .ctx-item.danger:hover {
     background: var(--danger-bg);
   }
-  .ctx-sep {
-    height: 1px;
-    margin: 0.25rem 0.3rem;
-    background: var(--border);
-  }
   .on {
     flex: none;
     color: var(--text);
