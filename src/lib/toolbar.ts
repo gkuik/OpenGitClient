@@ -8,7 +8,23 @@
 // rien : c'est un choix de l'utilisateur, pas une erreur à corriger.
 
 /** Les boutons d'action, dans l'ordre de la palette. */
-export const TOOLBAR_ACTIONS = ["pull", "push", "fetch", "branch", "stash", "gitflow"] as const;
+export const TOOLBAR_ACTIONS = [
+  "pull",
+  "push",
+  "fetch",
+  "branch",
+  "stash",
+  "pop",
+  "tag",
+  "stage-all",
+  "unstage-all",
+  "discard-all",
+  "gitflow",
+  "forge",
+  "finder",
+  "terminal",
+  "editor",
+] as const;
 /** Les éléments de mise en page, répétables. */
 export const TOOLBAR_SPACERS = ["separator", "space"] as const;
 
@@ -34,6 +50,18 @@ export const DEFAULT_TOOLBAR: readonly ToolbarItem[] = [
   "separator",
   "gitflow",
 ];
+
+/**
+ * Les boutons dont le libellé ne tient pas dans un carré de 48px : ils
+ * s'élargissent, à la hauteur des autres. Partagé par la barre et par les
+ * tuiles de personnalisation, sans quoi ce qu'on dépose ne serait pas ce qu'on
+ * voit.
+ */
+const WIDE: readonly ToolbarItem[] = ["gitflow", "stage-all", "unstage-all", "discard-all"];
+
+export function isWide(item: ToolbarItem): boolean {
+  return WIDE.includes(item);
+}
 
 export function isAction(item: ToolbarItem): item is ToolbarAction {
   return (TOOLBAR_ACTIONS as readonly string[]).includes(item);

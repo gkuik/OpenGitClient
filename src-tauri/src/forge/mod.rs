@@ -58,6 +58,13 @@ impl ForgeRemote {
     pub fn slug(&self) -> String {
         format!("{}/{}", self.owner, self.repo)
     }
+
+    /// Page web du dépôt sur la forge — celle qu'ouvre « Open on GitHub ».
+    /// Toujours sur l'hôte lui-même, jamais sur l'API : une instance Enterprise
+    /// sert ses pages là où un clone SSH a trouvé le dépôt.
+    pub fn web_url(&self) -> String {
+        format!("https://{}/{}", self.host, self.slug())
+    }
 }
 
 /// Compte auquel appartient un jeton, tel que la forge le décrit.
@@ -288,6 +295,15 @@ mod tests {
         assert!(!is_openable("http://github.com/o/r/pull/12"));
         assert!(!is_openable("https://exemple.test/o/r/pull/12"));
         assert!(!is_openable("file:///etc/passwd"));
+    }
+
+    #[test]
+    fn web_url_points_at_the_repository_page_even_from_ssh() {
+        let remote = detect("git@github.com:owner/repo.git").unwrap();
+        assert_eq!(remote.web_url(), "https://github.com/owner/repo");
+        let enterprise = detect("https://github.psa-cloud.com/ouw00/app.git").unwrap();
+        assert_eq!(enterprise.web_url(), "https://github.psa-cloud.com/ouw00/app");
+        assert!(is_openable(&enterprise.web_url()));
     }
 
     #[test]

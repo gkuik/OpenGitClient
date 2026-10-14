@@ -4,6 +4,7 @@ mod commands;
 mod credentials;
 mod dto;
 mod error;
+mod external;
 mod forge;
 mod git;
 mod state;
@@ -115,6 +116,11 @@ pub fn run() {
             commands::file_content,
             commands::load_pull_requests,
             commands::open_forge_page,
+            commands::open_repository_page,
+            commands::get_external_apps,
+            commands::set_external_app,
+            commands::reveal_repository,
+            commands::open_repository_in,
         ])
         .run(tauri::generate_context!())
         .expect("erreur au démarrage de l'application Tauri");

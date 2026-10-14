@@ -595,7 +595,23 @@ pub const GRAPH_COL_W_MAX: f32 = 40.0;
 /// `prefs.json`. Il est simplement écarté. L'ordre par défaut, lui, ne vit que
 /// dans le frontend (`toolbar.ts`) : tant qu'on n'a rien changé, rien n'est
 /// enregistré.
-pub const TOOLBAR_ACTIONS: [&str; 6] = ["pull", "push", "fetch", "branch", "stash", "gitflow"];
+pub const TOOLBAR_ACTIONS: [&str; 15] = [
+    "pull",
+    "push",
+    "fetch",
+    "branch",
+    "stash",
+    "pop",
+    "tag",
+    "stage-all",
+    "unstage-all",
+    "discard-all",
+    "gitflow",
+    "forge",
+    "finder",
+    "terminal",
+    "editor",
+];
 pub const TOOLBAR_SPACERS: [&str; 2] = ["separator", "space"];
 
 /// Ramène une barre lue ou reçue à quelque chose d'affichable : l'inconnu part,
@@ -888,6 +904,20 @@ pub struct RemoteInfo {
     /// contente d'une clé. Sans ce champ, un dépôt cloné en SSH n'apparaîtrait
     /// pas dans la liste des Réglages, filtrée sur `uses_http`.
     pub forge: Option<crate::forge::ForgeKind>,
+}
+
+/// Éditeurs et terminaux installés, et ceux que la barre utilisera — la
+/// section *External tools* des Réglages.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ExternalApps {
+    /// Éditeurs connus et installés, dans l'ordre de préférence.
+    pub editors: Vec<String>,
+    pub terminals: Vec<String>,
+    /// Application **effective** : le choix s'il est toujours installé, sinon
+    /// le défaut. `None` : rien d'utilisable, le bouton se grise.
+    pub editor: Option<String>,
+    pub terminal: Option<String>,
 }
 
 /// Résultat du bouton *Test* d'un hôte, dans les Réglages.

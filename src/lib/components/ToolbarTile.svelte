@@ -11,7 +11,7 @@
     on ne pourrait pas l'attraper. Dans la palette, ils ont un libellé comme
     les actions.
   */
-  import type { ToolbarItem } from "../toolbar";
+  import { isWide, type ToolbarItem } from "../toolbar";
   import { itemLabel } from "../toolbar.svelte";
   import ToolbarIcon from "./ToolbarIcon.svelte";
 
@@ -32,7 +32,7 @@
 {:else if inBar && item === "space"}
   <span class="space-tile"><span class="box"></span></span>
 {:else}
-  <span class="tile" class:wide={item === "gitflow"} class:muted>
+  <span class="tile" class:wide={isWide(item)} class:danger={item === "discard-all"} class:muted>
     <span class="ic"><ToolbarIcon {item} /></span>
     {#if item === "gitflow"}
       <span class="drop">
@@ -66,6 +66,10 @@
     width: auto;
     min-width: 48px;
     padding: 0 0.45rem;
+  }
+  /* Le seul bouton destructeur de la barre se signale comme ailleurs. */
+  .tile.danger {
+    color: var(--danger);
   }
   .tile.muted {
     opacity: 0.45;

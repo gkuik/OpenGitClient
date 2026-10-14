@@ -18,6 +18,7 @@ use crate::dto::{
     FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT, GRAPH_ROUNDNESS_MAX,
 };
 use crate::error::AppError;
+use crate::external::AppKind;
 use crate::git::{open_repository, GitBackend};
 use crate::watcher::RepoWatcher;
 
@@ -279,6 +280,25 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Éditeur ou terminal choisi, tel qu'enregistré (pas encore confronté à
+    /// ce qui est installé : c'est `external::effective` qui tranche).
+    pub fn external_app(&self, kind: AppKind) -> Option<String> {
+        match kind {
+            AppKind::Editor => self.prefs.editor.clone(),
+            AppKind::Terminal => self.prefs.terminal.clone(),
+        }
+    }
+
+    /// Choisit un éditeur ou un terminal ; `None` revient au défaut. Le nom a
+    /// déjà été confronté à la liste connue par la commande.
+    pub fn set_external_app(&mut self, kind: AppKind, name: Option<String>) -> Result<(), AppError> {
+        match kind {
+            AppKind::Editor => self.prefs.editor = name,
+            AppKind::Terminal => self.prefs.terminal = name,
+        }
+        save_json(&self.app, PREFS_FILE, &self.prefs)
+    }
+
     /// Barre du dépôt, nettoyée à la lecture ; `None` si jamais personnalisée.
     pub fn toolbar(&self) -> Option<Vec<String>> {
         self.prefs.toolbar.clone().map(sanitize_toolbar)
@@ -503,6 +523,10 @@ struct Prefs {
     /// jamais été personnalisée — distinct d'une liste vide, qui est une barre
     /// vide voulue.
     toolbar: Option<Vec<String>>,
+    /// Éditeur et terminal choisis, par nom d'application. `None` : le défaut,
+    /// recalculé à chaque lecture d'après ce qui est installé.
+    editor: Option<String>,
+    terminal: Option<String>,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -522,6 +546,8 @@ impl Default for Prefs {
             // `prefs.json` d'avant ce réglage démarrerait sans auto-fetch.
             auto_fetch_minutes: AUTO_FETCH_MINUTES_DEFAULT,
             toolbar: None,
+            editor: None,
+            terminal: None,
         }
     }
 }

@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
-    AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
+    AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
@@ -24,6 +24,7 @@ use crate::dto::{
     ThemeMode,
 };
 use crate::error::AppError;
+use crate::external::AppKind;
 use crate::state::AppState;
 
 /// Verrouille l'état ; convertit un mutex empoisonné en `AppError` plutôt que
@@ -1217,6 +1218,112 @@ pub fn load_pull_requests(
     });
 
     Ok(())
+}
+
+/// Ouvre la page du dépôt sur sa forge — le bouton « Open on GitHub » de la
+/// barre.
+///
+/// L'adresse est construite ici, à partir du distant qu'un fetch
+/// interrogerait, et passe le même garde-fou que `open_forge_page` : le
+/// webview ne fournit qu'un identifiant d'onglet, jamais d'URL. Pas de thread :
+/// on ne fait que lire la configuration et confier l'adresse au système.
+#[tauri::command]
+pub fn open_repository_page(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let url = {
+        let guard = lock(&state)?;
+        guard.backend(&repo_id)?.remote_info(None)?.url
+    };
+    let page = crate::forge::detect(&url)
+        .ok_or(AppError::ForgeUnsupported)?
+        .web_url();
+    open_forge_page(page)
+}
+
+// ── Applications externes ───────────────────────────────────────────────────
+
+/// Éditeurs et terminaux installés, et ceux que la barre ouvrira.
+#[tauri::command]
+pub fn get_external_apps(state: State<'_, Mutex<AppState>>) -> Result<ExternalApps, AppError> {
+    Ok(external_apps(&*lock(&state)?))
+}
+
+/// Choisit l'éditeur ou le terminal (`None` : le défaut). Un nom absent de la
+/// liste connue est refusé : c'est ce nom que la barre lancera ensuite.
+#[tauri::command]
+pub fn set_external_app(
+    kind: AppKind,
+    name: Option<String>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<ExternalApps, AppError> {
+    if let Some(n) = &name {
+        if !crate::external::is_known(kind, n) {
+            return Err(AppError::Io(format!("Unknown application: {n}")));
+        }
+    }
+    let mut guard = lock(&state)?;
+    guard.set_external_app(kind, name)?;
+    Ok(external_apps(&guard))
+}
+
+fn external_apps(state: &AppState) -> ExternalApps {
+    let editors = crate::external::installed(AppKind::Editor);
+    let terminals = crate::external::installed(AppKind::Terminal);
+    ExternalApps {
+        editor: crate::external::effective(
+            AppKind::Editor,
+            state.external_app(AppKind::Editor).as_deref(),
+            &editors,
+        ),
+        terminal: crate::external::effective(
+            AppKind::Terminal,
+            state.external_app(AppKind::Terminal).as_deref(),
+            &terminals,
+        ),
+        editors,
+        terminals,
+    }
+}
+
+/// Dossier de travail d'un onglet — ce que les trois boutons ouvrent, quel que
+/// soit le fichier sélectionné. Le chemin de l'onglet en repli : c'est celui
+/// qu'on a ouvert.
+fn workdir_of(state: &AppState, repo_id: &str) -> Result<PathBuf, AppError> {
+    let roots = state.backend(repo_id)?.watch_roots()?;
+    Ok(roots.workdir.unwrap_or_else(|| PathBuf::from(repo_id)))
+}
+
+/// Montre le dossier du dépôt dans le Finder.
+#[tauri::command]
+pub fn reveal_repository(
+    repo_id: String,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let dir = workdir_of(&*lock(&state)?, &repo_id)?;
+    crate::external::reveal(&dir)
+}
+
+/// Ouvre le dossier du dépôt dans l'éditeur ou le terminal choisi. Le webview
+/// ne nomme ni le dossier ni l'application : il n'envoie que l'onglet et le
+/// genre.
+#[tauri::command]
+pub fn open_repository_in(
+    repo_id: String,
+    kind: AppKind,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let (dir, apps) = {
+        let guard = lock(&state)?;
+        (workdir_of(&guard, &repo_id)?, external_apps(&guard))
+    };
+    let app = match kind {
+        AppKind::Editor => apps.editor,
+        AppKind::Terminal => apps.terminal,
+    }
+    .ok_or_else(|| AppError::Io("No application available".to_string()))?;
+    crate::external::open_with(&dir, &app)
 }
 
 /// Ouvre une page web de forge dans le navigateur du système — celle d'une
