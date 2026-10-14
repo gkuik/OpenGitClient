@@ -886,7 +886,7 @@ That only holds if nothing hardcodes a colour, which is why the **state colours 
 Two things the CSS cannot reach:
 
 - **The window itself.** `commands::set_theme` also calls `WebviewWindow::set_theme`, and `lib.rs` applies the persisted value at startup, before the window shows. `System` maps to `None` — an absence of instruction, which is what lets the window follow the OS. That is also why switching *back* to system corrects itself through the media listener rather than instantly: while a theme is forced, the webview's `prefers-color-scheme` reports the forced value, so the true system preference is only knowable once Rust has released it.
-- **The graph lanes**, painted on a canvas: `LANE_COLORS` / `LANE_COLORS_LIGHT` in `layout.ts` are the one place in the frontend where both themes are spelled out in hex. **Same length, same order** — the colour index travels with each lane and edge and knows nothing about the theme. `GraphView` reads `theme.dark` inside `draw()`, which is what makes the redraw automatic; the commit dot's ring follows the background and its selection halo the opposite.
+- **The graph lanes**, painted on a canvas: `LANE_COLORS` / `LANE_COLORS_LIGHT` in `layout.ts` are the one place in the frontend where both themes are spelled out in hex. **Same length, same order** — the colour index travels with each lane and edge and knows nothing about the theme. `GraphView` reads `theme.dark` inside `draw()`, which is what makes the redraw automatic; the commit dot's ring follows the background. A selected commit gets no mark on the canvas — its row's background says it.
 
 ### Text size is one root `font-size`, in points
 

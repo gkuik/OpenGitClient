@@ -596,14 +596,12 @@
     effet se réexécute quand la palette change.
 
     `ring` détache le point de la ligne de même couleur qui le traverse : c'est
-    le fond du thème. `halo` marque le commit sélectionné : son contraire.
+    le fond du thème. Le commit sélectionné n'a pas de marque sur le canvas :
+    le fond de sa ligne suffit à le désigner.
   */
   const lanes = $derived(lanePalette(theme.dark));
   const ring = $derived(
     theme.dark ? "rgba(0, 0, 0, 0.55)" : "rgba(255, 255, 255, 0.9)",
-  );
-  const halo = $derived(
-    theme.dark ? "rgba(255, 255, 255, 0.9)" : "rgba(0, 0, 0, 0.7)",
   );
   /** Largeur ajustée du graph : celle qu'il prend tant qu'on n'en a pas choisi. */
   const gutterW = $derived(
@@ -1203,16 +1201,6 @@
         ctx.globalAlpha = 1;
         ctx.lineWidth = LINE_W;
       }
-    }
-
-    if (isWip ? repo.selectedCommitOid === null : row.commit.oid === repo.selectedCommitOid) {
-      ctx.beginPath();
-      // Même halo pour les deux : les nœuds ont désormais la même taille.
-      ctx.arc(x, mid, DOT_R + 3, 0, Math.PI * 2);
-      ctx.strokeStyle = halo;
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-      ctx.lineWidth = LINE_W;
     }
   }
 
