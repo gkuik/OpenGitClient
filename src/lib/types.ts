@@ -159,6 +159,20 @@ export interface TagPushReport {
   deleted: boolean;
 }
 
+/** Branche supprimée sur son distant (miroir de `RemoteBranchDeleteReport`). */
+export interface RemoteBranchDeleteReport {
+  remote: string;
+  /** Nom sur le distant, sans le préfixe du distant. */
+  branch: string;
+}
+
+/** Charge utile de `repo://remote-branch-deleted`, jumelle de `TagPushEvent`. */
+export interface RemoteBranchDeleteEvent {
+  repoId: string;
+  report: RemoteBranchDeleteReport | null;
+  error: AppError | null;
+}
+
 /** Charge utile de `repo://tag-pushed`, jumelle de `PushEvent`. */
 export interface TagPushEvent {
   repoId: string;

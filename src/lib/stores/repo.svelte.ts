@@ -50,13 +50,14 @@ import type {
   StashEntry,
   TagEntry,
   TagPushEvent,
+  RemoteBranchDeleteEvent,
   Upstream,
 } from "../types";
 
 export type ViewMode = "tree" | "path";
 
 /** Opération distante — celle en cours, ou celle qui a demandé des identifiants. */
-export type RemoteOp = "fetch" | "push" | "pull" | "tag";
+export type RemoteOp = "fetch" | "push" | "pull" | "tag" | "delete";
 
 /**
  * Teneur d'un compte rendu, qui en décide la couleur : `ok` quand quelque
@@ -410,6 +411,8 @@ export class RepoStore {
    * backend est la même pour les quatre, d'où sa place dans `busyRemote`.
    */
   pushingTag = $state(false);
+  /** Suppression d'une branche distante en cours (même réservation réseau). */
+  deletingRemoteBranch = $state(false);
   /**
    * Création d'une branche demandée : non nul = la barre de saisie recouvre
    * la barre du dépôt. `oid` nul = HEAD (le bouton Branch) ; sinon le commit
@@ -795,6 +798,7 @@ export class RepoStore {
       this.stashing ||
       this.creatingTag ||
       this.pushingTag ||
+      this.deletingRemoteBranch ||
       this.checkingOut ||
       this.mergingBranches ||
       this.flowRunning ||
@@ -1149,10 +1153,25 @@ export class RepoStore {
     }
   }
 
-  /** Ouvre la page du dépôt sur sa forge (bouton de la barre). */
-  async openOnForge() {
+  /**
+   * Ce distant mène-t-il à une forge reconnue ? C'est ce qui décide si l'entrée
+   * « Open on GitHub » de son menu est active ; seul le backend lit son URL.
+   */
+  async remoteIsForge(remote: string): Promise<boolean> {
     try {
-      await api.openRepositoryPage(this.repoId);
+      return (await api.getRemoteInfo(this.repoId, remote)).forge !== null;
+    } catch {
+      return false;
+    }
+  }
+
+  /**
+   * Ouvre la page du dépôt sur sa forge — par le distant `remote` (menu de la
+   * section REMOTE), ou celui qu'un fetch interrogerait (bouton de la barre).
+   */
+  async openOnForge(remote?: string) {
+    try {
+      await api.openRepositoryPage(this.repoId, remote);
     } catch (e) {
       this.error = e as AppError;
     }
@@ -1257,6 +1276,80 @@ export class RepoStore {
       "ok",
     );
     this.finish("tag", "ok");
+  }
+
+  // ── Suppression de branches ─────────────────────────────────────────────────
+
+  /**
+   * Supprime une branche locale depuis son menu. Sans `force`, c'est
+   * `git branch -d` : une branche que ni son amont ni HEAD ne contiennent est
+   * refusée, et la réponse `"unmerged"` permet au menu de proposer, en disant
+   * ce qu'elle coûte, la suppression forcée. Toute autre erreur va au bandeau.
+   *
+   * Rien ne bouge sur le disque : seules la liste des branches et les
+   * pastilles du graph sont à relire.
+   */
+  async deleteLocalBranch(name: string, force: boolean): Promise<"unmerged" | null> {
+    this.error = null;
+    try {
+      await api.deleteLocalBranch(this.repoId, name, force);
+    } catch (e) {
+      const err = e as AppError;
+      if (!force && err.kind === "BranchNotMerged") return "unmerged";
+      this.error = err;
+      return null;
+    }
+    this.setOpStatus(t("op.branch.deleted", { branch: name }), "ok");
+    await this.loadBranches();
+    await this.loadGraph();
+    return null;
+  }
+
+  /** Branche distante en cours de suppression, retenue pour la relancer après une saisie d'identifiants. */
+  private remoteDelete: string | null = null;
+
+  /**
+   * Supprime une branche sur son distant (`origin/feature/x`). Le résultat
+   * revient par `repo://remote-branch-deleted`, comme celui d'un push de tag.
+   */
+  async deleteRemoteBranch(name: string) {
+    if (this.busyRemote || !this.repoInfo) return;
+    this.remoteDelete = name;
+    this.deletingRemoteBranch = true;
+    this.error = null;
+    this.setOpStatus(null);
+    try {
+      await this.waitAutoFetch();
+      await api.deleteRemoteBranch(this.repoId, name);
+    } catch (e) {
+      this.deletingRemoteBranch = false;
+      this.error = e as AppError;
+      this.finish("delete", "danger");
+    }
+  }
+
+  /**
+   * Résultat d'une suppression distante. La référence de suivi a disparu, et
+   * avec elle l'amont d'une éventuelle branche locale : on relit ce qu'un
+   * fetch relirait.
+   */
+  onRemoteBranchDeleted(event: RemoteBranchDeleteEvent) {
+    this.deletingRemoteBranch = false;
+    if (event.error) {
+      if (event.error.kind === "NoCredentials" || event.error.kind === "RemoteAuth") {
+        void this.askCredentials(event.error.kind === "RemoteAuth", "delete");
+        this.finish("delete", "warn");
+        return;
+      }
+      this.error = event.error;
+      this.finish("delete", "danger");
+      return;
+    }
+    if (!event.report) return;
+    const { remote, branch } = event.report;
+    this.setOpStatus(t("op.remoteBranch.deleted", { remote, branch }), "ok");
+    this.finish("delete", "ok");
+    void this.reloadRemoteRefs();
   }
 
   // ── Profil d'auteur ─────────────────────────────────────────────────────────
@@ -1661,7 +1754,9 @@ export class RepoStore {
 
   /** Une opération distante est en cours : la seconde attendrait de toute façon. */
   get busyRemote(): boolean {
-    return this.fetching || this.pushing || this.pulling || this.pushingTag;
+    return (
+      this.fetching || this.pushing || this.pulling || this.pushingTag || this.deletingRemoteBranch
+    );
   }
 
   /**
@@ -1674,6 +1769,7 @@ export class RepoStore {
     if (this.pushing) return "push";
     if (this.pulling) return "pull";
     if (this.pushingTag) return "tag";
+    if (this.deletingRemoteBranch) return "delete";
     return null;
   }
 
@@ -2174,7 +2270,9 @@ export class RepoStore {
           ? this.pull(this.pullMode, this.pullBranch)
           : prompt.op === "tag" && this.tagPush
             ? this.pushTag(this.tagPush.name, this.tagPush.remove)
-            : this.fetch());
+            : prompt.op === "delete" && this.remoteDelete
+              ? this.deleteRemoteBranch(this.remoteDelete)
+              : this.fetch());
     } catch (e) {
       this.error = e as AppError;
     } finally {
@@ -2614,6 +2712,15 @@ class TabsStore {
       })
       .catch(() => {
         /* idem pour les tags */
+      });
+    api
+      .onRemoteBranchDeleted((event) => {
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onRemoteBranchDeleted(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
+      })
+      .catch(() => {
+        /* idem pour les branches distantes */
       });
     api
       .onPullRequests((event) => {

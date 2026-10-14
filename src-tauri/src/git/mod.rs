@@ -11,7 +11,7 @@ use std::path::{Path, PathBuf};
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchAllReport, FetchReport, FileContent, FileDiff,
     FileSource, Identity,
-    MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo,
+    MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchDeleteReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry, TagEntry, TagPushReport,
 };
 use crate::error::AppError;
@@ -176,6 +176,25 @@ pub trait GitBackend: Send {
     /// avoir basculé ailleurs avant. La branche distante, s'il y en a une,
     /// n'est pas touchée.
     fn delete_branch(&self, name: &str, merged_into: &str) -> Result<(), AppError>;
+
+    /// Supprime une branche **locale** depuis son menu — `git branch -d`, ou
+    /// `-D` avec `force`.
+    ///
+    /// Sans `force`, la règle de Git : la branche doit être contenue dans son
+    /// amont si elle en a un, dans HEAD sinon — faute de quoi
+    /// [`AppError::BranchNotMerged`], et rien n'est touché. C'est ce refus qui
+    /// permet au menu de proposer ensuite la suppression forcée, en disant ce
+    /// qu'elle coûte. La branche courante est toujours refusée
+    /// ([`AppError::BranchCheckedOut`]). La branche distante n'est pas touchée.
+    fn delete_local_branch(&self, name: &str, force: bool) -> Result<(), AppError>;
+
+    /// Supprime une branche **sur son distant** (`git push <distant> --delete`),
+    /// `name` étant le nom de suivi (`origin/feature/x`). Le distant est celui
+    /// de la référence, pas celui qu'un fetch interrogerait. La référence de
+    /// suivi locale disparaît avec elle ; une branche locale qui la suivait
+    /// reste telle quelle. Bloquant sur le réseau, mêmes contraintes que
+    /// [`GitBackend::fetch`].
+    fn delete_remote_branch(&self, name: &str) -> Result<RemoteBranchDeleteReport, AppError>;
 
     /// Liste les tags (`refs/tags/**`) qui désignent un commit, triés par nom.
     /// Lecture pure du disque, comme les branches.
