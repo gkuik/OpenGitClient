@@ -301,7 +301,7 @@ pub struct StashEntry {
     pub oid: String,
 }
 
-/// Référence distante déplacée par un `fetch`.
+/// Référence distante déplacée par un `fetch` — ou supprimée par son prune.
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct FetchedRef {
@@ -309,7 +309,9 @@ pub struct FetchedRef {
     pub name: String,
     /// OID avant le fetch ; `None` si la référence vient d'apparaître.
     pub old_oid: Option<String>,
-    pub new_oid: String,
+    /// OID après le fetch ; `None` si la branche a disparu du serveur et que
+    /// la référence a été élaguée.
+    pub new_oid: Option<String>,
 }
 
 /// Résultat d'un `fetch`. `updated` vide = le distant n'a pas bougé.

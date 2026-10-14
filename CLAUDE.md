@@ -298,7 +298,9 @@ Two things inside the libgit2 impl that look optional and aren't:
 - **`CredState` separates "nothing to offer" from "everything was refused."** libgit2 reports both as one generic error, but they ask different things of the user (`NoCredentials` vs `RemoteAuth`).
 - **The callbacks share their state through `Rc`**, not borrows, for the same reason `Diff::print` is used over `foreach`: they live inside the `FetchOptions` until the end of the function, so the report they fill has to outlive them.
 
-A fetch only writes `refs/remotes/**` and `FETCH_HEAD` — never the worktree, index or current branch. That's what makes it safe to trigger without asking — which the auto-fetch does (see below). **Auto-*pull* would not be.** Both the sidebar's REMOTE section and the graph read those refs, so `onFetched` reloads them — `reloadRemoteRefs()`, and only when the report says a ref actually moved. The graph reload is a full reset to page 0: its pagination is only stable while refs hold still.
+A fetch only writes `refs/remotes/**` and `FETCH_HEAD` — never the worktree, index or current branch. **It always prunes** (`FetchPrune::On`, GitKraken's default, `git fetch --prune`): a branch deleted on the server leaves `refs/remotes/**` — without it, it stayed listed forever, fetch after fetch. Nothing local is lost, a remote-tracking ref only mirrors the server and local branches are never touched. A pruned ref is reported in `updated` with `newOid: null`, so it counts as a move and triggers the usual reload.
+
+That's what makes it safe to trigger without asking — which the auto-fetch does (see below). **Auto-*pull* would not be.** Both the sidebar's REMOTE section and the graph read those refs, so `onFetched` reloads them — `reloadRemoteRefs()`, and only when the report says a ref actually moved. The graph reload is a full reset to page 0: its pagination is only stable while refs hold still.
 
 ### Auto-fetch: the repository on screen, every N minutes, without a word
 
