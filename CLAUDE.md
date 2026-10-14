@@ -649,12 +649,29 @@ appears only when non-empty, and it exists because the header counts what was
 loaded: without it, a colleague's PR that concerns us in no way would be counted
 and invisible, and the count would lie.
 
-**Opening a PR in the browser is the only thing the app opens outside itself**, and
+**A forge page is the only thing the app opens outside itself** — a PR, from its
+menu, or the token creation page, from Settings — and
 the boundary is in Rust, not in the capabilities. `tauri-plugin-opener` is a
 dependency but is **not registered**: the webview therefore has no « open this
 URL » command at all, only ours, which passes `forge::is_openable` first — https,
 and a host recognised by the same rule as `detect`. Adding `opener:allow-open-url` to the capabilities would
-hand the whole webview what one menu entry needs.
+hand the whole webview what one menu entry needs. The token page's URL is built
+by the backend too (`forge::token_page`, `/settings/tokens/new` with `repo` and
+`workflow` pre-ticked — a *classic* token, the only form that reads its scopes
+from the query string); Settings shows the link under the token field for a
+forge host only, and opens it through the same `open_forge_page`.
+
+**A host with saved credentials has a *Test* button** in Settings, and it sends
+nothing. A forge host is asked `GET /user` (`forge::check_token`): the answer
+names the token's owner, and its `X-OAuth-Scopes` header lists a classic token's
+scopes, so a missing `repo` or `workflow` is reported in amber — a fine-grained
+token publishes none, and then nothing is claimed missing. Any other host is
+tested through Git (`GitBackend::check_remote`): a connection to an open tab's
+HTTPS remote **in the push direction**, since a public repository is read
+without credentials and a fetch-side connection would "succeed" having tested
+nothing. If the server still asks for none, the result says so
+(`authenticated: false`) rather than reporting a success. A manually added host
+that is not a forge has no open repository to go through, hence no button.
 
 Everything here is **read-only**: no PR is created, merged, closed or reviewed
 from the application, and a click on one only selects its source branch's tip in
@@ -1069,7 +1086,7 @@ These caused real breakage; don't undo them.
   `:global`: they are written in the components' own markup.
 - **The focus ring is the app's, drawn inside the element** (`app.css`): nothing on a mouse focus (`:focus:not(:focus-visible)`), and for the keyboard a 2px accent outline at `outline-offset: -2px`. WebKit's native ring is system blue, ignores the theme and spills *outside* the element, so a scrolling container clips it — in the tab strip (`overflow-x: auto`, hence `overflow-y` too) only its two rounded sides were left, like blue brackets. Text fields keep their own mark (accent border, `outline: none` in each component), more specific and therefore winning. A focus set by script after a click must say so — `focus({ focusVisible: false })`, as `TabBar` does on `pointerdown` — or WebKit treats it as keyboard focus whenever the last thing typed was a key.
 - **Each side column has its own width variable** — `--sidebar-l-w` / `--sidebar-r-w` (`app.css`), which `App.svelte` uses for the left and right grid tracks and `layout.svelte.ts` rewrites. Change the variables, not the grid.
-- **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above.
+- **Commands are synchronous** and hold a `std::sync::Mutex` guard. Don't make them `async` (guard would be held across await). The corollary for anything blocking — network above all — is a dedicated thread; see the fetch section above. **One exception, `test_credentials`**: it is `async` and awaits `spawn_blocking`, because its answer only matters to the Settings button that asked — a question and a reply, no tab to route an event to. The state lock is taken in a block that ends before the first `await`; keep it that way.
 - Capabilities are minimal on purpose: `core:default` + `dialog:allow-open` + `core:window:allow-start-dragging` only. There is no `fs` plugin — all disk access goes through git2 in Rust. Adding a plugin requires updating `src-tauri/capabilities/default.json`. **`tauri-plugin-opener` is deliberately not registered**: it is called from Rust, so the webview gains no URL-opening command and the capability file stays as it is (see the pull requests section).
 
 ## Scope

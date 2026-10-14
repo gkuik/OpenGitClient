@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  CredentialCheck,
   AppError,
   AutoFetchEvent,
   BranchEntry,
@@ -321,6 +322,16 @@ export const api = {
     call<void>("set_credentials", { host, username, secret }),
   forgetCredentials: (host: string) => call<void>("forget_credentials", { host }),
   hasCredentials: (host: string) => call<boolean>("has_credentials", { host }),
+  /** Page de la forge qui crée un jeton pour cet hôte, portées pré-cochées ; `null` hors forge. */
+  tokenPage: (host: string) => call<string | null>("token_page", { host }),
+  /**
+   * Vérifie que le serveur accepte les identifiants de cet hôte. Une forge est
+   * interrogée sur son API ; tout autre hôte par une connexion Git au distant
+   * `remote` de l'onglet `repoId`, sans rien envoyer. Répond directement, sans
+   * événement : le résultat n'intéresse que le bouton qui l'a demandé.
+   */
+  testCredentials: (host: string, repoId: string | null, remote: string | null) =>
+    call<CredentialCheck>("test_credentials", { host, repoId, remote }),
 
   // ── Profils d'auteur ─────────────────────────────────────────────────────
   listProfiles: () => call<Profile[]>("list_profiles"),
@@ -364,11 +375,12 @@ export const api = {
   onPullRequests: (handler: (event: PullRequestEvent) => void): Promise<UnlistenFn> =>
     listen<PullRequestEvent>("repo://pull-requests", (e) => handler(e.payload)),
   /**
-   * Ouvre la page web d'une pull request dans le navigateur du système. Le
-   * backend refuse tout ce qui n'est pas la page d'une forge reconnue : c'est
-   * la seule chose que l'application ouvre à l'extérieur.
+   * Ouvre une page web de forge (une pull request, la création d'un jeton) dans
+   * le navigateur du système. Le backend refuse tout ce qui n'est pas une page
+   * d'une forge reconnue : c'est la seule chose que l'application ouvre à
+   * l'extérieur.
    */
-  openPullRequest: (url: string) => call<void>("open_pull_request", { url }),
+  openForgePage: (url: string) => call<void>("open_forge_page", { url }),
 
   // ── Graph ────────────────────────────────────────────────────────────────
   /** Page d'historique du graph. Recharger depuis `skip = 0` après toute mutation. */

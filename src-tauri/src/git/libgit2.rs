@@ -7,7 +7,7 @@ use std::rc::Rc;
 
 use git2::{
     build::CheckoutBuilder, Branch, BranchType, Commit, ConfigLevel, Cred, CredentialType, Delta,
-    DiffDelta, DiffFlags, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions, FetchPrune,
+    DiffDelta, DiffFlags, Direction, DiffFormat, DiffOptions, ErrorClass, ErrorCode, FetchOptions, FetchPrune,
     IndexAddOption, ObjectType, Oid, PushOptions, Reference, Remote, RemoteCallbacks, Repository,
     RepositoryState, ResetType, Sort, StashFlags, Status, StatusEntry, StatusOptions, Tree,
 };
@@ -1001,6 +1001,36 @@ impl GitBackend for Libgit2Backend {
             remote: name,
             updated,
         })
+    }
+
+    fn check_remote(&self, name: &str) -> Result<bool, AppError> {
+        let repo = self.repo()?;
+        let mut remote = repo.find_remote(name).map_err(|_| AppError::NoRemote)?;
+
+        let cred_state = Rc::new(Cell::new(CredState::Untouched));
+        let mut callbacks = RemoteCallbacks::new();
+        {
+            let state = Rc::clone(&cred_state);
+            let mut attempts = 0u32;
+            callbacks.credentials(move |url, username, allowed| {
+                attempts += 1;
+                credentials(url, username, allowed, attempts, &state)
+            });
+        }
+
+        // La connexion se referme en sortant de la portée (`Drop`), succès ou non.
+        let result = remote
+            .connect_auth(Direction::Push, Some(callbacks), None)
+            .map(|_connection| ());
+
+        match result {
+            Ok(()) => Ok(cred_state.get() != CredState::Untouched),
+            Err(_) if cred_state.get() == CredState::NothingToOffer => {
+                Err(AppError::NoCredentials)
+            }
+            Err(_) if cred_state.get() == CredState::Refused => Err(AppError::RemoteAuth),
+            Err(e) => Err(fetch_error(e)),
+        }
     }
 
     fn fetch_all(&self) -> Result<FetchAllReport, AppError> {
@@ -4129,6 +4159,29 @@ mod tests {
     fn fetch_all_without_remote_fails_cleanly() {
         let (dir, git) = temp_repo();
         assert!(matches!(git.fetch_all(), Err(AppError::NoRemote)));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn check_remote_connects_without_sending_anything() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        // Un distant sur disque ne réclame aucun identifiant : la connexion
+        // réussit, mais rien n'a été mis à l'épreuve — et le rapport le dit.
+        assert!(matches!(git.check_remote("origin"), Ok(false)));
+        // Rien n'a été poussé.
+        let origin = Repository::open_bare(&origin_dir).unwrap();
+        assert!(origin.references().unwrap().next().is_none());
+        assert!(matches!(git.check_remote("amont"), Err(AppError::NoRemote)));
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
+    }
+
+    #[test]
+    fn check_remote_unreachable_is_a_network_error() {
+        let (dir, git) = temp_repo();
+        let repo = Repository::open(&dir).unwrap();
+        repo.remote("origin", "https://127.0.0.1:1/x.git").unwrap();
+        assert!(matches!(git.check_remote("origin"), Err(AppError::Network(_))));
         fs::remove_dir_all(&dir).ok();
     }
 

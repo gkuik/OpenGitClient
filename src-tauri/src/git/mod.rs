@@ -266,6 +266,17 @@ pub trait GitBackend: Send {
     /// qui l'exécute sur un thread dédié.
     fn fetch(&self, remote: Option<&str>) -> Result<FetchReport, AppError>;
 
+    /// Se connecte au distant `remote` **en vue d'un push**, sans rien envoyer,
+    /// pour vérifier que le serveur accepte les identifiants — le bouton *Test*
+    /// des Réglages. Renvoie `false` si le serveur n'en a réclamé aucun.
+    ///
+    /// Le sens push n'est pas un détail : un dépôt public se lit sans
+    /// identifiants, si bien qu'une connexion en lecture « réussirait » sans
+    /// avoir rien vérifié. Rien n'est écrit, ni chez nous ni sur le serveur —
+    /// seule l'annonce des références est échangée. Bloquant sur le réseau,
+    /// mêmes contraintes que [`GitBackend::fetch`].
+    fn check_remote(&self, remote: &str) -> Result<bool, AppError>;
+
     /// Récupère **tous** les distants déclarés, l'un après l'autre — l'auto-fetch.
     ///
     /// Un distant en échec n'arrête pas les suivants : son erreur voyage dans le

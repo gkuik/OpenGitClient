@@ -468,6 +468,20 @@ export const en = {
   "settings.tokens.replace": "Replace",
   "settings.tokens.username": "Username",
   "settings.tokens.secret": "Access token",
+  "settings.tokens.create": "Create a token on {host}",
+  "settings.tokens.test": "Test",
+  "settings.tokens.test.title": "Checks that the server accepts the saved credentials, without sending anything",
+  "settings.tokens.test.running": "Testing…",
+  "settings.tokens.test.account": "Connected as {login}",
+  "settings.tokens.test.scopes": {
+    one: "Connected as {login}, but the token lacks the {scopes} scope",
+    other: "Connected as {login}, but the token lacks the {scopes} scopes",
+  },
+  "settings.tokens.test.remote": "The remote {remote} of {repo} accepted the credentials",
+  "settings.tokens.test.anonymous":
+    "The remote {remote} of {repo} answered without asking for credentials: they were not tested",
+  "settings.tokens.create.title":
+    "Opens the token creation page in your browser, with the repo and workflow scopes already ticked",
   "settings.tokens.forget": "Forget",
   "settings.tokens.forget.confirm": "Confirm the removal",
   "settings.tokens.addHost": "Add a host",

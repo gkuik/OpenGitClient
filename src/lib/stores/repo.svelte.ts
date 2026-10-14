@@ -2068,7 +2068,7 @@ export class RepoStore {
   /** Ouvre la page web de la PR dans le navigateur du système. */
   async openPullRequest(pr: PullRequestEntry) {
     try {
-      await api.openPullRequest(pr.url);
+      await api.openForgePage(pr.url);
     } catch (e) {
       this.error = e as AppError;
     }
