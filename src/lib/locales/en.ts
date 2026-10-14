@@ -253,6 +253,7 @@ export const en = {
   "toolbar.status.pulling": "Pulling…",
   "toolbar.status.merging": "Merging…",
   "toolbar.status.pushingTag": "Pushing the tag…",
+  "toolbar.status.deletingRemoteBranch": "Deleting the remote branch…",
   "toolbar.status.autoFetching": "Auto-fetching…",
   "toolbar.fetch.auto": { one: "Auto-fetch every minute", other: "Auto-fetch every {n} minutes" },
   "toolbar.fetch.auto.off": "Auto-fetch off",
@@ -287,6 +288,18 @@ export const en = {
     "Moves this branch forward without checking it out; switches to it only if a merge is needed",
   "branches.pull.busy": "A remote operation is already running",
   "branches.menu.createBranch": "Create branch from here…",
+  "branches.menu.delete": "Delete branch",
+  "branches.menu.delete.hint": "Delete the local branch. The remote branch, if any, stays.",
+  "branches.menu.delete.confirm": "Click again to delete {branch}",
+  "branches.menu.delete.force": "{branch} is not merged — click to delete it anyway and lose its commits",
+  "branches.menu.delete.force.hint":
+    "Neither its upstream nor HEAD contain this branch: its own commits would no longer be reachable",
+  "branches.menu.delete.head": "The current branch can't be deleted: switch to another one first",
+  "branches.menu.deleteRemote": "Delete on {remote}",
+  "branches.menu.deleteRemote.hint":
+    "Delete the branch on {remote}, for everyone who fetches from it. A local branch tracking it stays.",
+  "branches.menu.deleteRemote.confirm": "Click again to delete {branch} on {remote}",
+  "branches.remote.notForge": "This remote is not on GitHub",
 
   // ── Colonne de gauche : stashes ───────────────────────────────────────────
   "stashes.title": "Stashes",
@@ -572,6 +585,8 @@ export const en = {
   "op.branch.created": "{branch} created and checked out",
   "op.tag.pushed": "{remote}: tag {tag} published",
   "op.tag.deleted": "{remote}: tag {tag} deleted",
+  "op.branch.deleted": "Branch {branch} deleted",
+  "op.remoteBranch.deleted": "{remote}: branch {branch} deleted",
   "op.merge.upToDate": "{target} already contains {source}",
   "op.merge.fastForwarded": {
     one: "{source} → {target}: {n} commit (fast-forward)",
@@ -616,6 +631,8 @@ export const en = {
   "error.TagExists": "A tag named {arg} already exists",
   "error.InvalidTagName": "“{arg}” is not a valid tag name",
   "error.BranchNotMerged": "Branch {arg} is not merged: deleting it would lose commits",
+  "error.BranchCheckedOut": "Branch {arg} is checked out: switch to another branch before deleting it",
+  "error.RemoteDeleteRejected": "The remote refused to delete the branch ({arg}). It may be protected.",
   "error.RemoteExists": "A remote named {arg} already exists",
   "error.InvalidRemoteName": "“{arg}” is not a valid remote name",
   "error.RemoteNotFound": "No remote named {arg}",

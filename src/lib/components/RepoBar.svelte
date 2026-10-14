@@ -289,6 +289,8 @@
           ? t("toolbar.status.pulling")
           : repo.pushingTag
             ? t("toolbar.status.pushingTag")
+            : repo.deletingRemoteBranch
+              ? t("toolbar.status.deletingRemoteBranch")
             : autoFetchShown
               ? t("toolbar.status.autoFetching")
               : repo.mergingBranches

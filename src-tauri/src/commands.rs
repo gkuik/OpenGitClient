@@ -15,7 +15,7 @@ use std::sync::{Mutex, MutexGuard};
 use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
-    AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
+    AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, RemoteBranchDeleteEvent, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
@@ -354,6 +354,68 @@ pub fn push_tag(
         let _ = app.emit(
             TAG_PUSH_EVENT,
             TagPushEvent {
+                repo_id,
+                report,
+                error,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+/// Supprime une branche locale depuis son menu : `git branch -d`, ou `-D` avec
+/// `force`. Instantané — rien ne sort de la machine.
+#[tauri::command]
+pub fn delete_local_branch(
+    repo_id: String,
+    name: String,
+    force: bool,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    lock(&state)?.backend(&repo_id)?.delete_local_branch(&name, force)
+}
+
+/// Nom de l'événement portant le résultat d'une suppression de branche distante.
+const REMOTE_BRANCH_DELETE_EVENT: &str = "repo://remote-branch-deleted";
+
+/// Supprime une branche sur son distant **en tâche de fond**, avec la même
+/// réservation réseau qu'un push : la suppression écrit sur le serveur et dans
+/// `refs/remotes/**`, comme lui. Le résultat revient par
+/// `repo://remote-branch-deleted`.
+#[tauri::command]
+pub fn delete_remote_branch(
+    repo_id: String,
+    name: String,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    {
+        let mut guard = lock(&state)?;
+        guard.backend(&repo_id)?;
+        if !guard.begin_network(&repo_id) {
+            return Err(AppError::NetworkBusy);
+        }
+    }
+
+    let path = PathBuf::from(&repo_id);
+    std::thread::spawn(move || {
+        let outcome =
+            crate::git::open_repository(&path).and_then(|backend| backend.delete_remote_branch(&name));
+
+        if let Some(state) = app.try_state::<Mutex<AppState>>() {
+            if let Ok(mut guard) = state.lock() {
+                guard.end_network(&repo_id);
+            }
+        }
+
+        let (report, error) = match outcome {
+            Ok(report) => (Some(report), None),
+            Err(e) => (None, Some(e)),
+        };
+        let _ = app.emit(
+            REMOTE_BRANCH_DELETE_EVENT,
+            RemoteBranchDeleteEvent {
                 repo_id,
                 report,
                 error,
@@ -1220,8 +1282,9 @@ pub fn load_pull_requests(
     Ok(())
 }
 
-/// Ouvre la page du dépôt sur sa forge — le bouton « Open on GitHub » de la
-/// barre.
+/// Ouvre la page du dépôt sur sa forge — le bouton « GitHub » de la barre, ou
+/// le menu d'un distant dans la section REMOTE (`remote` nomme alors lequel ;
+/// absent, celui qu'un fetch interrogerait).
 ///
 /// L'adresse est construite ici, à partir du distant qu'un fetch
 /// interrogerait, et passe le même garde-fou que `open_forge_page` : le
@@ -1230,11 +1293,12 @@ pub fn load_pull_requests(
 #[tauri::command]
 pub fn open_repository_page(
     repo_id: String,
+    remote: Option<String>,
     state: State<'_, Mutex<AppState>>,
 ) -> Result<(), AppError> {
     let url = {
         let guard = lock(&state)?;
-        guard.backend(&repo_id)?.remote_info(None)?.url
+        guard.backend(&repo_id)?.remote_info(remote.as_deref())?.url
     };
     let page = crate::forge::detect(&url)
         .ok_or(AppError::ForgeUnsupported)?

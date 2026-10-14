@@ -18,7 +18,7 @@ use crate::dto::{
     FetchAllReport, FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
     GraphRef, GraphRefKind,
     Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
-    RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry,
+    RemoteBranchDeleteReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry,
     TagPushReport, Upstream,
 };
 use crate::error::AppError;
@@ -1163,6 +1163,67 @@ impl GitBackend for Libgit2Backend {
         }
         branch.delete()?;
         Ok(())
+    }
+
+    fn delete_local_branch(&self, name: &str, force: bool) -> Result<(), AppError> {
+        let repo = self.repo()?;
+        let mut branch = repo.find_branch(name, BranchType::Local)?;
+        // libgit2 refuserait aussi, mais d'une erreur qui ne dit pas quoi faire.
+        if branch.is_head() {
+            return Err(AppError::BranchCheckedOut(name.to_string()));
+        }
+        if !force {
+            if let Some(tip) = branch.get().target() {
+                // La règle de `git branch -d` : contenue dans son amont si elle
+                // en a un, dans HEAD sinon. Un amont disparu (distant supprimé)
+                // retombe sur HEAD plutôt que de tout refuser.
+                let base = branch
+                    .upstream()
+                    .ok()
+                    .and_then(|u| u.get().target())
+                    .or_else(|| repo.head().ok().and_then(|h| h.target()));
+                let merged = match base {
+                    Some(base) => base == tip || repo.graph_descendant_of(base, tip)?,
+                    // Rien à quoi comparer (HEAD non né) : on ne devine pas.
+                    None => false,
+                };
+                if !merged {
+                    return Err(AppError::BranchNotMerged(name.to_string()));
+                }
+            }
+        }
+        branch.delete()?;
+        Ok(())
+    }
+
+    fn delete_remote_branch(&self, name: &str) -> Result<RemoteBranchDeleteReport, AppError> {
+        let repo = self.repo()?;
+        // Échoue tôt, et sans réseau, sur une référence qui n'existe pas.
+        let tracking = repo.find_branch(name, BranchType::Remote)?;
+        let refname = tracking.get().name().unwrap_or_default().to_string();
+        // Le distant vient de libgit2, pas du premier segment : un nom de
+        // distant peut contenir un « / » (voir `remote_branches`).
+        let remote = remote_name_of(&repo, tracking.get(), name);
+        let branch = name
+            .strip_prefix(&format!("{remote}/"))
+            .unwrap_or(name)
+            .to_string();
+        drop(tracking);
+
+        // Source vide : « ne rien mettre à cet endroit », soit une suppression.
+        let refspec = format!(":refs/heads/{branch}");
+        push_refspec(&repo, &remote, &refspec, None).map_err(|e| match e {
+            AppError::PushRejected(reason) => AppError::RemoteDeleteRejected(reason),
+            other => other,
+        })?;
+
+        // libgit2 retire la référence de suivi en mettant à jour les pointes
+        // après le push — quand la refspec du distant la couvre. Sinon elle
+        // resterait affichée pour une branche qui n'existe plus : on la retire.
+        if let Ok(mut reference) = repo.find_reference(&refname) {
+            let _ = reference.delete();
+        }
+        Ok(RemoteBranchDeleteReport { remote, branch })
     }
 
     fn remote_entries(&self) -> Result<Vec<RemoteEntry>, AppError> {
@@ -3664,6 +3725,63 @@ mod tests {
         fs::remove_dir_all(&origin_dir).ok();
         fs::remove_dir_all(&local_dir).ok();
         fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_local_branch_is_git_branch_d_then_dash_capital_d() {
+        let (dir, git) = temp_repo();
+        commit_file(&dir, &git, "a.txt", "1\n", "c1");
+        let main = git.info().unwrap().branch.unwrap();
+
+        // La branche courante ne se supprime jamais, même forcée.
+        assert!(matches!(
+            git.delete_local_branch(&main, true),
+            Err(AppError::BranchCheckedOut(n)) if n == main
+        ));
+
+        // Au même commit que HEAD : contenue, supprimée sans forcer.
+        git.create_branch("done", None).unwrap();
+        git.checkout_branch(&main).unwrap();
+        git.delete_local_branch("done", false).unwrap();
+        assert!(!git.local_branches().unwrap().iter().any(|b| b.name == "done"));
+
+        // Un commit à elle : refusée sans forcer, et toujours là…
+        git.create_branch("wip", None).unwrap();
+        commit_file(&dir, &git, "b.txt", "1\n", "c2");
+        git.checkout_branch(&main).unwrap();
+        assert!(matches!(
+            git.delete_local_branch("wip", false),
+            Err(AppError::BranchNotMerged(n)) if n == "wip"
+        ));
+        assert!(git.local_branches().unwrap().iter().any(|b| b.name == "wip"));
+        // …et supprimée quand on force.
+        git.delete_local_branch("wip", true).unwrap();
+        assert!(!git.local_branches().unwrap().iter().any(|b| b.name == "wip"));
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn delete_remote_branch_removes_it_on_the_server_and_locally() {
+        let (origin_dir, local_dir, git) = repo_with_bare_remote();
+        commit_file(&local_dir, &git, "a.txt", "1\n", "c1");
+        git.create_branch("feature/x", None).unwrap();
+        let repo = Repository::open(&local_dir).unwrap();
+        push_refspec(&repo, "origin", "refs/heads/feature/x:refs/heads/feature/x", None).unwrap();
+        git.fetch(None).unwrap();
+        assert!(git.remote_branches().unwrap().iter().any(|b| b.name == "origin/feature/x"));
+
+        let report = git.delete_remote_branch("origin/feature/x").unwrap();
+        assert_eq!((report.remote.as_str(), report.branch.as_str()), ("origin", "feature/x"));
+        // Plus sur le serveur…
+        let origin = Repository::open_bare(&origin_dir).unwrap();
+        assert!(origin.find_reference("refs/heads/feature/x").is_err());
+        // …plus dans les références de suivi, et la branche locale est intacte.
+        assert!(!git.remote_branches().unwrap().iter().any(|b| b.name == "origin/feature/x"));
+        assert!(git.local_branches().unwrap().iter().any(|b| b.name == "feature/x"));
+
+        assert!(git.delete_remote_branch("origin/absent").is_err());
+        fs::remove_dir_all(&origin_dir).ok();
+        fs::remove_dir_all(&local_dir).ok();
     }
 
     #[test]

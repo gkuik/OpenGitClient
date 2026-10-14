@@ -420,6 +420,39 @@ What the backend does, and why in that order:
 The frontend side is `runCheckout` — the same reload as any switch — which now
 returns whether it succeeded, so the bar knows when to close.
 
+### Deleting a branch: from its menu, local or remote
+
+The branch menu (right-click on a row of LOCAL or REMOTE, never a drop) ends
+with a delete entry, in the danger colour, armed by a first click and run by
+the second — the stash-drop pattern, re-armed whenever the menu opens.
+
+- **Local is `git branch -d`, then `-D`** (`delete_local_branch(name, force)`).
+  Unforced, the branch must be contained in its upstream if it has one, in HEAD
+  otherwise (an upstream gone with its remote falls back to HEAD); else
+  `BranchNotMerged`, and nothing is touched. The store answers `"unmerged"`
+  instead of raising the banner, and the entry turns into the forced deletion,
+  saying what it costs — a third, deliberate click. The current branch is
+  always refused (`BranchCheckedOut`), and the entry is greyed for it. The
+  remote branch is left alone. Only the branch list and the graph's badges are
+  reloaded: nothing moved on disk.
+- **Remote is `git push <remote> --delete`** (`delete_remote_branch`, a
+  refspec `:refs/heads/<b>` through `push_refspec`). The remote is the tracking
+  ref's own, from libgit2 (`remote_name_of`), not the one a fetch would use. It
+  runs on a thread under the **same network reservation** as push and tags —
+  it writes the server and `refs/remotes/**` —, so `deletingRemoteBranch` is
+  part of `busyRemote` and `runningOp` is `"delete"`; the result comes back as
+  `repo://remote-branch-deleted`, and credentials failures reopen the dialog,
+  the retry remembering which branch. A server refusal (a protected branch) is
+  `RemoteDeleteRejected`, not `PushRejected`, whose fetch-and-integrate advice
+  means nothing here. The tracking ref is removed explicitly if libgit2's tip
+  update left it, then `reloadRemoteRefs()`; a local branch that tracked it
+  stays, its upstream now gone.
+
+**The REMOTE node itself** (`origin`) has a menu too, with one entry: **Open on
+GitHub**, through *that* remote (`open_repository_page(repo_id, remote)`). It
+stays greyed until `remoteIsForge` has asked the backend whether its URL leads
+to a recognised forge.
+
 ### Tags: a name on a commit, and nothing moves it
 
 `TagEntry.oid` is the **commit**, never the tag object: an annotated tag is
@@ -926,9 +959,10 @@ The button stays lit while a *Finish* runs (`active`).
   already at the right commit is skipped. So after an error (which clears
   `flowFinish`), checking out the branch and finishing again resumes without
   doing anything twice.
-- **`delete_branch(name, merged_into)` is the only branch deletion in the app**,
-  and it refuses (`BranchNotMerged`) unless `merged_into` contains the branch:
-  no commit can be lost through it. An *up to date* merge does not switch, so
+- **`delete_branch(name, merged_into)` is the Finish's own deletion**, distinct
+  from the branch menu's `delete_local_branch`, and it refuses
+  (`BranchNotMerged`) unless `merged_into` contains the branch — with no force
+  behind it: no commit can be lost through it. An *up to date* merge does not switch, so
   the step first leaves the branch if HEAD is still on it. The remote branch,
   if any, is left alone, as `git flow` does by default.
 - `flowRunning` is one of the flags that hold the watcher's refresh back
@@ -1196,12 +1230,11 @@ right-clicked — fast-forwarding without a checkout when it can, switching to t
 target when it must, and leaving a conflict in the worktree for the same
 resolve-or-abandon path as a pull. The menu's second entry forces a merge commit
 (`--no-ff`); a merge never forces anything in the `git push --force` sense — that lives on the Push button, and nowhere else. Branches are **created** (see
-*Creating a branch* above); renaming is still nowhere, deletion exists only as
-the last step of a Git Flow *Finish* — and refuses an unmerged branch —, and
-nothing rebases.
+*Creating a branch* above) and **deleted** (see *Deleting a branch* below);
+renaming is still nowhere, and nothing rebases.
 
 The graph is **read-only** but for two entries: no checkout-from-commit, reset or revert from it. The exception is a commit row's context menu, whose two entries create a branch there (through the branch bar, then the same SAFE switch as anywhere else) or a tag — a tag writes one ref and touches neither the worktree nor the history. Its ref badges show local and remote branches and tags (`collect_refs`). It does carry an "uncommitted changes" (WIP) row at the top, but that row only *selects* and *types the commit summary* — nothing is staged, discarded or committed from the graph.
 
 **Amend has a backend but no UI**: `GitBackend::commit(.., amend)`, the command and `api.commit`'s parameter all still work and are tested, but the checkbox was removed from the commit box, so `RepoStore.commit` is only ever called with the default `false`.
 
-AI features are intentionally absent — don't add UI for features that have no working backend. **Five destructive operations exist**, and only five: **Discard all changes** (from the right column's header, or the repository bar's button when placed there — the same confirmation panel either way) and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, and a tag's **Delete locally** / **Delete on the remote** — the first two lose local work, the third can remove commits from a server for everybody, the last removes a tag from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert). The branch deletion at the end of a Git Flow *Finish* is not a sixth: `delete_branch` refuses a branch its target doesn't contain (`BranchNotMerged`), so no commit can be lost through it. A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.
+AI features are intentionally absent — don't add UI for features that have no working backend. **Seven destructive operations exist**, and only seven: **Discard all changes** (from the right column's header, or the repository bar's button when placed there — the same confirmation panel either way) and its per-path twin **Discard changes** (the context menu of a file or directory row), both described above, the **force push** in the Push button's context menu, a tag's **Delete locally** / **Delete on the remote**, and a branch's **Delete branch** (once forced past `BranchNotMerged`) / **Delete on <remote>** — the first two lose local work, the force push can remove commits from a server for everybody, the tag deletions remove a tag (from a server, for the remote one), a forced local branch deletion loses the commits only it held, and a remote branch deletion removes the branch from a server for everybody. All are confirmed in place, in a panel or in the menu itself, since no confirm capability is declared. Nothing rewrites *local* history (reset, revert). The branch deletion at the end of a Git Flow *Finish* is not an eighth: `delete_branch` refuses a branch its target doesn't contain (`BranchNotMerged`), so no commit can be lost through it. A merge is the exception that isn't one: it only ever adds a commit, or moves a branch forward.

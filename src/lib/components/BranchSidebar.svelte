@@ -114,7 +114,7 @@
   // clic droit sur une ligne (voir `branchMerge.svelte.ts`). Le menu est rendu
   // ici, une fois pour la colonne, comme celui des stashes.
   const MERGE_MENU_W = 300;
-  const MERGE_MENU_H = 250;
+  const MERGE_MENU_H = 300;
 
   /** Position du menu, ramenée dans la fenêtre. */
   const mergeMenuPos = $derived(
@@ -245,6 +245,74 @@
     else void repo.pushTag(tag.name, true);
   }
 
+  // ── Suppression d'une branche, depuis son menu ──────────────────────────────
+  //
+  // Dernière entrée du menu, en couleur de danger, armée par un premier clic
+  // et exécutée par le second — le patron de la suppression d'un stash, faute
+  // de capacité de confirmation déclarée. Pour une branche locale, c'est
+  // `git branch -d` : si elle n'est pas fusionnée, le backend refuse, et
+  // l'entrée devient la suppression forcée en disant ce qu'elle fait perdre —
+  // un troisième clic, délibéré. Réarmée à chaque ouverture du menu.
+  let deleteStep = $state<"armed" | "unmerged" | null>(null);
+  $effect(() => {
+    void branchMerge.request;
+    deleteStep = null;
+  });
+
+  /** Distant d'une branche de suivi, tel que libgit2 l'a nommé. */
+  function remoteOf(name: string): string {
+    return repo.remoteBranches.find((b) => b.name === name)?.remote ?? name.split("/")[0];
+  }
+
+  async function runDelete(name: string, remote: boolean) {
+    if (remote) {
+      if (deleteStep !== "armed") {
+        deleteStep = "armed";
+        return;
+      }
+      branchMerge.close();
+      void repo.deleteRemoteBranch(name);
+      return;
+    }
+    if (deleteStep === null) {
+      deleteStep = "armed";
+      return;
+    }
+    const outcome = await repo.deleteLocalBranch(name, deleteStep === "unmerged");
+    if (outcome === "unmerged") {
+      deleteStep = "unmerged";
+      return;
+    }
+    branchMerge.close();
+  }
+
+  // ── Menu d'un distant (la ligne « origin ») ─────────────────────────────────
+  // Une entrée : la page du dépôt sur sa forge, par **ce** distant. Elle reste
+  // grisée tant que le backend n'a pas dit si son URL mène à GitHub.
+  let remoteMenu = $state<{ x: number; y: number; remote: string; forge: boolean | null } | null>(
+    null,
+  );
+  const REMOTE_MENU_W = 220;
+  const REMOTE_MENU_H = 80;
+
+  function openRemoteMenu(remote: string, x: number, y: number) {
+    remoteMenu = {
+      x: Math.max(8, Math.min(x, window.innerWidth - REMOTE_MENU_W - 8)),
+      y: Math.max(8, Math.min(y, window.innerHeight - REMOTE_MENU_H - 8)),
+      remote,
+      forge: null,
+    };
+    void repo.remoteIsForge(remote).then((forge) => {
+      if (remoteMenu?.remote === remote) remoteMenu = { ...remoteMenu, forge };
+    });
+  }
+
+  function openRemoteInBrowser() {
+    const remote = remoteMenu?.remote;
+    remoteMenu = null;
+    if (remote) void repo.openOnForge(remote);
+  }
+
   async function runMerge(mode: MergeMode) {
     const request = branchMerge.request;
     branchMerge.close();
@@ -260,6 +328,7 @@
     if (e.key !== "Escape") return;
     close();
     prMenu = null;
+    remoteMenu = null;
     closeTagMenu();
     branchMerge.close();
   }}
@@ -314,6 +383,16 @@
                 <button
                   class="remote-node"
                   onclick={() => repo.toggleBranchDir(group.remote)}
+                  oncontextmenu={(e) => {
+                    e.preventDefault();
+                    openRemoteMenu(group.remote, e.clientX, e.clientY);
+                  }}
+                  onkeydown={(e) => {
+                    if (e.key !== "ContextMenu") return;
+                    e.preventDefault();
+                    const r = e.currentTarget.getBoundingClientRect();
+                    openRemoteMenu(group.remote, r.left, r.bottom);
+                  }}
                   aria-expanded={open}
                   title={group.remote}
                 >
@@ -575,6 +654,80 @@
         <span>{t("branches.merge.noFastForward")}</span>
       </button>
     {/if}
+    {#if !request.fromDrop}
+      <!-- Supprimer : en dernier, séparé, dans le rouge. -->
+      <div class="ctx-sep"></div>
+      {#if request.remote}
+        {@const remote = remoteOf(request.target)}
+        {@const branch = request.target.slice(remote.length + 1)}
+        <button
+          class="ctx-item wrap danger"
+          role="menuitem"
+          disabled={repo.busyRemote}
+          title={repo.busyRemote ? t("tags.menu.busy") : t("branches.menu.deleteRemote.hint", { remote })}
+          onclick={() => runDelete(request.target, true)}
+        >
+          {@render dropIcon()}
+          <span>
+            {deleteStep === "armed"
+              ? t("branches.menu.deleteRemote.confirm", { branch, remote })
+              : t("branches.menu.deleteRemote", { remote })}
+          </span>
+        </button>
+      {:else}
+        {@const isHead = repo.repoInfo?.branch === request.target}
+        <button
+          class="ctx-item wrap danger"
+          role="menuitem"
+          disabled={isHead || repo.busy || repo.checkingOut || repo.mergingBranches}
+          title={isHead
+            ? t("branches.menu.delete.head")
+            : deleteStep === "unmerged"
+              ? t("branches.menu.delete.force.hint")
+              : t("branches.menu.delete.hint")}
+          onclick={() => runDelete(request.target, false)}
+        >
+          {@render dropIcon()}
+          <span>
+            {deleteStep === "unmerged"
+              ? t("branches.menu.delete.force", { branch: request.target })
+              : deleteStep === "armed"
+                ? t("branches.menu.delete.confirm", { branch: request.target })
+                : t("branches.menu.delete")}
+          </span>
+        </button>
+      {/if}
+    {/if}
+  </div>
+{/if}
+
+<!-- Menu d'un distant : sa page sur la forge. -->
+{#if remoteMenu}
+  <button
+    class="ctx-overlay"
+    aria-label={t("common.closeMenu")}
+    onclick={() => (remoteMenu = null)}
+    oncontextmenu={(e) => {
+      e.preventDefault();
+      remoteMenu = null;
+    }}
+  ></button>
+  <div
+    class="ctx-menu remote-menu"
+    style="left: {remoteMenu.x}px; top: {remoteMenu.y}px"
+    role="menu"
+  >
+    <p class="ctx-head">{remoteMenu.remote}</p>
+    <button
+      class="ctx-item"
+      role="menuitem"
+      disabled={remoteMenu.forge !== true}
+      title={remoteMenu.forge === false ? t("branches.remote.notForge") : t("toolbar.forge.hint")}
+      onclick={openRemoteInBrowser}
+    >
+      {@render externalIcon()}
+      <span>{t("pr.open")}</span>
+    </button>
   </div>
 {/if}
 
@@ -1023,6 +1176,9 @@
   }
   /* Menu de la fusion : les noms de branches peuvent être longs, l'entrée passe
      donc à la ligne au lieu de pousser le menu hors de l'écran. */
+  .remote-menu {
+    min-width: 200px;
+  }
   .merge-menu {
     min-width: 220px;
     max-width: 300px;

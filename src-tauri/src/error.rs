@@ -70,7 +70,7 @@ pub enum AppError {
     #[error("Repository {0} not found: it is private, or the token cannot reach it")]
     ForgeNotFound(String),
 
-    #[error("Pull requests are only read from GitHub for now")]
+    #[error("Only GitHub repositories are supported for now")]
     ForgeUnsupported,
 
     #[error("No current branch (detached HEAD)")]
@@ -99,6 +99,12 @@ pub enum AppError {
 
     #[error("Branch {0} is not merged: deleting it would lose commits")]
     BranchNotMerged(String),
+
+    #[error("Branch {0} is checked out: switch to another branch before deleting it")]
+    BranchCheckedOut(String),
+
+    #[error("The remote refused to delete the branch ({0}). It may be protected.")]
+    RemoteDeleteRejected(String),
 
     #[error("A remote named {0} already exists")]
     RemoteExists(String),
@@ -158,6 +164,8 @@ impl AppError {
             AppError::InvalidTagName(_) => "InvalidTagName",
             AppError::TagRejected(_) => "TagRejected",
             AppError::BranchNotMerged(_) => "BranchNotMerged",
+            AppError::BranchCheckedOut(_) => "BranchCheckedOut",
+            AppError::RemoteDeleteRejected(_) => "RemoteDeleteRejected",
             AppError::RemoteExists(_) => "RemoteExists",
             AppError::InvalidRemoteName(_) => "InvalidRemoteName",
             AppError::RemoteNotFound(_) => "RemoteNotFound",
@@ -184,6 +192,8 @@ impl AppError {
             | AppError::InvalidTagName(arg)
             | AppError::TagRejected(arg)
             | AppError::BranchNotMerged(arg)
+            | AppError::BranchCheckedOut(arg)
+            | AppError::RemoteDeleteRejected(arg)
             | AppError::RemoteExists(arg)
             | AppError::InvalidRemoteName(arg)
             | AppError::RemoteNotFound(arg) => Some(arg),

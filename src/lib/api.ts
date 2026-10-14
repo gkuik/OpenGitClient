@@ -38,6 +38,7 @@ import type {
   StashEntry,
   TagEntry,
   TagPushEvent,
+  RemoteBranchDeleteEvent,
   ThemeMode,
   GraphLineStyle,
 } from "./types";
@@ -176,6 +177,22 @@ export const api = {
     call<void>("push_tag", { repoId, name, delete: remove }),
   onTagPushed: (handler: (event: TagPushEvent) => void): Promise<UnlistenFn> =>
     listen<TagPushEvent>("repo://tag-pushed", (e) => handler(e.payload)),
+  /**
+   * Supprime une branche locale (`git branch -d`, `-D` avec `force`). Sans
+   * `force`, une branche non fusionnée est refusée par `BranchNotMerged`.
+   */
+  deleteLocalBranch: (repoId: string, name: string, force: boolean) =>
+    call<void>("delete_local_branch", { repoId, name, force }),
+  /**
+   * Supprime une branche sur son distant (`origin/feature/x`). Même contrat que
+   * `pushTag` : réponse immédiate, résultat par `onRemoteBranchDeleted`.
+   */
+  deleteRemoteBranch: (repoId: string, name: string) =>
+    call<void>("delete_remote_branch", { repoId, name }),
+  onRemoteBranchDeleted: (
+    handler: (event: RemoteBranchDeleteEvent) => void,
+  ): Promise<UnlistenFn> =>
+    listen<RemoteBranchDeleteEvent>("repo://remote-branch-deleted", (e) => handler(e.payload)),
 
   // ── Dépôt distant ────────────────────────────────────────────────────────
   /**
@@ -391,7 +408,8 @@ export const api = {
    */
   openForgePage: (url: string) => call<void>("open_forge_page", { url }),
   /** Ouvre la page du dépôt sur sa forge ; le backend construit l'adresse. */
-  openRepositoryPage: (repoId: string) => call<void>("open_repository_page", { repoId }),
+  openRepositoryPage: (repoId: string, remote?: string) =>
+    call<void>("open_repository_page", { repoId, remote: remote ?? null }),
   /**
    * Applications externes : éditeurs et terminaux installés, et ceux que la
    * barre ouvrira. Le backend ne retient qu'un nom de sa liste connue.

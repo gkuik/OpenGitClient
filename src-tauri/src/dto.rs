@@ -587,6 +587,24 @@ pub const GRAPH_MESSAGE_COLUMN: &str = "message";
 pub const GRAPH_COL_W_MIN: f32 = 2.5;
 pub const GRAPH_COL_W_MAX: f32 = 40.0;
 
+/// Résultat de la suppression d'une branche distante.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBranchDeleteReport {
+    pub remote: String,
+    /// Nom de la branche **sur le distant** (`feature/x`, sans `origin/`).
+    pub branch: String,
+}
+
+/// Charge utile de `repo://remote-branch-deleted`, jumelle de `TagPushEvent`.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RemoteBranchDeleteEvent {
+    pub repo_id: String,
+    pub report: Option<RemoteBranchDeleteReport>,
+    pub error: Option<AppError>,
+}
+
 /// Éléments de la barre du dépôt. Les actions y figurent une fois au plus, les
 /// éléments de mise en page autant qu'on veut.
 ///

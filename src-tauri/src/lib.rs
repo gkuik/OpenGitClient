@@ -117,6 +117,8 @@ pub fn run() {
             commands::load_pull_requests,
             commands::open_forge_page,
             commands::open_repository_page,
+            commands::delete_local_branch,
+            commands::delete_remote_branch,
             commands::get_external_apps,
             commands::set_external_app,
             commands::reveal_repository,
