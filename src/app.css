@@ -300,3 +300,9 @@ body.resizing * {
   color: var(--text-faint);
   cursor: default;
 }
+/* Sépare deux groupes d'entrées. */
+.ctx-sep {
+  height: 1px;
+  margin: 0.25rem 0.3rem;
+  background: var(--border);
+}

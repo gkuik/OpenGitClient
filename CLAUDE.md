@@ -5,7 +5,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 ## Project
 
 OpenGitClient — a lightweight desktop Git client (Tauri 2 + Rust backend, Svelte 5 frontend, libgit2 via `git2-rs`).
-Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull, plus a GitKraken-style background auto-fetch (+ recent repos, per-repository settings — display name, identity, remotes, Git Flow —, Git Flow work branches started and finished from the repository bar, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
+Goals: low memory footprint and small binary. Implemented so far: open repo → status → diff → stage/unstage → commit → fetch/push/pull, plus a GitKraken-style background auto-fetch (+ recent repos, per-repository settings — display name, identity, remotes, Git Flow —, Git Flow work branches started and finished from the repository bar's Git Flow menu, local and remote branch lists with double-click checkout and ahead/behind counters, branch creation, tags — created from the graph, listed, checked out, pushed and deleted —, commit graph with commit inspection and an uncommitted-changes row at its top).
 
 The window is a tab bar (open repositories), then the repository bar, over a three-column layout: branches, local and remote (left) · graph *or* diff (center) · file selector (right). The sidebars deliberately mirror GitKraken's layout.
 
@@ -804,10 +804,13 @@ exact name (`stage`) or a group ending in `*` (`release/*`). The default is
   dot — the WIP circle is hollow, a line through it would cross it out. A branch
   that exists nowhere still has no column at all.
 
-**The repository bar gets a third group, one button per kind** — *New feature*,
-*New bugfix*, *New release*, *New hotfix* — wider than the 48px squares
-(`wide`). **On a branch of a kind, that kind's button becomes its *Finish***;
-the others stay.
+**The repository bar gets a third group: one *Git Flow* button, whose left
+click opens a menu** under it (a `▾` beside the label says so; `dropdown` in
+`RepoBar`'s `action` snippet — unlike Pull and Push, the button has no action
+of its own to run, so the menu is not hidden behind a right-click). On a branch
+of a kind, that kind's ***Finish*** heads the menu, alone above a separator;
+the four ***New*** (*feature*, *bugfix*, *release*, *hotfix*) are always below.
+The button stays lit while a *Finish* runs (`active`).
 
 - **New** opens the branch bar (`BranchPrompt`) in flow mode: the prefix is
   shown, fixed, before the field; spaces typed become dashes
@@ -1057,7 +1060,7 @@ These caused real breakage; don't undo them.
 - **Never put `direction: rtl` on `.path` in `FileItem.svelte`.** It was used for left-side ellipsis but reorders bidi text, rendering `.bob/config.json` as `bob/config.json.` — breaking every dotfile.
 - **`html, body` carry `overflow: hidden` + `overscroll-behavior: none`** (`app.css`). This is a desktop app: only inner panels scroll. `overscroll-behavior` specifically kills WKWebView's elastic bounce, which otherwise drags the whole UI.
 - **The context-menu chrome is in `app.css`, not in a component** — `.ctx-overlay`,
-  `.ctx-menu`, `.ctx-head`, `.ctx-item`. Three components open menus now (the
+  `.ctx-menu`, `.ctx-head`, `.ctx-item`, `.ctx-sep`. Three components open menus now (the
   branch column, the PULL REQUESTS section, the repository bar) and the first two
   copies had already drifted apart: 176px against 236px of `min-width`, a hover
   that ignored `:disabled` in one of them. What stays local to a component is
