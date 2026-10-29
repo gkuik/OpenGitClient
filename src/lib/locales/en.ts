@@ -364,6 +364,12 @@ export const en = {
   "pr.state.draft": "draft",
   "pr.state.closed": "closed",
   "pr.state.merged": "merged",
+  "pr.review.approved": "approved",
+  "pr.review.changesRequested": "changes requested",
+  "pr.review.reviewRequired": "review required",
+  "pr.checks.success": "Checks passed",
+  "pr.checks.failure": "Checks failed",
+  "pr.checks.pending": "Checks running",
   "pr.branchMissing": "{branch}: branch missing locally, run a Fetch",
 
   // ── Dialogue d'identifiants ───────────────────────────────────────────────

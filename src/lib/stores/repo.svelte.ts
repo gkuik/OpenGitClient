@@ -479,7 +479,8 @@ export class RepoStore {
 
   // ── Pull requests ───────────────────────────────────────────────────────────
   // Elles ne viennent pas du dépôt mais de l'API d'une forge : rien ici n'est
-  // relu du disque, et rien n'est rechargé tout seul — voir `loadPullRequests`.
+  // relu du disque, et rien ne les sonde — elles suivent les fetch, voir
+  // `loadPullRequests`.
   pullRequests = $state<PullRequestEntry[]>([]);
   prLoading = $state(false);
   /** Un chargement s'est terminé, avec ou sans succès. */
@@ -1412,6 +1413,8 @@ export class RepoStore {
     this.setOpStatus(t("op.remoteBranch.deleted", { remote, branch }), "ok");
     this.finish("delete", "ok");
     void this.reloadRemoteRefs();
+    // GitHub ferme la PR dont la branche source vient de disparaître.
+    void this.loadPullRequests();
   }
 
   // ── Profil d'auteur ─────────────────────────────────────────────────────────
@@ -1720,6 +1723,8 @@ export class RepoStore {
       await this.loadRemoteEntries();
     }
     await this.reloadRemoteRefs();
+    // Un distant ajouté ou corrigé peut mener à une forge — ou ne plus y mener.
+    void this.loadPullRequests();
     return error;
   }
 
@@ -1734,6 +1739,10 @@ export class RepoStore {
     this.fetching = true;
     this.error = null;
     this.setOpStatus(null);
+    // En même temps que le fetch, pas après : l'appel à la forge ne prend pas
+    // la réservation réseau, et une revue rendue ne fait bouger aucune ref —
+    // attendre que le fetch rapporte un changement la manquerait.
+    void this.loadPullRequests();
     try {
       await this.waitAutoFetch();
       await api.fetchRemote(this.repoId);
@@ -1859,6 +1868,8 @@ export class RepoStore {
     this.pulling = true;
     this.error = null;
     this.setOpStatus(null);
+    // Un pull commence par un fetch : les PR suivent, comme pour Fetch.
+    void this.loadPullRequests();
     try {
       await this.waitAutoFetch();
       await api.pull(this.repoId, mode, branch);
@@ -2072,6 +2083,8 @@ export class RepoStore {
     // c'est exactement ce que recharge le chemin du fetch, pastille `↑` de la
     // branche comprise — elle doit retomber à zéro.
     void this.reloadRemoteRefs();
+    // Des commits poussés sur la branche d'une PR relancent ses checks.
+    void this.loadPullRequests();
   }
 
   /**
@@ -2087,10 +2100,6 @@ export class RepoStore {
     // Un fetch ramène aussi les tags qui désignent des commits récupérés.
     await this.loadTags();
     await this.loadGraph();
-    // Une PR a pu être ouverte ou fusionnée entre-temps. C'est le seul moment
-    // où on la redemande sans que personne ne l'ait cliqué : quelqu'un vient
-    // justement de demander des nouvelles du distant.
-    void this.loadPullRequests();
   }
 
   // ── Auto-fetch ──────────────────────────────────────────────────────────────
@@ -2131,6 +2140,9 @@ export class RepoStore {
     // décaler l'intervalle, ni un échec le faire réessayer en boucle.
     this.lastFetchAt = Date.now();
     this.autoFetchDone = new Promise((resolve) => (this.autoFetchSettle = resolve));
+    // Les PR à chaque échéance, que des refs bougent ou non : une approbation,
+    // des checks qui passent au vert ne déplacent rien sur le disque.
+    void this.loadPullRequests();
     try {
       await api.autoFetch(this.repoId);
     } catch {
@@ -2182,9 +2194,6 @@ export class RepoStore {
     // l'onglet que s'il est affiché, et qui fusionne cette relecture avec celle
     // que le watcher demandera pour les mêmes `refs/remotes/**`.
     this.noteExternalChange({ repoId: this.repoId, worktree: false, refs: true });
-    // Une PR a pu s'ouvrir ou se fermer : la branche qui vient de bouger en est
-    // souvent la raison. Rien de redemandé quand rien n'a bougé.
-    void this.loadPullRequests();
     return true;
   }
 
@@ -2221,12 +2230,14 @@ export class RepoStore {
    * par un événement (`repo://pull-requests`) : l'appel réseau tourne sur un
    * thread du backend.
    *
-   * **Rien ne l'appelle en boucle** : ouverture de l'onglet, fetch ou push
-   * terminé, bouton ↻ de la section, changement du filtre « fermées ». Aucun
-   * sondage — une PR n'apparaît pas sur le disque, donc le surveillant de
-   * fichiers n'a rien à en dire, et interroger l'API à intervalle régulier
-   * grillerait le quota du jeton pour une colonne que personne ne regarde
-   * forcément.
+   * **Elle suit les fetch, elle n'a pas de minuterie à elle** : ouverture de
+   * l'onglet, **chaque** fetch — manuel, pull ou auto-fetch, qu'il ait fait
+   * bouger des refs ou non, et lancée en même temps que lui —, push terminé,
+   * distants modifiés, *Retry* de la section. Une PR n'apparaît pas sur le
+   * disque, donc le surveillant de fichiers n'a rien à en dire ; en passant par
+   * l'auto-fetch, elle hérite de son intervalle et de sa règle « l'onglet
+   * affiché seulement », au lieu de sonder l'API pour une colonne que personne
+   * ne regarde.
    */
   async loadPullRequests() {
     if (this.prLoading || !this.repoInfo) return;

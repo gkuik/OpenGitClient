@@ -367,7 +367,7 @@ bounds, the due date, which errors suspend, the elapsed time — pure and tested
   visible tab. That path already waits for an operation in progress, re-reads
   a hidden tab only on activation, and merges with the reload the watcher
   will ask for the same refs ~300 ms later. The pull requests are reloaded
-  too, but only when something moved.
+  at every auto-fetch, moved or not, started alongside it (see *Pull requests*).
 - **If `repo://auto-fetched` can't be subscribed to**, the timer never starts
   one: an auto-fetch whose end never arrives would make every remote gesture
   wait forever.
@@ -659,12 +659,33 @@ error for hosts that never had pull requests.
   `Mutex`, network work goes to a dedicated thread — so an async runtime would be
   pure weight for one HTTP call. Its TLS is what raised the crate's
   `rust-version` from 1.77 to 1.85; nothing else in the project needs that.
-- **Two requests per load, not four.** GitKraken's three groups would each be one
+- **One GraphQL request per load.** GitKraken's three groups would each be one
   search query, on a much tighter quota (30/min), for a result one listing already
-  contains: `GET /user` for the token's identity, then the repository's PRs. The
-  backend reports **facts** (`mine` / `assigned` / `reviewing`) and the frontend
-  builds the groups — the same split as the graph, whose lanes are laid out from a
-  plain list of commits.
+  contains. REST's listing doesn't carry the review state either — it would take a
+  `GET …/reviews` per PR, plus the checks — so the load is one GraphQL query
+  (`PULL_REQUESTS_QUERY`, at `ForgeRemote::graphql_url()`: `api.github.com/graphql`,
+  or `/api/graphql` on Enterprise, *not* under `/api/v3`) returning the token's
+  identity (`viewer`) and the open PRs with everything below. The backend reports
+  **facts** (`mine` / `assigned` / `reviewing`, `review`, `checks`) and the
+  frontend builds the groups — the same split as the graph, whose lanes are laid
+  out from a plain list of commits. Token checking in Settings stays REST
+  (`GET /user`), for its `X-OAuth-Scopes` header.
+- **Review state has two sources, because neither suffices.** `reviewDecision` is
+  GitHub's verdict, but it stays `null` when the target branch requires no review
+  — most personal repositories, where approvals exist all the same. It is then
+  derived from `latestOpinionatedReviews(writersOnly: true)`: a change request
+  beats an approval, and an open review request with nothing decided is
+  `reviewRequired` (`review_state`, tested). `checks` is the last commit's
+  `statusCheckRollup` folded into success / failure / pending (`EXPECTED` waits
+  like `PENDING`). The row shows checks as an icon after the number and the
+  review as a coloured tag after the title (green approved, red changes
+  requested, amber review required); the tooltip spells both out.
+- **GraphQL answers 200 even when it fails**: `errors` beside a possibly partial
+  `data`. The list is kept as soon as `data.repository` is there — a field the
+  token can't read (checks, for a fine-grained token without that permission)
+  comes back `null` with an error beside it, and must not take the whole list
+  down. With no repository, `NOT_FOUND` is `ForgeNotFound`, anything else
+  `Network`.
 - **The thread takes no network reservation**, unlike fetch and push. Those two
   fight over `refs/remotes/**`; reading an API writes nothing at all, so Pull,
   Push and Fetch stay live while PRs load. The result comes back as
@@ -677,11 +698,18 @@ error for hosts that never had pull requests.
   would never appear in Settings (the list is filtered on `uses_http`) — the token
   would be impossible to enter.
 
-**Nothing polls.** The watcher knows nothing about PRs — they never touch the
-disk — and interrogating the API on a timer would burn the token's quota for a
-column nobody is necessarily looking at. Loads happen on tab open, after a fetch
-or a push (`reloadRemoteRefs`: someone just asked for news of the remote), and on
-the error message's *Retry*. The section header carries no action — no filter,
+**PRs follow the fetches; they have no timer of their own.** The watcher knows
+nothing about PRs — they never touch the disk — and a timer of their own would
+burn the token's quota for a column nobody is necessarily looking at. Loads
+happen on tab open, **at the start of every fetch** — manual, pull or auto-fetch,
+whether refs then move or not: an approval or checks turning green move no ref,
+so waiting for the fetch's report would miss them, and the forge call takes no
+network reservation, so nothing stops it running alongside —, after a push
+(new commits restart checks), a remote-branch deletion (GitHub closes the PR it
+headed) or a change of remotes, and on the error message's *Retry*. Riding the
+auto-fetch, they inherit its interval and its « visible tab only » rule.
+`reloadRemoteRefs` no longer loads them, which is what keeps a fetch from loading
+them twice. The section header carries no action — no filter,
 no reload button: it lists the **open** pull requests, drafts included, and
 nothing else (`ForgeBackend::pull_requests` takes no argument).
 
@@ -1218,7 +1246,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes one branch — the current one, or another from its menu — and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), and never polled. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes one branch — the current one, or another from its menu — and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), each with its review state and checks, and reloaded with every fetch (auto-fetch included) rather than on a timer of their own. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. **The repository on screen is auto-fetched**, every minute by default (see *Auto-fetch*). Nothing is auto-*pulled*.
 

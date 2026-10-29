@@ -592,7 +592,18 @@ export interface PullRequestEntry {
   mine: boolean;
   assigned: boolean;
   reviewing: boolean;
+  /** Où en est la revue ; `null` : personne n'a relu ni n'a été sollicité. */
+  review: ReviewState | null;
+  /** État agrégé des checks du dernier commit ; `null` : aucun, ou invisibles
+   * pour le jeton. */
+  checks: ChecksState | null;
 }
+
+/** État de revue d'une PR, tel que la forge le tranche. */
+export type ReviewState = "approved" | "changesRequested" | "reviewRequired";
+
+/** État agrégé des checks (CI, statuts) d'une PR. */
+export type ChecksState = "success" | "failure" | "pending";
 
 export interface PullRequestReport {
   /** Hôte interrogé — la clé du jeton, que les messages nomment. */

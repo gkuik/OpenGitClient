@@ -1,7 +1,7 @@
 <script lang="ts">
-  import { errorMessage, t } from "../i18n.svelte";
+  import { errorMessage, t, type MessageKey } from "../i18n.svelte";
   import { repo, tabs } from "../stores/repo.svelte";
-  import type { PullRequestEntry } from "../types";
+  import type { ChecksState, PullRequestEntry, ReviewState } from "../types";
   import SectionHeader from "./SectionHeader.svelte";
   import Chevron from "./Chevron.svelte";
 
@@ -17,10 +17,11 @@
       coupé), donc elle affiche son propre message plutôt que de passer par le
       bandeau d'erreur global — qui ferait écran à tout le reste pour une
       colonne d'information ;
-    - **elle ne se rafraîchit pas toute seule**. Le surveillant de fichiers ne
-      sait rien des PR, et sonder l'API grillerait le quota du jeton. D'où le
-      bouton ↻ dans l'en-tête, en plus des rechargements à l'ouverture de
-      l'onglet et après un fetch ou un push.
+    - **elle ne se rafraîchit qu'avec le distant**. Le surveillant de fichiers
+      ne sait rien des PR, et une minuterie à elle grillerait le quota du jeton :
+      elle est rechargée à l'ouverture de l'onglet et à chaque fetch — manuel,
+      pull ou auto-fetch —, ce qui suffit à voir une revue rendue ou des checks
+      passés au vert sans que personne ne clique.
 
     Le classement en trois groupes est fait ici et non par le backend, qui ne
     renvoie que des faits (`mine`, `assigned`, `reviewing`) : c'est la même
@@ -83,6 +84,18 @@
    * seule fois — c'est le nombre de PR retenues par les filtres. */
   const total = $derived(repo.pullRequests.length);
 
+  const REVIEW_LABEL: Record<ReviewState, MessageKey> = {
+    approved: "pr.review.approved",
+    changesRequested: "pr.review.changesRequested",
+    reviewRequired: "pr.review.reviewRequired",
+  };
+
+  const CHECKS_LABEL: Record<ChecksState, MessageKey> = {
+    success: "pr.checks.success",
+    failure: "pr.checks.failure",
+    pending: "pr.checks.pending",
+  };
+
   /** Ce qu'un survol doit dire d'une PR, que la ligne tronque forcément. */
   function hint(pr: PullRequestEntry): string {
     const state = pr.merged
@@ -92,7 +105,12 @@
         : pr.draft
           ? t("pr.state.draft")
           : t("pr.state.open");
-    return `#${pr.number} · ${pr.title}\n${pr.author} · ${pr.sourceBranch} → ${pr.targetBranch}\n${state}`;
+    const status = [
+      state,
+      pr.review ? t(REVIEW_LABEL[pr.review]) : null,
+      pr.checks ? t(CHECKS_LABEL[pr.checks]) : null,
+    ].filter(Boolean);
+    return `#${pr.number} · ${pr.title}\n${pr.author} · ${pr.sourceBranch} → ${pr.targetBranch}\n${status.join(" · ")}`;
   }
 </script>
 
@@ -159,7 +177,29 @@
               >
                 <span class="line">
                   <span class="num">#{pr.number}</span>
+                  {#if pr.checks}
+                    <!-- Les checks d'abord, contre le numéro : une icône, pas
+                         un mot — la ligne n'a pas la place de deux étiquettes. -->
+                    <span
+                      class="checks {pr.checks}"
+                      title={t(CHECKS_LABEL[pr.checks])}
+                      aria-label={t(CHECKS_LABEL[pr.checks])}
+                    >
+                      <svg viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round">
+                        {#if pr.checks === "success"}
+                          <path d="M3.5 8.5l3 3 6-7" />
+                        {:else if pr.checks === "failure"}
+                          <path d="M4.5 4.5l7 7M11.5 4.5l-7 7" />
+                        {:else}
+                          <circle cx="8" cy="8" r="3.5" fill="currentColor" stroke="none" />
+                        {/if}
+                      </svg>
+                    </span>
+                  {/if}
                   <span class="ptitle">{pr.title}</span>
+                  {#if pr.review}
+                    <span class="tag review {pr.review}">{t(REVIEW_LABEL[pr.review])}</span>
+                  {/if}
                   {#if pr.draft}<span class="tag draft">{t("pr.state.draft")}</span>{/if}
                   {#if pr.merged}<span class="tag merged">{t("pr.state.merged")}</span>
                   {:else if pr.closed}<span class="tag closed">{t("pr.state.closed")}</span>{/if}
@@ -330,6 +370,40 @@
   .tag.closed {
     background: var(--danger-bg);
     color: var(--danger-soft);
+  }
+  /* Revue : approuvée en vert, modifications demandées en rouge, en attente en
+     ambre — l'attente demande quelqu'un, pas une correction. */
+  .tag.review.approved {
+    background: var(--ok-bg);
+    color: var(--ok-soft);
+  }
+  .tag.review.changesRequested {
+    background: var(--danger-bg);
+    color: var(--danger-soft);
+  }
+  .tag.review.reviewRequired {
+    background: var(--warn-bg);
+    color: var(--warn);
+  }
+  .checks {
+    flex: none;
+    display: flex;
+    width: 0.7rem;
+    height: 0.7rem;
+  }
+  .checks svg {
+    display: block;
+    width: 100%;
+    height: 100%;
+  }
+  .checks.success {
+    color: var(--ok);
+  }
+  .checks.failure {
+    color: var(--danger);
+  }
+  .checks.pending {
+    color: var(--warn);
   }
   .kebab {
     position: absolute;
