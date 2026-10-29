@@ -1017,6 +1017,32 @@ pub struct PullRequestEntry {
     pub assigned: bool,
     /// Sa revue est demandée et pas encore rendue.
     pub reviewing: bool,
+    /// Où en est la revue. `None` : personne n'a relu ni n'a été sollicité.
+    pub review: Option<ReviewState>,
+    /// État agrégé des checks (CI, statuts) du dernier commit de la PR.
+    /// `None` : aucun check ne tourne sur ce dépôt, ou le jeton ne les voit pas.
+    pub checks: Option<ChecksState>,
+}
+
+/// État de revue d'une pull request, tel que la forge le tranche.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ReviewState {
+    /// Approuvée, sans demande de modifications en suspens.
+    Approved,
+    /// Au moins un relecteur demande des modifications.
+    ChangesRequested,
+    /// Une revue est attendue et rien n'a encore été tranché.
+    ReviewRequired,
+}
+
+/// État agrégé des checks d'une pull request.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub enum ChecksState {
+    Success,
+    Failure,
+    Pending,
 }
 
 /// Réponse d'un chargement de pull requests.

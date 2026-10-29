@@ -66,6 +66,18 @@ impl ForgeRemote {
         format!("https://{}/{}", self.host, self.slug())
     }
 
+    /// Point d'entrée GraphQL. Pas un simple suffixe de [`api`](Self::api) :
+    /// le service public le sert sous sa racine (`api.github.com/graphql`), une
+    /// instance Enterprise à côté de sa racine REST (`/api/graphql`, pas
+    /// `/api/v3/graphql`).
+    pub fn graphql_url(&self) -> String {
+        if self.host == "github.com" {
+            format!("{}/graphql", self.api)
+        } else {
+            format!("https://{}/api/graphql", self.host)
+        }
+    }
+
     /// Page d'une branche sur la forge. Les « / » d'un nom de branche restent
     /// des séparateurs — GitHub les attend tels quels —, seuls les caractères
     /// qui couperaient l'URL (`%`, `#`, `?`) sont encodés.
@@ -284,6 +296,12 @@ mod tests {
         assert_eq!(
             detect("https://github.com/o/r.git").unwrap().api,
             "https://api.github.com"
+        );
+        // GraphQL ne suit pas la racine REST d'une instance Enterprise.
+        assert_eq!(found.graphql_url(), "https://github.psa-cloud.com/api/graphql");
+        assert_eq!(
+            detect("https://github.com/o/r.git").unwrap().graphql_url(),
+            "https://api.github.com/graphql"
         );
     }
 
