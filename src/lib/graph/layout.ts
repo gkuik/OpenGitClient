@@ -4,7 +4,7 @@
 // les commits et leurs parents, toute la géométrie est calculée ici. C'est le
 // seul vrai algorithme du frontend, d'où son isolement dans un module testable.
 
-import type { GraphCommit } from "../types";
+import type { GraphCommit, StashEntry } from "../types";
 
 /**
  * Palette des lanes en thème sombre, alignée sur les couleurs de badges déjà
@@ -65,9 +65,10 @@ export interface GraphEdge {
   color: number;
   kind: GraphEdgeKind;
   /**
-   * Segment de la ligne qui relie les modifications en cours à HEAD : dessiné
-   * en pointillés, comme le nœud WIP lui-même — ce lien n'est pas encore un
-   * commit. Absent partout ailleurs, plutôt que `false`.
+   * Segment de la ligne qui relie les modifications en cours à HEAD, ou un
+   * stash à son commit de base : dessiné en pointillés, comme le nœud lui-même
+   * — ce lien n'est pas un commit de l'historique. Absent partout ailleurs,
+   * plutôt que `false`.
    */
   dashed?: true;
   /**
@@ -102,7 +103,52 @@ export interface WipRow extends RowGeometry {
   kind: "wip";
 }
 
-export type GraphRow = CommitRow | WipRow;
+/**
+ * Rangée d'un stash, dessinée comme la rangée WIP — un stash, ce sont des
+ * modifications en cours mises de côté. Son commit n'est pas dans l'historique
+ * (le parcours ne pousse pas `refs/stash`) : il est inséré ici, au-dessus de
+ * son commit de base.
+ */
+export interface StashRow extends RowGeometry {
+  kind: "stash";
+  stash: StashEntry;
+}
+
+export type GraphRow = CommitRow | WipRow | StashRow;
+
+/** Oid porté par une rangée : celui du commit ou du stash, rien pour le WIP. */
+export function rowOid(row: GraphRow): string | null {
+  return row.kind === "commit" ? row.commit.oid : row.kind === "stash" ? row.stash.oid : null;
+}
+
+/** Élément de l'historique à placer : un commit, ou un stash inséré parmi eux. */
+type Item = { kind: "commit"; commit: GraphCommit } | { kind: "stash"; stash: StashEntry };
+
+/**
+ * Insère les stashes parmi les commits, GitKraken : à leur date, mais jamais
+ * sous leur commit de base — un stash est un enfant de ce commit, et l'ordre
+ * topologique doit tenir. Un stash dont la base n'est pas chargée (page pas
+ * encore atteinte, commit disparu) n'est pas placé : sa ligne n'aurait où
+ * aboutir. Plusieurs stashes au même endroit : le plus récent en haut.
+ */
+function interleave(commits: GraphCommit[], stashes: StashEntry[]): Item[] {
+  const items: Item[] = commits.map((commit) => ({ kind: "commit", commit }));
+  if (stashes.length === 0) return items;
+  const index = new Map(commits.map((c, i) => [c.oid, i]));
+  const placed: { at: number; stash: StashEntry }[] = [];
+  for (const stash of stashes) {
+    const base = stash.parent === null ? undefined : index.get(stash.parent);
+    if (base === undefined) continue;
+    let at = commits.findIndex((c) => c.timestamp <= stash.timestamp);
+    if (at === -1 || at > base) at = base;
+    placed.push({ at, stash });
+  }
+  // Du bas vers le haut, pour que chaque insertion laisse les index restants
+  // valides ; à index égal, le plus ancien d'abord, qui finit donc en dessous.
+  placed.sort((a, b) => b.at - a.at || a.stash.timestamp - b.stash.timestamp || b.stash.index - a.stash.index);
+  for (const { at, stash } of placed) items.splice(at, 0, { kind: "stash", stash });
+  return items;
+}
 
 /**
  * Nœud « modifications en cours » à placer en tête du graph, quand le working
@@ -190,6 +236,12 @@ const STRIDE = 1 << 16;
  * n'a plus de commit à l'écran. Sans `bands`, il n'y a qu'une bande, libre, et
  * le résultat est exactement celui de l'algorithme d'origine.
  *
+ * `stashes` insère une rangée par stash dont le commit de base est chargé (voir
+ * `interleave`). Chacune est, comme le WIP, un pseudo-commit à un parent, dans
+ * une colonne à elle, reliée à sa base en pointillés. Un commit attendu à la
+ * fois par une branche et par un stash prend la colonne de la branche : le
+ * stash ne déplace pas l'historique.
+ *
  * Coût : O(n · lanes). Recalculé intégralement à chaque page chargée, ce qui
  * reste négligeable devant l'appel Tauri.
  */
@@ -197,6 +249,7 @@ export function layoutGraph(
   commits: GraphCommit[],
   wip: WipInput | null = null,
   bands: GraphBands | null = null,
+  stashes: StashEntry[] = [],
 ): GraphLayout {
   const bandCount = (bands?.count ?? 0) + 1;
   const free = bandCount - 1;
@@ -208,9 +261,12 @@ export function layoutGraph(
   const lanes: (string | null)[][] = Array.from({ length: bandCount }, () => []);
   // Largeur atteinte par chaque bande au plus fort.
   const widths: number[] = new Array(bandCount).fill(0);
-  // Colonne qui porte la ligne WIP → HEAD, tant que HEAD n'est pas atteint.
-  // Elle ne bouge jamais : aucune étape ne déplace un oid déjà en attente.
-  let wipLane: number | null = null;
+  // Colonnes qui portent une ligne en pointillés (WIP → HEAD, stash → base),
+  // avec le commit qui la termine. Elles ne bougent jamais : aucune étape ne
+  // déplace un oid déjà en attente.
+  const dashed = new Map<number, string>();
+  // Parmi elles, celles des stashes, qu'une branche ne doit pas emprunter.
+  const stashLanes = new Set<number>();
 
   const at = (id: number) => lanes[Math.floor(id / STRIDE)];
   const get = (id: number) => at(id)[id % STRIDE];
@@ -229,12 +285,19 @@ export function layoutGraph(
     return band * STRIDE + free;
   }
 
-  /** Lane qui attend `oid`, dans la bande `band` seulement si elle est donnée. */
-  function waiting(oid: string, band?: number): number {
+  /**
+   * Lane qui attend `oid`, dans la bande `band` seulement si elle est donnée.
+   * `solid` écarte les lignes de stash.
+   */
+  function waiting(oid: string, band?: number, solid = false): number {
     for (let b = 0; b < bandCount; b++) {
       if (band !== undefined && b !== band) continue;
-      const i = lanes[b].indexOf(oid);
-      if (i !== -1) return b * STRIDE + i;
+      const own = lanes[b];
+      for (let i = 0; i < own.length; i++) {
+        if (own[i] !== oid) continue;
+        if (solid && stashLanes.has(b * STRIDE + i)) continue;
+        return b * STRIDE + i;
+      }
     }
     return -1;
   }
@@ -257,30 +320,38 @@ export function layoutGraph(
     // Sans commit (dépôt vierge), le nœud ne descend nulle part.
     if (wip.head !== null) {
       set(lane, wip.head);
-      wipLane = lane;
+      dashed.set(lane, wip.head);
       edges.push({ fromLane: lane, toLane: lane, color: 0, kind: "out", dashed: true });
     }
     rows.push({ kind: "wip", lane, color: 0, edges });
     touch(lane);
   }
 
-  for (const commit of commits) {
+  for (const item of interleave(commits, stashes)) {
     // État des colonnes en haut de la rangée, avant traitement du commit.
     const before = lanes.map((band) => band.slice());
-    const band = bandOf(commit.oid);
+    const isStash = item.kind === "stash";
+    const oid = isStash ? item.stash.oid : item.commit.oid;
+    // Le parent d'un stash placé est toujours connu : `interleave` l'a trouvé.
+    const parents = isStash ? [item.stash.parent!] : item.commit.parents;
+    // Un stash se range dans la bande de sa base, comme le WIP dans celle de HEAD.
+    const band = isStash ? bandOf(parents[0]) : bandOf(oid);
 
     // 1. Colonne du commit : celle qui l'attend dans sa bande ; à défaut, dans
     //    la bande libre, n'importe laquelle qui l'attend (l'algorithme
     //    d'origine) ; sinon une nouvelle — c'est une tête, ou une branche fixe
-    //    que seule une autre bande attendait.
-    let lane = waiting(commit.oid, band);
-    if (lane === -1 && band === free) lane = waiting(commit.oid);
+    //    que seule une autre bande attendait. Une ligne de branche passe avant
+    //    celle d'un stash ; un stash, que rien n'attend, prend une colonne neuve.
+    let lane = waiting(oid, band, true);
+    if (lane === -1 && band === free) lane = waiting(oid, undefined, true);
+    if (lane === -1) lane = waiting(oid, band);
+    if (lane === -1 && band === free) lane = waiting(oid);
     if (lane === -1) lane = alloc(band);
 
     // 2. Les autres colonnes qui attendaient ce commit convergent vers `lane`.
     for (const own of lanes) {
       for (let i = 0; i < own.length; i++) {
-        if (own[i] === commit.oid) own[i] = null;
+        if (own[i] === oid) own[i] = null;
       }
     }
 
@@ -289,13 +360,14 @@ export function layoutGraph(
     //    une colonne qui attend déjà le même parent, sinon en ouvrent une dans
     //    la bande du parent.
     const parentLanes: number[] = [];
-    commit.parents.forEach((parent, i) => {
+    parents.forEach((parent, i) => {
       if (i === 0) {
         set(lane, parent);
         parentLanes.push(lane);
         return;
       }
-      let l = waiting(parent);
+      // Pas une ligne de stash : le merge en hériterait les pointillés.
+      let l = waiting(parent, undefined, true);
       if (l === -1) {
         l = alloc(bandOf(parent));
         set(l, parent);
@@ -311,27 +383,40 @@ export function layoutGraph(
         const expected = own[i];
         if (expected === null) continue;
         const id = b * STRIDE + i;
-        const kind: GraphEdgeKind = expected === commit.oid ? "in" : "through";
+        const kind: GraphEdgeKind = expected === oid ? "in" : "through";
         // Colonne non concernée : elle traverse la rangée sans changer d'index
         // (aucune étape ne déplace un oid déjà en attente).
         const edge: GraphEdge = { fromLane: id, toLane: kind === "in" ? lane : id, color: 0, kind };
-        if (id === wipLane) edge.dashed = true;
+        if (dashed.has(id)) edge.dashed = true;
         edges.push(edge);
       }
     });
-    // HEAD atteint : la ligne WIP s'arrête sur son point, ce qui en repart est
-    // l'historique ordinaire.
-    if (wipLane !== null && before[Math.floor(wipLane / STRIDE)][wipLane % STRIDE] === commit.oid) {
-      wipLane = null;
+    // Commit atteint : les lignes en pointillés qui l'attendaient s'arrêtent
+    // sur son point, ce qui en repart est l'historique ordinaire.
+    for (const [id, target] of dashed) {
+      if (target === oid) {
+        dashed.delete(id);
+        stashLanes.delete(id);
+      }
     }
     for (const l of parentLanes) {
-      edges.push({ fromLane: lane, toLane: l, color: 0, kind: "out" });
+      const edge: GraphEdge = { fromLane: lane, toLane: l, color: 0, kind: "out" };
+      if (isStash) edge.dashed = true;
+      edges.push(edge);
+    }
+    if (isStash) {
+      dashed.set(lane, parents[0]);
+      stashLanes.add(lane);
     }
 
     touch(lane);
     measure(before);
     measure(lanes);
-    rows.push({ kind: "commit", commit, lane, color: 0, edges });
+    rows.push(
+      isStash
+        ? { kind: "stash", stash: item.stash, lane, color: 0, edges }
+        : { kind: "commit", commit: item.commit, lane, color: 0, edges },
+    );
   }
 
   // Les largeurs sont connues : chaque bande commence où finit la précédente.

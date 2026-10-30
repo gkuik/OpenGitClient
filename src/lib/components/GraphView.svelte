@@ -10,6 +10,7 @@
     type GraphEdge,
     type GraphLayout,
     type GraphRow,
+    rowOid,
   } from "../graph/layout";
   import {
     LAND_MS,
@@ -239,7 +240,7 @@
     head: string | null;
   } | null = null;
   const layout = $derived.by(() => {
-    const next = layoutGraph(repo.graph, wip, bands);
+    const next = layoutGraph(repo.graph, wip, bands, repo.stashes);
     const head = wip?.head ?? null;
     if (held?.repoId === repo.repoId) {
       if (repo.committing) return held.layout;
@@ -771,11 +772,13 @@
    * Clic droit sur une rangée de commit. La sélection ne change pas : le menu
    * nomme le commit visé, et la colonne de droite reste ce qu'elle était. La
    * rangée WIP garde le menu natif — son champ de résumé a besoin du
-   * copier-coller.
+   * copier-coller. Un stash n'a pas de menu (ses actions sont dans la section
+   * STASHES), ni le natif, qui n'aurait rien à y faire.
    */
   function openRowMenu(e: MouseEvent, row: GraphRow) {
-    if (row.kind !== "commit") return;
+    if (row.kind === "wip") return;
     e.preventDefault();
+    if (row.kind !== "commit") return;
     rowMenu = {
       x: Math.max(8, Math.min(e.clientX, window.innerWidth - ROW_MENU_W - 8)),
       y: Math.max(8, Math.min(e.clientY, window.innerHeight - ROW_MENU_H - 8)),
@@ -865,19 +868,24 @@
     return dateFmt.format(new Date(ts * 1000));
   }
 
-  /** Clé `{#each}` : les commits ont leur oid, la rangée WIP est unique. */
+  /** Clé `{#each}` : commits et stashes ont leur oid, la rangée WIP est unique. */
   function rowKey(row: GraphRow): string {
-    return row.kind === "wip" ? "wip" : row.commit.oid;
+    return rowOid(row) ?? "wip";
   }
 
   function isSelected(row: GraphRow): boolean {
-    return row.kind === "wip" ? wipSelected : row.commit.oid === repo.selectedCommitOid;
+    const oid = rowOid(row);
+    return oid === null ? wipSelected : oid === repo.selectedCommitOid;
   }
 
-  /** Clic ou Entrée sur une rangée : détail du commit, ou changements en cours. */
+  /**
+   * Clic ou Entrée sur une rangée : détail du commit — un stash en est un, dont
+   * le détail liste les fichiers qu'il rendra —, ou changements en cours.
+   */
   function activate(row: GraphRow) {
-    if (row.kind === "wip") repo.selectWip();
-    else repo.selectCommit(row.commit.oid);
+    const oid = rowOid(row);
+    if (oid === null) repo.selectWip();
+    else repo.selectCommit(oid);
   }
 
   /** Détail de la pastille de compteurs ("4 modified, 2 added"). */
@@ -1143,9 +1151,10 @@
     trails: Trails,
   ) {
     const mid = top + ROW_H / 2;
-    const isWip = row.kind === "wip";
     // Le nœud WIP est un cercle vide : son segment part de sous le cercle et
     // non de son centre, qui le barrerait. Rien ne descend jamais sur lui.
+    // Un stash est dessiné de même : ce sont des modifications mises de côté.
+    const isWip = row.kind !== "commit";
     const outY = isWip ? mid + WIP_R : mid;
     const dotR = isWip ? WIP_R : DOT_R;
     const x = laneX(row.lane);
@@ -1330,9 +1339,7 @@
     const el = scroller;
     if (!oid || !el) return;
 
-    const index = layout.rows.findIndex(
-      (r) => r.kind === "commit" && r.commit.oid === oid,
-    );
+    const index = layout.rows.findIndex((r) => rowOid(r) === oid);
     if (index < 0) return; // commit hors des pages chargées
 
     const top = index * ROW_H;
@@ -1493,7 +1500,8 @@
 
 <!--
   Une cellule. La rangée WIP n'a ni pastilles, ni auteur, ni date, ni oid : rien
-  de tout ça n'existe encore. À la place du message, le résumé du prochain
+  de tout ça n'existe encore. Une rangée de stash l'imite : son message à la
+  place du résumé, et rien d'autre. À la place du message, le résumé du prochain
   commit — le champ *est* celui de la boîte de commit, `repo.commitSummary`,
   édité indifféremment d'un côté ou de l'autre ; vide, il ne montre que
   « // WIP ». Les compteurs reprennent le vocabulaire des dossiers de la liste
@@ -1519,6 +1527,15 @@
           {#if counts.added}<span class="c add">+ {counts.added}</span>{/if}
           {#if counts.deleted}<span class="c del">− {counts.deleted}</span>{/if}
         </span>
+      </span>
+    {:else}
+      <span class="cell"></span>
+    {/if}
+  {:else if row.kind === "stash"}
+    {#if id === MESSAGE}
+      {@const summary = row.stash.message.split("\n", 1)[0]}
+      <span class="cell message" title={row.stash.message}>
+        <span class="summary stash-summary">{summary}</span>
       </span>
     {:else}
       <span class="cell"></span>
@@ -2138,6 +2155,11 @@
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
+  }
+  /* Un stash est du travail mis de côté, pas de l'historique : son message est
+     en retrait des commits, sans s'effacer pour autant. */
+  .stash-summary {
+    color: var(--text-faint);
   }
   /* Séparateur de tranche : une ligne de hauteur nulle posée sur la frontière,
      dont les enfants se centrent verticalement — le trait comme l'étiquette,

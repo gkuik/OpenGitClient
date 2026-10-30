@@ -299,6 +299,11 @@ pub struct StashEntry {
     /// Branche sur laquelle le stash a été créé, extraite du message.
     pub branch: Option<String>,
     pub oid: String,
+    /// Commit sur lequel le stash a été créé (son premier parent) : le graph y
+    /// raccorde la rangée du stash. `None` si le commit de stash est illisible.
+    pub parent: Option<String>,
+    /// Date de création, en secondes Unix UTC — place la rangée dans le graph.
+    pub timestamp: i64,
 }
 
 /// Référence distante déplacée par un `fetch` — ou supprimée par son prune.
