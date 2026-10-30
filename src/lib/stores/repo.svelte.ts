@@ -947,7 +947,18 @@ export class RepoStore {
   async loadStashes() {
     if (!this.repoInfo) return;
     try {
-      this.stashes = await api.listStashes(this.repoId);
+      const stashes = await api.listStashes(this.repoId);
+      // Un stash sélectionné dans le graph puis dépilé ou supprimé n'a plus de
+      // rangée : son détail, à droite, parlerait d'un commit disparu.
+      const selected = this.selectedCommitOid;
+      if (
+        selected !== null &&
+        this.stashes.some((st) => st.oid === selected) &&
+        !stashes.some((st) => st.oid === selected)
+      ) {
+        this.clearCommitSelection();
+      }
+      this.stashes = stashes;
     } catch (e) {
       this.error = e as AppError;
     }

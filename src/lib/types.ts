@@ -231,6 +231,10 @@ export interface StashEntry {
   /** Branche d'origine, extraite du message côté backend. */
   branch: string | null;
   oid: string;
+  /** Commit sur lequel le stash a été créé — le graph y raccorde sa rangée. */
+  parent: string | null;
+  /** Date de création, en secondes Unix UTC. */
+  timestamp: number;
 }
 
 /** Référence distante déplacée par un fetch — ou supprimée par son prune. */

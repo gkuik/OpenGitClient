@@ -803,6 +803,8 @@ impl GitBackend for Libgit2Backend {
                 message: message.to_string(),
                 branch: parse_stash_branch(message),
                 oid: oid.to_string(),
+                parent: None,
+                timestamp: 0,
             });
             true
         })?;
@@ -814,14 +816,17 @@ impl GitBackend for Libgit2Backend {
         // dépôt en mutable. Le reflog reste la source de la branche : le format
         // « On <branche> : » y est garanti, y compris pour un stash créé
         // ailleurs.
+        // Même relecture pour ce que le graph en tire : le commit de base (premier
+        // parent) et la date.
         for entry in &mut out {
-            if let Some(message) = Oid::from_str(&entry.oid)
-                .and_then(|oid| repo.find_commit(oid))
-                .ok()
-                .and_then(|commit| commit.message().map(|m| m.trim_end().to_string()))
-            {
-                entry.message = message;
+            let Ok(commit) = Oid::from_str(&entry.oid).and_then(|oid| repo.find_commit(oid)) else {
+                continue;
+            };
+            if let Some(message) = commit.message() {
+                entry.message = message.trim_end().to_string();
             }
+            entry.parent = commit.parent_id(0).ok().map(|p| p.to_string());
+            entry.timestamp = commit.time().seconds();
         }
 
         Ok(out)
@@ -2194,8 +2199,37 @@ fn commit_diff<'r>(
         opts.pathspec(p);
     }
 
-    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+    let mut diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))?;
+
+    // Un stash range ses fichiers non suivis dans un troisième parent, à part :
+    // comparé à son seul premier parent, il paraîtrait ne pas les contenir. On
+    // les ajoute, en ajouts, pour que ses fichiers soient ceux qu'il rendra.
+    if let Some(untracked) = stash_untracked_tree(commit) {
+        let extra = repo.diff_tree_to_tree(None, Some(&untracked), Some(&mut opts))?;
+        diff.merge(&extra)?;
+    }
     Ok(diff)
+}
+
+/// Arbre des fichiers non suivis d'un commit de stash, s'il en a un.
+///
+/// Rien ne marque un commit comme stash en dehors de `refs/stash` ; on reconnaît
+/// donc la forme que Git et libgit2 lui donnent avec `--include-untracked` :
+/// trois parents, dont le troisième est un commit racine intitulé « untracked
+/// files on <branche>: … ». Un merge octopus n'a jamais ce troisième parent.
+fn stash_untracked_tree<'r>(commit: &Commit<'r>) -> Option<Tree<'r>> {
+    if commit.parent_count() != 3 {
+        return None;
+    }
+    let third = commit.parent(2).ok()?;
+    let marked = third.parent_count() == 0
+        && third
+            .summary()
+            .is_some_and(|s| s.starts_with("untracked files on "));
+    if !marked {
+        return None;
+    }
+    third.tree().ok()
 }
 
 /// Traduit les deltas d'un diff en `FileEntry`, pour réutiliser côté frontend
@@ -2937,6 +2971,45 @@ mod tests {
         // Et la remise se dépile bien, non suivis compris.
         git.stash_pop(0).unwrap();
         assert!(dir.join("neuf.txt").exists());
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn stash_exposes_its_base_and_all_its_files() {
+        let (dir, git) = temp_repo();
+        fs::write(dir.join("a.txt"), "1\n").unwrap();
+        git.stage("a.txt").unwrap();
+        let base = git.commit("initial", None, false).unwrap();
+
+        fs::write(dir.join("a.txt"), "modifié\n").unwrap();
+        fs::write(dir.join("neuf.txt"), "nouveau\n").unwrap();
+        git.stash_save("mon travail", None).unwrap();
+
+        // Le graph raccorde la rangée au commit de base, à sa date.
+        let stash = git.stashes().unwrap().remove(0);
+        assert_eq!(stash.parent.as_deref(), Some(base.oid.as_str()));
+        assert!(stash.timestamp > 0);
+
+        // Le détail liste le fichier modifié *et* le non suivi, rangé à part
+        // dans le troisième parent.
+        let details = git.commit_details(&stash.oid).unwrap();
+        let mut paths: Vec<&str> = details.files.iter().map(|f| f.path.as_str()).collect();
+        paths.sort();
+        assert_eq!(paths, ["a.txt", "neuf.txt"]);
+        let neuf = details.files.iter().find(|f| f.path == "neuf.txt").unwrap();
+        assert!(matches!(neuf.status, FileStatus::Added));
+
+        // Et son diff se lit comme celui de n'importe quel fichier du commit.
+        let diff = git.commit_file_diff(&stash.oid, "neuf.txt").unwrap();
+        let added: Vec<&str> = diff
+            .hunks
+            .iter()
+            .flat_map(|h| &h.lines)
+            .filter(|l| matches!(l.kind, DiffLineKind::Addition))
+            .map(|l| l.content.as_str())
+            .collect();
+        assert_eq!(added, ["nouveau"]);
 
         fs::remove_dir_all(&dir).ok();
     }
