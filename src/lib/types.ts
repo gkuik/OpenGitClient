@@ -639,3 +639,15 @@ export interface PullRequestEvent {
   report: PullRequestReport | null;
   error: AppError | null;
 }
+
+/**
+ * Groupe d'onglets, permanent : `members` retient les dépôts par chemin
+ * canonique, ouverts ou non. `color` est un nom de `GROUP_COLORS`.
+ */
+export interface TabGroup {
+  id: string;
+  name: string;
+  color: string;
+  collapsed: boolean;
+  members: string[];
+}

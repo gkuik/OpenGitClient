@@ -2,6 +2,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen, type UnlistenFn } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
 import type {
+  TabGroup,
   CredentialCheck,
   ExternalApps,
   ExternalAppKind,
@@ -352,6 +353,12 @@ export const api = {
    */
   getToolbar: () => call<string[] | null>("get_toolbar"),
   setToolbar: (items: string[] | null) => call<void>("set_toolbar", { items }),
+  /**
+   * Groupes d'onglets (préférence globale, persistée), écrits en bloc. Le
+   * backend renvoie ce qu'il a retenu, nettoyé comme par `normalizeGroups`.
+   */
+  getTabGroups: () => call<TabGroup[]>("get_tab_groups"),
+  setTabGroups: (groups: TabGroup[]) => call<TabGroup[]>("set_tab_groups", { groups }),
   setSidebarWidths: (widths: SidebarWidths) =>
     call<void>("set_sidebar_widths", { widths }),
   /** Dépôt distant interrogé par un fetch : hôte, URL, identifiants déjà connus. */

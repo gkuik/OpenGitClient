@@ -84,6 +84,8 @@ pub fn run() {
             commands::set_graph_columns,
             commands::get_toolbar,
             commands::set_toolbar,
+            commands::get_tab_groups,
+            commands::set_tab_groups,
             commands::get_remote_info,
             commands::list_remotes,
             commands::list_remote_entries,
