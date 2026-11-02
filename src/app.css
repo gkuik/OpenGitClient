@@ -43,6 +43,18 @@
   /* Fichier non suivi : gris neutre, ni erreur ni succès. */
   --neutral: #a3a3a3;
 
+  /* Groupes d'onglets : une teinte par couleur proposée (`GROUP_COLORS`),
+     assez vive pour un liseré, posée en lavis sous la pastille. */
+  --group-grey: #9ca3af;
+  --group-blue: #60a5fa;
+  --group-red: #f87171;
+  --group-yellow: #facc15;
+  --group-green: #4ade80;
+  --group-pink: #f472b6;
+  --group-purple: #c084fc;
+  --group-cyan: #22d3ee;
+  --group-orange: #fb923c;
+
   /* Diff : lavis pleine ligne, plus discret qu'un fond d'état. */
   --diff-add-bg: rgba(34, 197, 94, 0.12);
   --diff-del-bg: rgba(239, 68, 68, 0.12);
@@ -146,6 +158,16 @@
   --info: #2563eb;
   --info-bg: rgba(37, 99, 235, 0.1);
   --neutral: #6b7280;
+
+  --group-grey: #6b7280;
+  --group-blue: #2563eb;
+  --group-red: #dc2626;
+  --group-yellow: #ca8a04;
+  --group-green: #16a34a;
+  --group-pink: #db2777;
+  --group-purple: #9333ea;
+  --group-cyan: #0891b2;
+  --group-orange: #ea580c;
 
   --diff-add-bg: rgba(22, 163, 74, 0.1);
   --diff-del-bg: rgba(220, 38, 38, 0.09);

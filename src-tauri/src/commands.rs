@@ -18,7 +18,7 @@ use crate::dto::{
     AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, RemoteBranchDeleteEvent, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
     MergeMode, MergeReport, PrMergeMethod, PrMergedEvent, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
-    RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
+    RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry, TabGroup,
     TagEntry, TagPushEvent,
     GraphColumns, GraphLineStyle,
     ThemeMode,
@@ -798,6 +798,21 @@ pub fn get_graph_columns(state: State<'_, Mutex<AppState>>) -> Result<GraphColum
 #[tauri::command]
 pub fn get_toolbar(state: State<'_, Mutex<AppState>>) -> Result<Option<Vec<String>>, AppError> {
     Ok(lock(&state)?.toolbar())
+}
+
+/// Groupes d'onglets (préférence globale, persistée). Écrits en bloc : le
+/// frontend tient toute la logique, le backend ne fait que nettoyer et garder.
+#[tauri::command]
+pub fn get_tab_groups(state: State<'_, Mutex<AppState>>) -> Result<Vec<TabGroup>, AppError> {
+    Ok(lock(&state)?.tab_groups())
+}
+
+#[tauri::command]
+pub fn set_tab_groups(
+    groups: Vec<TabGroup>,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<Vec<TabGroup>, AppError> {
+    lock(&state)?.set_tab_groups(groups)
 }
 
 #[tauri::command]

@@ -3,7 +3,7 @@
 //! Chaque struct est le miroir exact d'un type TS dans `src/lib/types.ts`.
 //! `rename_all = "camelCase"` fait la conversion snake_case → camelCase.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
@@ -655,6 +655,73 @@ pub fn sanitize_toolbar(items: Vec<String>) -> Vec<String> {
     out
 }
 
+/// Couleurs d'un groupe d'onglets. Des noms, pas des teintes : la teinte vit
+/// dans `app.css` (`--group-<nom>`), une par thème, comme les couleurs d'état.
+pub const TAB_GROUP_COLORS: [&str; 9] = [
+    "grey", "blue", "red", "yellow", "green", "pink", "purple", "cyan", "orange",
+];
+
+/// Longueur maximale du nom d'un groupe, en caractères : c'est une étiquette
+/// dans la barre d'onglets, pas un titre.
+pub const TAB_GROUP_NAME_MAX: usize = 40;
+
+/// Groupe d'onglets — **permanent** : il retient ses dépôts par chemin canonique
+/// (l'identifiant d'onglet), ouverts ou non, si bien qu'un dépôt rouvert y
+/// retourne tout seul. Persisté dans `prefs.json` comme la barre du dépôt.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+pub struct TabGroup {
+    pub id: String,
+    /// Peut être vide : le groupe n'est alors qu'une pastille de couleur.
+    pub name: String,
+    pub color: String,
+    /// Replié : la barre n'en montre que la pastille (et l'onglet affiché).
+    pub collapsed: bool,
+    /// Dépôts du groupe, dans l'ordre où ils y sont entrés.
+    pub members: Vec<String>,
+}
+
+impl Default for TabGroup {
+    fn default() -> Self {
+        Self {
+            id: String::new(),
+            name: String::new(),
+            color: TAB_GROUP_COLORS[1].to_string(),
+            collapsed: false,
+            members: Vec::new(),
+        }
+    }
+}
+
+/// Ramène une liste de groupes lue ou reçue à quelque chose de cohérent — les
+/// mêmes règles que `normalizeGroups` côté frontend :
+///
+/// - un dépôt n'appartient qu'à un groupe, le premier qui le cite ;
+/// - un groupe sans aucun membre disparaît : il n'aurait plus aucun moyen de
+///   s'afficher, ni d'être supprimé ;
+/// - un identifiant vide ou en double écarte le groupe ;
+/// - une couleur inconnue retombe sur le bleu, un nom est rogné et borné.
+pub fn sanitize_tab_groups(groups: Vec<TabGroup>) -> Vec<TabGroup> {
+    let mut ids: HashSet<String> = HashSet::new();
+    let mut taken: HashSet<String> = HashSet::new();
+    let mut out = Vec::new();
+    for mut g in groups {
+        if g.id.is_empty() || !ids.insert(g.id.clone()) {
+            continue;
+        }
+        g.members.retain(|m| !m.is_empty() && taken.insert(m.clone()));
+        if g.members.is_empty() {
+            continue;
+        }
+        if !TAB_GROUP_COLORS.contains(&g.color.as_str()) {
+            g.color = TAB_GROUP_COLORS[1].to_string();
+        }
+        g.name = g.name.trim().chars().take(TAB_GROUP_NAME_MAX).collect();
+        out.push(g);
+    }
+    out
+}
+
 /// Disposition du tableau du graph — commune à tous les dépôts, persistée dans
 /// `prefs.json`.
 ///
@@ -1220,5 +1287,50 @@ mod tests {
         let partial: GitFlowConfig = serde_json::from_str(r#"{"enabled":true}"#).unwrap();
         assert!(partial.enabled);
         assert_eq!(partial.order, GitFlowConfig::default().order);
+    }
+}
+
+#[cfg(test)]
+mod tab_groups_tests {
+    use super::*;
+
+    fn group(id: &str, color: &str, members: &[&str]) -> TabGroup {
+        TabGroup {
+            id: id.into(),
+            name: format!("  {id}  "),
+            color: color.into(),
+            collapsed: false,
+            members: members.iter().map(|s| s.to_string()).collect(),
+        }
+    }
+
+    #[test]
+    fn a_repository_belongs_to_the_first_group_naming_it() {
+        let got = sanitize_tab_groups(vec![
+            group("pro", "red", &["/a", "/b", "/a"]),
+            group("perso", "green", &["/b", "/c"]),
+        ]);
+        assert_eq!(got[0].members, ["/a", "/b"]);
+        assert_eq!(got[1].members, ["/c"]);
+        assert_eq!(got[0].name, "pro");
+    }
+
+    #[test]
+    fn empty_duplicate_and_anonymous_groups_are_dropped() {
+        let got = sanitize_tab_groups(vec![
+            group("pro", "red", &["/a"]),
+            group("pro", "red", &["/b"]),
+            group("", "red", &["/c"]),
+            group("vide", "red", &[]),
+            group("doublon", "red", &["/a"]),
+        ]);
+        assert_eq!(got.len(), 1);
+        assert_eq!(got[0].id, "pro");
+    }
+
+    #[test]
+    fn an_unknown_colour_falls_back_to_blue() {
+        let got = sanitize_tab_groups(vec![group("pro", "fuchsia", &["/a"])]);
+        assert_eq!(got[0].color, "blue");
     }
 }

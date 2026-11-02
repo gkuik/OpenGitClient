@@ -3,6 +3,14 @@ import { api, pickRepositoryFolder } from "../api";
 import { autoFetchPause, isAutoFetchDue, type AutoFetchPause } from "../autoFetch";
 import { autoFetch as autoFetchPref } from "../autoFetch.svelte";
 import { t } from "../i18n.svelte";
+import {
+  contiguous,
+  groupOf,
+  isVisible,
+  nextColor,
+  normalizeGroups,
+  GROUP_NAME_MAX,
+} from "../tabGroups";
 import { countStatuses, type TreeCounts } from "../tree";
 import {
   defaultFlowConfig,
@@ -16,6 +24,7 @@ import {
   type FlowKind,
 } from "../gitflow";
 import type {
+  TabGroup,
   AppError,
   AutoFetchEvent,
   ExternalAppKind,
@@ -2750,6 +2759,9 @@ export type Tab = RepoStore | NewTab | SettingsTab;
  */
 const AUTO_FETCH_TICK_MS = 5_000;
 
+/** Délai d'écriture des groupes d'onglets : voir `writeGroups`. */
+const GROUPS_SAVE_MS = 300;
+
 class TabsStore {
   /** Onglets dans l'ordre d'affichage, dépôts et pages d'accueil mêlés. */
   tabs = $state<Tab[]>([]);
@@ -2781,6 +2793,12 @@ class TabsStore {
    * distant l'attendrait indéfiniment.
    */
   private autoFetchListening = true;
+  /**
+   * Groupes d'onglets, permanents (voir `tabGroups.ts`). Les membres ouverts
+   * d'un groupe sont toujours d'un seul tenant dans `tabs` : chaque écriture
+   * de l'ordre passe par `contiguous`.
+   */
+  groups = $state<TabGroup[]>([]);
 
   /** Onglets de dépôt seuls — les seuls que le backend connaisse. */
   get repoTabs(): RepoStore[] {
@@ -2922,6 +2940,11 @@ class TabsStore {
     }
     await this.loadProfiles();
     await this.loadPullMode();
+    try {
+      this.groups = normalizeGroups(await api.getTabGroups());
+    } catch {
+      /* groupes illisibles : la barre s'affiche sans eux */
+    }
     try {
       this.aliases = await api.listAliases();
     } catch {
@@ -3142,10 +3165,162 @@ class TabsStore {
     }
 
     if (this.activeId === id) {
-      // Voisin de droite, sinon celui de gauche — comme un navigateur.
-      const next = this.tabs[index] ?? this.tabs[index - 1] ?? null;
+      // Voisin de droite, sinon celui de gauche — comme un navigateur. Un
+      // onglet caché dans un groupe replié ne compte pas : on ne bascule pas
+      // sur un dépôt qu'on ne voit pas, sauf s'il n'y a plus que ça.
+      const visible = (t: Tab) => isVisible(t.id, this.groups, null);
+      const right = this.tabs.slice(index).find(visible);
+      const left = this.tabs.slice(0, index).reverse().find(visible);
+      const next = right ?? left ?? this.tabs[index] ?? this.tabs[index - 1] ?? null;
       await this.activate(next?.id ?? null);
     }
+  }
+
+  // ── Groupes d'onglets ───────────────────────────────────────────────────
+
+  /** Groupe d'un onglet, ou `null`. */
+  groupOf(id: string): TabGroup | null {
+    return groupOf(this.groups, id);
+  }
+
+  /**
+   * Crée un groupe autour d'un onglet de dépôt, qui quitte le sien s'il en
+   * avait un. Renvoie l'identifiant du groupe, pour que la barre ouvre aussitôt
+   * son éditeur (nom, couleur).
+   */
+  createGroup(tabId: string): string | null {
+    if (!this.repoTabs.some((t) => t.id === tabId)) return null;
+    const id = `g${Date.now().toString(36)}${Math.floor(Math.random() * 1e4)}`;
+    const color = nextColor(this.groups);
+    this.writeGroups([
+      ...this.withoutMember(tabId),
+      { id, name: "", color, collapsed: false, members: [tabId] },
+    ]);
+    this.reorder(this.tabs.map((t) => t.id));
+    return id;
+  }
+
+  /** Range un onglet de dépôt dans un groupe existant, en queue. */
+  addToGroup(tabId: string, groupId: string) {
+    if (!this.repoTabs.some((t) => t.id === tabId)) return;
+    const groups = this.withoutMember(tabId);
+    const target = groups.find((g) => g.id === groupId);
+    if (!target) return;
+    target.members = [...target.members, tabId];
+    this.writeGroups(groups);
+    // Placé après le dernier membre ouvert : `contiguous` le tirerait vers le
+    // premier, alors qu'on l'ajoute au bout.
+    const ids = this.tabs.map((t) => t.id).filter((x) => x !== tabId);
+    const last = ids.findLastIndex((x) => target.members.includes(x));
+    ids.splice(last === -1 ? ids.length : last + 1, 0, tabId);
+    this.reorder(ids);
+  }
+
+  /** Sort un onglet de son groupe ; il se pose juste après lui. */
+  removeFromGroup(tabId: string) {
+    const group = this.groupOf(tabId);
+    if (!group) return;
+    const ids = this.tabs.map((t) => t.id).filter((x) => x !== tabId);
+    const last = ids.findLastIndex((x) => group.members.includes(x));
+    ids.splice(last === -1 ? ids.length : last + 1, 0, tabId);
+    this.writeGroups(this.withoutMember(tabId));
+    this.reorder(ids);
+  }
+
+  /**
+   * Résultat d'un glissement d'onglet : le nouvel ordre et le groupe où il a
+   * atterri (`null` : hors groupe). Calculé par `dropTab`.
+   */
+  dropTab(tabId: string, order: string[], groupId: string | null) {
+    const current = this.groupOf(tabId);
+    if ((current?.id ?? null) !== groupId) {
+      const groups = this.withoutMember(tabId);
+      const target = groups.find((g) => g.id === groupId);
+      if (target) target.members = [...target.members, tabId];
+      this.writeGroups(groups);
+    }
+    this.reorder(order);
+  }
+
+  /** Résultat d'un glissement de pastille : le groupe entier a bougé. */
+  dropGroup(order: string[]) {
+    this.reorder(order);
+  }
+
+  renameGroup(groupId: string, name: string) {
+    this.updateGroup(groupId, { name: name.slice(0, GROUP_NAME_MAX) });
+  }
+
+  setGroupColor(groupId: string, color: string) {
+    this.updateGroup(groupId, { color });
+  }
+
+  /**
+   * Replie ou déploie un groupe. L'onglet affiché reste visible même replié
+   * (voir `stripItems`) : rien ne change de dépôt sous les yeux.
+   */
+  toggleGroup(groupId: string) {
+    const group = this.groups.find((g) => g.id === groupId);
+    if (group) this.updateGroup(groupId, { collapsed: !group.collapsed });
+  }
+
+  /** Supprime le groupe ; ses onglets restent ouverts, hors groupe. */
+  ungroup(groupId: string) {
+    this.writeGroups(this.groups.filter((g) => g.id !== groupId));
+  }
+
+  /**
+   * Ferme les onglets ouverts du groupe. Le groupe, lui, reste : il est
+   * permanent, et ses dépôts y reviendront à leur prochaine ouverture.
+   */
+  async closeGroup(groupId: string) {
+    const group = this.groups.find((g) => g.id === groupId);
+    if (!group) return;
+    for (const tab of this.repoTabs.filter((t) => group.members.includes(t.id))) {
+      await this.close(tab.id);
+    }
+  }
+
+  /** Copie des groupes sans `tabId` — un dépôt n'est que dans un groupe. */
+  private withoutMember(tabId: string): TabGroup[] {
+    return this.groups.map((g) => ({ ...g, members: g.members.filter((m) => m !== tabId) }));
+  }
+
+  private updateGroup(groupId: string, patch: Partial<TabGroup>) {
+    this.writeGroups(this.groups.map((g) => (g.id === groupId ? { ...g, ...patch } : g)));
+  }
+
+  /**
+   * Applique et persiste les groupes. L'écran suit tout de suite ; l'écriture
+   * est différée, un nom tapé lettre à lettre n'en faisant qu'une. Un échec ne
+   * coûte que leur survie au prochain démarrage.
+   */
+  private writeGroups(groups: TabGroup[]) {
+    this.groups = normalizeGroups(groups);
+    clearTimeout(this.groupsSave);
+    this.groupsSave = setTimeout(() => {
+      api.setTabGroups($state.snapshot(this.groups)).catch(() => {
+        /* les groupes restent corrects pour cette session */
+      });
+    }, GROUPS_SAVE_MS);
+  }
+  private groupsSave: ReturnType<typeof setTimeout> | undefined;
+
+  /**
+   * Remet les onglets dans l'ordre donné, groupes rassemblés, et le transmet
+   * au backend — qui ne connaît que les dépôts.
+   */
+  private reorder(ids: string[]) {
+    const byId = new Map(this.tabs.map((t) => [t.id, t]));
+    const next = contiguous(ids, this.groups)
+      .map((id) => byId.get(id))
+      .filter((t): t is Tab => t !== undefined);
+    if (next.length !== this.tabs.length) return;
+    if (next.every((t, i) => t === this.tabs[i])) return;
+    this.tabs = next;
+    api.setTabOrder(this.repoTabs.map((t) => t.repoId)).catch(() => {
+      /* l'ordre reste correct pour cette session */
+    });
   }
 
   /**
@@ -3185,8 +3360,13 @@ class TabsStore {
         const next = [...this.tabs];
         next.splice(slot, 1, tab);
         this.tabs = next;
-        // Le backend vient d'ajouter le dépôt en fin d'ordre : il ne pouvait pas
-        // deviner qu'il s'insérait au milieu de la barre.
+      }
+      // Un dépôt d'un groupe rejoint les siens — c'est ce qui rend le groupe
+      // permanent. Le backend, lui, vient de l'ajouter en fin d'ordre : il ne
+      // pouvait deviner ni la page d'accueil qu'il remplace, ni son groupe.
+      if (slot !== -1 || this.groupOf(id)) {
+        const ids = this.tabs.map((t) => t.id);
+        this.tabs = contiguous(ids, this.groups).map((x) => this.tabs.find((t) => t.id === x)!);
         api.setTabOrder(this.repoTabs.map((t) => t.repoId)).catch(() => {
           /* l'ordre reste correct pour cette session */
         });

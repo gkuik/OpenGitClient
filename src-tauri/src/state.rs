@@ -13,7 +13,7 @@ use serde::{Deserialize, Serialize};
 use tauri::{AppHandle, Manager};
 
 use crate::dto::{
-    sanitize_toolbar, GitFlowConfig, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
+    sanitize_tab_groups, sanitize_toolbar, GitFlowConfig, TabGroup, GraphColumns, GraphLineStyle, Profile, PullMode, RecentRepo, SessionInfo, SidebarWidths,
     ThemeMode, AUTO_FETCH_MINUTES_DEFAULT, AUTO_FETCH_MINUTES_MAX, FONT_SIZE_DEFAULT,
     FONT_SIZE_MAX, FONT_SIZE_MIN, GRAPH_ROUNDNESS_DEFAULT, GRAPH_ROUNDNESS_MAX,
 };
@@ -310,6 +310,18 @@ impl AppState {
         save_json(&self.app, PREFS_FILE, &self.prefs)
     }
 
+    /// Groupes d'onglets, nettoyés à la lecture.
+    pub fn tab_groups(&self) -> Vec<TabGroup> {
+        sanitize_tab_groups(self.prefs.tab_groups.clone())
+    }
+
+    /// Remplace les groupes d'onglets en bloc et renvoie ce qui a été retenu.
+    pub fn set_tab_groups(&mut self, groups: Vec<TabGroup>) -> Result<Vec<TabGroup>, AppError> {
+        self.prefs.tab_groups = sanitize_tab_groups(groups);
+        save_json(&self.app, PREFS_FILE, &self.prefs)?;
+        Ok(self.prefs.tab_groups.clone())
+    }
+
     /// Tracé des lignes du graph.
     pub fn graph_lines(&self) -> GraphLineStyle {
         self.prefs.graph_lines
@@ -539,6 +551,9 @@ struct Prefs {
     /// recalculé à chaque lecture d'après ce qui est installé.
     editor: Option<String>,
     terminal: Option<String>,
+    /// Groupes d'onglets, dans l'ordre de leur création. Leur place dans la
+    /// barre n'est pas ici : elle découle de l'ordre des onglets.
+    tab_groups: Vec<TabGroup>,
 }
 
 /// `Default` est écrit à la main, pas dérivé : `u8::default()` vaudrait 0, et
@@ -561,6 +576,7 @@ impl Default for Prefs {
             toolbar: None,
             editor: None,
             terminal: None,
+            tab_groups: Vec::new(),
         }
     }
 }
