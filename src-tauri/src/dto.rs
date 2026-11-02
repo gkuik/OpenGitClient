@@ -1027,6 +1027,31 @@ pub struct PullRequestEntry {
     /// État agrégé des checks (CI, statuts) du dernier commit de la PR.
     /// `None` : aucun check ne tourne sur ce dépôt, ou le jeton ne les voit pas.
     pub checks: Option<ChecksState>,
+    /// En conflit avec sa branche cible : GitHub refuserait de la fusionner.
+    /// Faux tant que la forge n'a pas fini de calculer (`UNKNOWN`) — dans le
+    /// doute, c'est elle qui tranchera au moment du merge.
+    pub conflicting: bool,
+}
+
+/// Façon de fusionner une pull request, telle que la forge la nomme — les trois
+/// entrées du bouton vert de GitHub. Sérialisée en minuscules : c'est aussi la
+/// valeur que l'API attend dans `merge_method`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum PrMergeMethod {
+    Merge,
+    Squash,
+    Rebase,
+}
+
+impl PrMergeMethod {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            PrMergeMethod::Merge => "merge",
+            PrMergeMethod::Squash => "squash",
+            PrMergeMethod::Rebase => "rebase",
+        }
+    }
 }
 
 /// État de revue d'une pull request, tel que la forge le tranche.
@@ -1061,6 +1086,20 @@ pub struct PullRequestReport {
     /// Identité du jeton : c'est par rapport à elle que « mes » PR sont miennes.
     pub viewer: String,
     pub pull_requests: Vec<PullRequestEntry>,
+    /// Méthodes de merge autorisées par le dépôt, dans l'ordre de GitHub
+    /// (merge, squash, rebase). Le menu d'une PR n'en propose pas d'autres.
+    pub merge_methods: Vec<PrMergeMethod>,
+}
+
+/// Charge utile de l'événement `repo://pr-merged` : le merge d'une pull request
+/// sur la forge. Pas de rapport — GitHub ne dit rien d'utile de plus que « fait »,
+/// et c'est le fetch qui suit qui ramène le commit de merge.
+#[derive(Debug, Clone, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct PrMergedEvent {
+    pub repo_id: String,
+    pub number: u64,
+    pub error: Option<AppError>,
 }
 
 /// Charge utile de l'événement `repo://pull-requests`, jumelle de [`FetchEvent`].

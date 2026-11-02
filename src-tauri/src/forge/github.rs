@@ -21,7 +21,7 @@ use std::time::Duration;
 use serde::Deserialize;
 
 use super::{ForgeAccount, ForgeBackend, ForgeRemote};
-use crate::dto::{ChecksState, PullRequestEntry, PullRequestReport, ReviewState};
+use crate::dto::{ChecksState, PrMergeMethod, PullRequestEntry, PullRequestReport, ReviewState};
 use crate::error::AppError;
 
 /// GitHub exige un `User-Agent` ; une requête sans en-tête est refusée en 403.
@@ -52,6 +52,9 @@ const PULL_REQUESTS_QUERY: &str = r#"
 query($owner: String!, $name: String!, $first: Int!, $nested: Int!) {
   viewer { login }
   repository(owner: $owner, name: $name) {
+    mergeCommitAllowed
+    squashMergeAllowed
+    rebaseMergeAllowed
     pullRequests(states: OPEN, first: $first, orderBy: { field: UPDATED_AT, direction: DESC }) {
       nodes {
         number
@@ -61,6 +64,7 @@ query($owner: String!, $name: String!, $first: Int!, $nested: Int!) {
         state
         merged
         isDraft
+        mergeable
         author { login }
         headRefName
         baseRefName
@@ -114,6 +118,19 @@ fn agent() -> ureq::Agent {
     ureq::Agent::config_builder()
         .timeout_global(Some(TIMEOUT))
         .user_agent(USER_AGENT)
+        .build()
+        .into()
+}
+
+/// Agent qui rend les réponses 4xx/5xx au lieu d'en faire des erreurs de
+/// transport : un merge refusé porte **dans son corps** la raison, et c'est
+/// elle qu'il faut montrer — « une revue approuvée est requise » ne se devine
+/// pas d'un code 405.
+fn agent_reading_errors() -> ureq::Agent {
+    ureq::Agent::config_builder()
+        .timeout_global(Some(TIMEOUT))
+        .user_agent(USER_AGENT)
+        .http_status_as_error(false)
         .build()
         .into()
 }
@@ -211,6 +228,7 @@ impl ForgeBackend for GitHub {
         // c'est elle qui décide de « mes » PR, et elle seule ne peut pas être
         // saisie de travers.
         let viewer = data.viewer.login;
+        let merge_methods = data.repository.merge_methods();
         let pull_requests = data
             .repository
             .pull_requests
@@ -225,8 +243,61 @@ impl ForgeBackend for GitHub {
             repo: slug,
             viewer,
             pull_requests,
+            merge_methods,
         })
     }
+
+    fn merge_pull_request(&self, number: u64, method: PrMergeMethod) -> Result<(), AppError> {
+        // REST et non GraphQL : la mutation `mergePullRequest` veut l'identifiant
+        // de nœud de la PR, qu'il faudrait d'abord redemander, là où l'URL REST
+        // se construit avec le numéro. Sans titre ni message : ceux de GitHub,
+        // comme son bouton vert.
+        let url = format!(
+            "{}/repos/{}/pulls/{number}/merge",
+            self.remote.api,
+            self.remote.slug()
+        );
+        let mut response = agent_reading_errors()
+            .put(&url)
+            .header("Authorization", &format!("Bearer {}", self.token))
+            .header("Accept", "application/vnd.github+json")
+            .header("X-GitHub-Api-Version", API_VERSION)
+            .send_json(serde_json::json!({ "merge_method": method.as_str() }))
+            .map_err(|e| map_error(e, &self.remote.host, Some(&self.remote.slug())))?;
+
+        let status = response.status().as_u16();
+        if status == 200 {
+            return Ok(());
+        }
+        // Le corps d'un refus est `{ "message": … }` ; illisible, le code suffit.
+        let message = response
+            .body_mut()
+            .read_json::<ApiMessage>()
+            .map(|m| m.message)
+            .unwrap_or_else(|_| format!("HTTP {status}"));
+        Err(merge_error(status, message, &self.remote.host, &self.remote.slug()))
+    }
+}
+
+/// Traduit le refus d'un merge.
+///
+/// 405 (pas fusionnable : revue ou checks requis, conflit), 409 (la branche a
+/// bougé entre-temps) et 422 (méthode refusée par le dépôt) sont des refus
+/// **sur le fond** : GitHub dit pourquoi, et c'est sa phrase qu'on affiche. Les
+/// autres codes sont ceux de toute requête — un jeton qui n'a pas le droit
+/// d'écrire répond 403, comme un jeton refusé.
+fn merge_error(status: u16, message: String, host: &str, slug: &str) -> AppError {
+    match status {
+        405 | 409 | 422 => AppError::PrMergeRejected(message),
+        401 | 403 => AppError::ForgeAuth(host.to_string()),
+        404 => AppError::ForgeNotFound(slug.to_string()),
+        _ => AppError::Network(format!("GitHub replied {status}: {message}")),
+    }
+}
+
+#[derive(Deserialize)]
+struct ApiMessage {
+    message: String,
 }
 
 // ── Ce que l'API renvoie ────────────────────────────────────────────────────
@@ -297,7 +368,27 @@ struct Data {
 #[derive(Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct Repository {
+    #[serde(default)]
+    merge_commit_allowed: bool,
+    #[serde(default)]
+    squash_merge_allowed: bool,
+    #[serde(default)]
+    rebase_merge_allowed: bool,
     pull_requests: Connection<PullRequest>,
+}
+
+impl Repository {
+    /// Les méthodes que le dépôt autorise, dans l'ordre du bouton de GitHub.
+    fn merge_methods(&self) -> Vec<PrMergeMethod> {
+        [
+            (self.merge_commit_allowed, PrMergeMethod::Merge),
+            (self.squash_merge_allowed, PrMergeMethod::Squash),
+            (self.rebase_merge_allowed, PrMergeMethod::Rebase),
+        ]
+        .into_iter()
+        .filter_map(|(allowed, method)| allowed.then_some(method))
+        .collect()
+    }
 }
 
 /// Une liste GraphQL. Ses éléments sont nullables dans le schéma : un nœud
@@ -332,6 +423,10 @@ struct PullRequest {
     merged: bool,
     #[serde(default)]
     is_draft: bool,
+    /// `MERGEABLE`, `CONFLICTING` ou `UNKNOWN` — ce dernier tant que GitHub n'a
+    /// pas fini de calculer, souvent juste après un push.
+    #[serde(default)]
+    mergeable: Option<String>,
     /// `null` quand le compte a été supprimé (« ghost »).
     #[serde(default)]
     author: Option<Account>,
@@ -423,6 +518,7 @@ impl PullRequest {
             updated_at: self.updated_at,
             review,
             checks,
+            conflicting: self.mergeable.as_deref() == Some("CONFLICTING"),
         }
     }
 }
@@ -483,6 +579,9 @@ mod tests {
       "data": {
         "viewer": { "login": "moi" },
         "repository": {
+          "mergeCommitAllowed": true,
+          "squashMergeAllowed": false,
+          "rebaseMergeAllowed": true,
           "pullRequests": {
             "nodes": [
               {
@@ -493,6 +592,7 @@ mod tests {
                 "state": "OPEN",
                 "merged": false,
                 "isDraft": true,
+                "mergeable": "CONFLICTING",
                 "author": { "login": "moi" },
                 "headRefName": "feat/pr",
                 "baseRefName": "main",
@@ -558,6 +658,9 @@ mod tests {
         // Une revue demandée, rien de rendu : on attend.
         assert_eq!(prs[0].review, Some(ReviewState::ReviewRequired));
         assert_eq!(prs[0].checks, Some(ChecksState::Pending));
+        assert!(prs[0].conflicting);
+        // `mergeable` absent (ou `UNKNOWN`) : pas de conflit affirmé.
+        assert!(!prs[1].conflicting);
 
         // Auteur supprimé : chaîne vide, pas un échec.
         assert_eq!(prs[1].author, "");
@@ -584,6 +687,34 @@ mod tests {
             Some(ReviewState::ChangesRequested)
         );
         assert_eq!(review_state(None, std::iter::empty(), false), None);
+    }
+
+    #[test]
+    fn lists_only_the_merge_methods_the_repository_allows() {
+        let response: GraphQlResponse<PullRequestsData> = serde_json::from_str(PAYLOAD).unwrap();
+        let data = response.into_data("o/r").unwrap();
+        assert_eq!(
+            data.repository.merge_methods(),
+            [PrMergeMethod::Merge, PrMergeMethod::Rebase]
+        );
+    }
+
+    #[test]
+    fn merge_refusals_carry_github_reason() {
+        let reason = "At least 1 approving review is required";
+        assert!(matches!(
+            merge_error(405, reason.into(), "github.com", "o/r"),
+            AppError::PrMergeRejected(m) if m == reason
+        ));
+        assert!(matches!(
+            merge_error(409, "Head branch was modified".into(), "github.com", "o/r"),
+            AppError::PrMergeRejected(_)
+        ));
+        // Un jeton sans droit d'écriture : à corriger dans les Réglages.
+        assert!(matches!(
+            merge_error(403, "Resource not accessible".into(), "github.com", "o/r"),
+            AppError::ForgeAuth(h) if h == "github.com"
+        ));
     }
 
     #[test]

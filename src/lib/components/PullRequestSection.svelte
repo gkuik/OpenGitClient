@@ -109,6 +109,7 @@
       state,
       pr.review ? t(REVIEW_LABEL[pr.review]) : null,
       pr.checks ? t(CHECKS_LABEL[pr.checks]) : null,
+      pr.conflicting ? t("pr.conflicting", { branch: pr.targetBranch }) : null,
     ].filter(Boolean);
     return `#${pr.number} · ${pr.title}\n${pr.author} · ${pr.sourceBranch} → ${pr.targetBranch}\n${status.join(" · ")}`;
   }

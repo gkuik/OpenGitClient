@@ -106,6 +106,9 @@ pub enum AppError {
     #[error("The remote refused to delete the branch ({0}). It may be protected.")]
     RemoteDeleteRejected(String),
 
+    #[error("GitHub refused to merge the pull request: {0}")]
+    PrMergeRejected(String),
+
     #[error("A remote named {0} already exists")]
     RemoteExists(String),
 
@@ -166,6 +169,7 @@ impl AppError {
             AppError::BranchNotMerged(_) => "BranchNotMerged",
             AppError::BranchCheckedOut(_) => "BranchCheckedOut",
             AppError::RemoteDeleteRejected(_) => "RemoteDeleteRejected",
+            AppError::PrMergeRejected(_) => "PrMergeRejected",
             AppError::RemoteExists(_) => "RemoteExists",
             AppError::InvalidRemoteName(_) => "InvalidRemoteName",
             AppError::RemoteNotFound(_) => "RemoteNotFound",
@@ -194,6 +198,7 @@ impl AppError {
             | AppError::BranchNotMerged(arg)
             | AppError::BranchCheckedOut(arg)
             | AppError::RemoteDeleteRejected(arg)
+            | AppError::PrMergeRejected(arg)
             | AppError::RemoteExists(arg)
             | AppError::InvalidRemoteName(arg)
             | AppError::RemoteNotFound(arg) => Some(arg),

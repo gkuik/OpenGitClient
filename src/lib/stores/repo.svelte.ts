@@ -38,6 +38,8 @@ import type {
   PushMode,
   PullReport,
   PullRequestEntry,
+  PrMergeMethod,
+  PrMergedEvent,
   PullRequestEvent,
   PushEvent,
   RecentRepo,
@@ -492,6 +494,10 @@ export class RepoStore {
    * une fonctionnalité qui n'a rien empêché.
    */
   prError = $state<AppError | null>(null);
+  /** Méthodes de merge que le dépôt autorise — les entrées du menu d'une PR. */
+  prMergeMethods = $state<PrMergeMethod[]>([]);
+  /** Numéro de la PR en cours de merge sur la forge, s'il y en a une. */
+  mergingPr = $state<number | null>(null);
   /** Groupes repliés (les trois sont dépliés par défaut, comme les dossiers). */
   private collapsedPrGroups = new SvelteSet<string>();
 
@@ -2276,6 +2282,52 @@ export class RepoStore {
     }
     if (!event.report) return;
     this.pullRequests = event.report.pullRequests;
+    this.prMergeMethods = event.report.mergeMethods;
+  }
+
+  /**
+   * Fusionne une PR sur la forge — le menu d'une PR, après son second clic.
+   * Rien n'est écrit en local : le résultat revient par `repo://pr-merged`, et
+   * c'est le fetch lancé alors qui ramène le commit de merge.
+   */
+  async mergePullRequest(pr: PullRequestEntry, method: PrMergeMethod) {
+    if (this.mergingPr !== null || !this.repoInfo) return;
+    this.mergingPr = pr.number;
+    this.error = null;
+    this.setOpStatus(t("op.prMerge.running", { n: pr.number }));
+    try {
+      await api.mergePullRequest(this.repoId, pr.number, method);
+    } catch (e) {
+      // Échec au lancement (aucun distant, onglet fermé) : aucun événement ne
+      // suivra.
+      this.mergingPr = null;
+      this.setOpStatus(null);
+      this.error = e as AppError;
+    }
+  }
+
+  /**
+   * Résultat d'un merge de PR. Un refus va au bandeau d'erreur, avec la phrase
+   * de GitHub (revue requise, checks en attente, branche modifiée) : c'est un
+   * geste qui a échoué, pas une section qui n'arrive pas à se charger.
+   */
+  onPrMerged(event: PrMergedEvent) {
+    this.mergingPr = null;
+    // Sans bouton à faire clignoter, mais avec une issue que la pastille d'un
+    // onglet caché doit pouvoir reprendre (`markUnseen`).
+    this.lastOutcome = event.error ? "danger" : "ok";
+    if (event.error) {
+      this.setOpStatus(null);
+      this.error = event.error;
+      return;
+    }
+    this.setOpStatus(t("op.prMerge.done", { n: event.number }), "ok");
+    // Le commit de merge est sur le serveur : un fetch le ramène dans le graph
+    // et recharge les PR, d'où la fusionnée disparaît. Si une opération
+    // distante tourne déjà, ses propres rechargements suivent — les PR seules
+    // sont redemandées.
+    if (this.busyRemote) void this.loadPullRequests();
+    else void this.fetch();
   }
 
   /**
@@ -2820,6 +2872,15 @@ class TabsStore {
       })
       .catch(() => {
         /* sans abonnement, la section reste sur « Chargement… » */
+      });
+    api
+      .onPrMerged((event) => {
+        const tab = this.repoTabs.find((t) => t.repoId === event.repoId);
+        tab?.onPrMerged(event);
+        if (tab && this.activeId !== tab.id) tab.markUnseen();
+      })
+      .catch(() => {
+        /* sans abonnement, le menu reste grisé après un premier merge */
       });
     // Changements du disque : personne ne les a demandés, et ils peuvent viser
     // un onglet caché. Seul l'onglet affiché se rafraîchit tout de suite ; les

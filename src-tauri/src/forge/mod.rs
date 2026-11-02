@@ -25,7 +25,7 @@ pub mod github;
 
 use serde::{Deserialize, Serialize};
 
-use crate::dto::{CredentialCheck, PullRequestReport};
+use crate::dto::{CredentialCheck, PrMergeMethod, PullRequestReport};
 use crate::error::AppError;
 
 /// Forge reconnue derrière un dépôt distant.
@@ -99,10 +99,16 @@ pub struct ForgeAccount {
 }
 
 /// Ce qu'on sait demander à une forge. Volontairement minuscule : lister les
-/// pull requests, et rien d'autre — on n'en crée pas, on n'en fusionne pas.
+/// pull requests et en fusionner une — on n'en crée pas, on n'en ferme pas, on
+/// ne les relit pas.
 pub trait ForgeBackend {
     /// Pull requests **ouvertes** du dépôt, brouillons compris.
     fn pull_requests(&self) -> Result<PullRequestReport, AppError>;
+
+    /// Fusionne la PR `number` sur la forge, avec la méthode demandée et le
+    /// message par défaut de la forge. Rien n'est écrit en local : c'est le
+    /// fetch qui suit qui ramène le commit de merge.
+    fn merge_pull_request(&self, number: u64, method: PrMergeMethod) -> Result<(), AppError>;
 }
 
 /// L'hôte est-il un GitHub ?
