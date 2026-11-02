@@ -117,6 +117,7 @@ pub fn run() {
             commands::commit_file_diff,
             commands::file_content,
             commands::load_pull_requests,
+            commands::merge_pull_request,
             commands::open_forge_page,
             commands::open_repository_page,
             commands::delete_local_branch,

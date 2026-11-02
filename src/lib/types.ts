@@ -601,7 +601,12 @@ export interface PullRequestEntry {
   /** État agrégé des checks du dernier commit ; `null` : aucun, ou invisibles
    * pour le jeton. */
   checks: ChecksState | null;
+  /** En conflit avec sa branche cible : GitHub refuserait de la fusionner. */
+  conflicting: boolean;
 }
+
+/** Façon de fusionner une PR — les trois entrées du bouton vert de GitHub. */
+export type PrMergeMethod = "merge" | "squash" | "rebase";
 
 /** État de revue d'une PR, tel que la forge le tranche. */
 export type ReviewState = "approved" | "changesRequested" | "reviewRequired";
@@ -617,6 +622,15 @@ export interface PullRequestReport {
   /** Identité du jeton : c'est par rapport à elle que « mes » PR sont miennes. */
   viewer: string;
   pullRequests: PullRequestEntry[];
+  /** Méthodes de merge autorisées par le dépôt, dans l'ordre de GitHub. */
+  mergeMethods: PrMergeMethod[];
+}
+
+/** Charge utile de `repo://pr-merged` : le merge d'une PR sur la forge. */
+export interface PrMergedEvent {
+  repoId: string;
+  number: number;
+  error: AppError | null;
 }
 
 /** Charge utile de `repo://pull-requests`, jumelle de `FetchEvent`. */

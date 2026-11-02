@@ -23,6 +23,8 @@ import type {
   PullEvent,
   PullMode,
   PushMode,
+  PrMergeMethod,
+  PrMergedEvent,
   PullRequestEvent,
   PushEvent,
   RemoteBranchEntry,
@@ -415,6 +417,15 @@ export const api = {
   loadPullRequests: (repoId: string) => call<void>("load_pull_requests", { repoId }),
   onPullRequests: (handler: (event: PullRequestEvent) => void): Promise<UnlistenFn> =>
     listen<PullRequestEvent>("repo://pull-requests", (e) => handler(e.payload)),
+  /**
+   * Fusionne une PR sur la forge, avec le message par défaut de GitHub. Même
+   * contrat que `loadPullRequests` : réponse immédiate, résultat par
+   * `onPrMerged`, pas de réservation réseau.
+   */
+  mergePullRequest: (repoId: string, number: number, method: PrMergeMethod) =>
+    call<void>("merge_pull_request", { repoId, number, method }),
+  onPrMerged: (handler: (event: PrMergedEvent) => void): Promise<UnlistenFn> =>
+    listen<PrMergedEvent>("repo://pr-merged", (e) => handler(e.payload)),
   /**
    * Ouvre une page web de forge (une pull request, la création d'un jeton) dans
    * le navigateur du système. Le backend refuse tout ce qui n'est pas une page

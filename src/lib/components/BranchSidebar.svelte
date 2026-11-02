@@ -4,7 +4,7 @@
   import { branchMerge } from "../branchMerge.svelte";
   import { buildBranchTree, buildRemoteTree } from "../tree";
   import { sortTags } from "../tags";
-  import type { MergeMode, PullMode, PullRequestEntry, TagEntry } from "../types";
+  import type { MergeMode, PrMergeMethod, PullMode, PullRequestEntry, TagEntry } from "../types";
   import BranchRow from "./BranchRow.svelte";
   import RichText from "./RichText.svelte";
   import PullRequestSection from "./PullRequestSection.svelte";
@@ -231,8 +231,10 @@
   // ligne de la section, mais le menu appartient à la colonne — une seule
   // instance ouverte à la fois, positionnée en coordonnées fenêtre.
   let prMenu = $state<{ x: number; y: number; pr: PullRequestEntry } | null>(null);
+  /** Méthode de merge armée par un premier clic, que le second lance. */
+  let prConfirm = $state<PrMergeMethod | null>(null);
   const PR_MENU_W = 236;
-  const PR_MENU_H = 96;
+  const PR_MENU_H = 210;
 
   function openPrMenu(pr: PullRequestEntry, x: number, y: number) {
     prMenu = {
@@ -240,12 +242,46 @@
       y: Math.max(8, Math.min(y, window.innerHeight - PR_MENU_H - 8)),
       pr,
     };
+    prConfirm = null;
+  }
+
+  function closePrMenu() {
+    prMenu = null;
+    prConfirm = null;
   }
 
   function openPrInBrowser() {
     const pr = prMenu?.pr;
-    prMenu = null;
+    closePrMenu();
     if (pr) void repo.openPullRequest(pr);
+  }
+
+  /*
+    Merger une PR écrit sur le serveur, pour toute l'équipe : un premier clic
+    arme l'entrée, le second lance — le motif de la suppression d'une branche
+    distante. Rien d'autre n'est demandé : le message est celui de GitHub.
+  */
+  function runPrMerge(method: PrMergeMethod) {
+    const pr = prMenu?.pr;
+    if (!pr) return;
+    if (prConfirm !== method) {
+      prConfirm = method;
+      return;
+    }
+    closePrMenu();
+    void repo.mergePullRequest(pr, method);
+  }
+
+  /**
+   * Pourquoi l'entrée de merge est grisée, `null` si elle ne l'est pas. Seuls
+   * les refus certains grisent (brouillon, conflit) ; une revue ou des checks
+   * requis, c'est GitHub qui les connaît et qui le dira.
+   */
+  function prMergeBlocked(pr: PullRequestEntry): string | null {
+    if (repo.mergingPr !== null) return t("pr.merge.running");
+    if (pr.draft) return t("pr.merge.draft");
+    if (pr.conflicting) return t("pr.merge.conflicting", { branch: pr.targetBranch });
+    return null;
   }
 
   // ── Menu contextuel d'un tag ────────────────────────────────────────────────
@@ -389,7 +425,7 @@
   onkeydown={(e) => {
     if (e.key !== "Escape") return;
     close();
-    prMenu = null;
+    closePrMenu();
     remoteMenu = null;
     closeTagMenu();
     branchMerge.close();
@@ -886,17 +922,19 @@
   </div>
 {/if}
 
-<!-- Menu d'une pull request. Une seule entrée : la PR s'ouvre sur la forge.
-     Rien ne se fusionne ni ne se ferme d'ici — l'application lit les PR, elle
-     ne les pilote pas. -->
+<!-- Menu d'une pull request : l'ouvrir sur la forge, ou la merger avec l'une
+     des méthodes que le dépôt autorise. Rien d'autre — on ne crée, ne ferme ni
+     ne relit de PR d'ici. -->
 {#if prMenu}
+  {@const pr = prMenu.pr}
+  {@const blocked = prMergeBlocked(pr)}
   <button
     class="ctx-overlay"
     aria-label={t("common.closeMenu")}
-    onclick={() => (prMenu = null)}
+    onclick={closePrMenu}
     oncontextmenu={(e) => {
       e.preventDefault();
-      prMenu = null;
+      closePrMenu();
     }}
   ></button>
   <div
@@ -909,6 +947,25 @@
       {@render externalIcon()}
       <span>{t("pr.open")}</span>
     </button>
+    {#if repo.prMergeMethods.length > 0}
+      <div class="ctx-sep"></div>
+      {#each repo.prMergeMethods as method (method)}
+        <button
+          class="ctx-item"
+          role="menuitem"
+          disabled={blocked !== null}
+          title={blocked ?? t(`pr.merge.${method}.hint`, { branch: pr.targetBranch })}
+          onclick={() => runPrMerge(method)}
+        >
+          {#if method === "merge"}{@render mergeCommitIcon()}{:else}{@render mergeIcon()}{/if}
+          <span>
+            {prConfirm === method
+              ? t(`pr.merge.${method}.confirm`, { n: pr.number, branch: pr.targetBranch })
+              : t(`pr.merge.${method}`)}
+          </span>
+        </button>
+      {/each}
+    {/if}
   </div>
 {/if}
 

@@ -646,7 +646,7 @@ as in `TabBar`, for the same reasons, plus three of its own:
 
 A pull request is not a Git object: it lives in a forge's REST API, not in
 `refs/**`. `src-tauri/src/forge/` is therefore to that API what `git/` is to
-libgit2 — **the extension point**: `ForgeBackend` (one method, `pull_requests`),
+libgit2 — **the extension point**: `ForgeBackend` (two methods, `pull_requests` and `merge_pull_request`),
 `github.rs` as its first implementation, `detect()` recognising the forge from a
 remote URL. A second forge is a second impl and one arm in `detect`, with nothing
 to change in the commands or the frontend.
@@ -761,10 +761,41 @@ nothing. If the server still asks for none, the result says so
 (`authenticated: false`) rather than reporting a success. A manually added host
 that is not a forge has no open repository to go through, hence no button.
 
-Everything here is **read-only**: no PR is created, merged, closed or reviewed
-from the application, and a click on one only selects its source branch's tip in
-the graph — the local branch if it exists, the remote one otherwise, and a message
-saying to fetch when neither does.
+A click on a PR only selects its source branch's tip in the graph — the local
+branch if it exists, the remote one otherwise, and a message saying to fetch when
+neither does. **Its context menu can merge it on GitHub**, and that is the one
+write: no PR is created, closed or reviewed from the application.
+
+- **One entry per method the repository allows** — *Merge pull request*, *Squash
+  and merge*, *Rebase and merge*, GitHub's own words and order. The load's GraphQL
+  query reads `mergeCommitAllowed` / `squashMergeAllowed` / `rebaseMergeAllowed`
+  (`PullRequestReport.mergeMethods`); a method disabled on GitHub has no entry.
+  `PrMergeMethod` serialises to exactly the `merge_method` the API expects.
+- **Armed by a first click, run by the second** (`prConfirm` in `BranchSidebar`,
+  re-armed on every open): it writes the server for everybody. The armed label
+  names the PR and its target.
+- **Greyed only where GitHub would refuse for sure**: a draft, or a PR in conflict
+  (`conflicting`, from `mergeable === "CONFLICTING"`; `UNKNOWN`, GitHub still
+  computing, is not a conflict). Required reviews and checks are GitHub's to
+  enforce — it knows the branch protection, we don't — and its refusal is shown.
+- **GitHub's default message, no field**: no title or message is sent, as with its
+  green button. The source branch is left alone (a repository with *Automatically
+  delete head branches* has GitHub delete it).
+- **REST, not GraphQL**: `PUT /repos/{slug}/pulls/{n}/merge`, built from the number
+  — the `mergePullRequest` mutation wants a node id that would have to be fetched
+  first. A refusal carries its reason **in the body**, so that request goes through
+  an agent with `http_status_as_error(false)`: 405 (not mergeable: review or checks
+  required), 409 (head moved) and 422 (method refused) become `PrMergeRejected`
+  with GitHub's sentence; 401/403 are `ForgeAuth` — a token without write access
+  (a fine-grained one needs *Pull requests* and *Contents* in write) answers 403.
+- **Same shape as the load**: `merge_pull_request` reads the remote URL under the
+  lock, runs on a thread, answers on `repo://pr-merged` (`PrMergedEvent`), and
+  takes **no network reservation** — it writes the server, not `refs/remotes/**`.
+  On success the store runs a Fetch (or only reloads the PRs if a remote operation
+  is already running), which brings the merge commit into the graph and drops the
+  PR from the list. A refusal goes to the error banner, not to `prError`: it is a
+  gesture that failed, not a section that can't load. `RepoStore.mergingPr` greys
+  the entries while one runs.
 
 ### The disk is watched, and nothing is fetched for it
 
@@ -1254,7 +1285,7 @@ These caused real breakage; don't undo them.
 
 ## Scope
 
-Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes one branch — the current one, or another from its menu — and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), each with its review state and checks, and reloaded with every fetch (auto-fetch included) rather than on a timer of their own. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser, and nothing else acts on them: no creation, no merge, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
+Out of scope for now, but the architecture must not block them: rebase, hunk-level staging, per-hunk conflict resolution, blame. `fetch`, `push` and `pull` **are** implemented (background thread + `repo://fetched` / `repo://pushed` / `repo://pulled`), authenticating over SSH via the agent or an on-disk key, and over HTTPS with credentials the app stores itself. Pull covers fast-forward and merge; a conflicted merge is left in the worktree for the user to resolve and commit, or to abandon. Push publishes one branch — the current one, or another from its menu — and sets its upstream on first push — after asking, in the upstream bar, which remote and under which name; the two force modes exist but only through the button's context menu, entry by entry, each behind an in-menu confirmation. **Pull requests are listed** in the sidebar's PULL REQUESTS section — read from GitHub's API with the host's stored token, grouped as GitKraken groups them (mine, assigned to me, awaiting my review, plus an « Others » group that only shows when it has something in it), open ones only (drafts included), each with its review state and checks, and reloaded with every fetch (auto-fetch included) rather than on a timer of their own. A click selects the source branch's tip in the graph, the context menu opens the PR in the browser or **merges it on GitHub** (with the methods the repository allows, confirmed in two clicks), and nothing else acts on them: no creation, no closing, no review. Remote branches are **listed** in the sidebar's REMOTE section — which is not
 drawn at all while there is no remote branch to put in it, and comes back on the
 first fetch that brings one — **walked** by the graph, whose ref badges show them, and **checked out** into a local tracking branch on double-click; a fetch refreshes the first two. **Tags are managed**: created from a commit's context menu in the graph (lightweight, or annotated with a message), listed in the TAGS section and badged in the graph, checked out (detached HEAD), pushed to the remote and deleted — locally or on the remote, two separate entries. A tag is never moved or forced, locally or remotely. **The open repositories are watched on disk** (`notify`, one thread for all tabs): what another tool changes shows up on its own, status and graph alike — but only by re-reading the disk, never by fetching. **The repository on screen is auto-fetched**, every minute by default (see *Auto-fetch*). Nothing is auto-*pulled*.
 

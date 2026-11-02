@@ -17,7 +17,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 use crate::dto::{
     AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, RemoteBranchDeleteEvent, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
     FileSource, GitFlowConfig, Identity,
-    MergeMode, MergeReport, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
+    MergeMode, MergeReport, PrMergeMethod, PrMergedEvent, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry,
     TagEntry, TagPushEvent,
     GraphColumns, GraphLineStyle,
@@ -1325,6 +1325,47 @@ pub fn load_pull_requests(
             PullRequestEvent {
                 repo_id,
                 report,
+                error,
+            },
+        );
+    });
+
+    Ok(())
+}
+
+const PR_MERGED_EVENT: &str = "repo://pr-merged";
+
+/// Fusionne une pull request sur la forge — le menu d'une PR.
+///
+/// Même forme que `load_pull_requests` : l'URL du distant est lue sous le
+/// verrou, l'appel part sur un thread, le résultat revient par
+/// `repo://pr-merged`. **Pas de réservation réseau non plus** : le merge écrit
+/// sur le serveur, pas dans `refs/remotes/**` ; c'est le fetch que le frontend
+/// lance ensuite qui les fera bouger, et lui prend la réservation.
+#[tauri::command]
+pub fn merge_pull_request(
+    repo_id: String,
+    number: u64,
+    method: PrMergeMethod,
+    app: AppHandle,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<(), AppError> {
+    let url = {
+        let guard = lock(&state)?;
+        guard.backend(&repo_id)?.remote_info(None)?.url
+    };
+
+    std::thread::spawn(move || {
+        let error = crate::forge::detect(&url)
+            .ok_or(AppError::ForgeUnsupported)
+            .and_then(|remote| crate::forge::open(&remote))
+            .and_then(|forge| forge.merge_pull_request(number, method))
+            .err();
+        let _ = app.emit(
+            PR_MERGED_EVENT,
+            PrMergedEvent {
+                repo_id,
+                number,
                 error,
             },
         );
