@@ -2,6 +2,7 @@
   import { t } from "../i18n.svelte";
   import Cross from "./Cross.svelte";
   import CommitBody from "./CommitBody.svelte";
+  import ImageCompare from "./ImageCompare.svelte";
   import { repo } from "../stores/repo.svelte";
 
   function sign(kind: string): string {
@@ -56,6 +57,26 @@
             {t("diff.view.preview")}
           </button>
         </div>
+      {:else if repo.selectedImageKind === "svg"}
+        <!-- Un SVG s'affiche rendu, comme toute image ; c'est aussi du texte,
+             dont le diff garde un sens. Une image bitmap n'a pas de bascule :
+             son diff n'aurait rien à montrer. -->
+        <div class="seg" role="group" aria-label={t("diff.view.preview")}>
+          <button
+            class:active={!repo.showImage}
+            title={t("diff.view.svgCode.hint")}
+            onclick={() => repo.setSvgAsCode(true)}
+          >
+            {t("diff.view.code")}
+          </button>
+          <button
+            class:active={repo.showImage}
+            title={t("diff.view.image.hint")}
+            onclick={() => repo.setSvgAsCode(false)}
+          >
+            {t("diff.view.preview")}
+          </button>
+        </div>
       {/if}
       <button
         class="close"
@@ -67,7 +88,9 @@
       </button>
     </div>
 
-    {#if repo.showPreview}
+    {#if repo.showImage}
+      <ImageCompare />
+    {:else if repo.showPreview}
       {#if !repo.preview}
         <p class="placeholder">{t("diff.preview.loading")}</p>
       {:else if repo.preview.text === null}

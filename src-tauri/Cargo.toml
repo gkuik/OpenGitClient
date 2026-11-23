@@ -23,6 +23,10 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 git2 = "0.19"
 thiserror = "1"
+# Le contenu d'une image pour son aperçu voyage en base64 dans la réponse JSON
+# de la commande. Déjà dans l'arbre de dépendances (via Tauri) : rien de plus
+# n'est compilé ni embarqué.
+base64 = "0.22"
 notify = "8.2.0"
 notify-debouncer-mini = "0.7.0"
 

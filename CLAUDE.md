@@ -69,7 +69,7 @@ cargo test                 # backend tests (real temp repos created under $TMPDI
 cargo test full_cycle_stage_diff_commit   # single test by name
 ```
 
-Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `graph/appear.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts`, `autoFetch.ts`, `flip.ts`, `toolbar.ts`, `tabGroups.ts` and `i18n.svelte.ts`):
+Frontend unit tests (vitest, dev-only dependency — covers the pure modules: `src/lib/graph/layout.ts`, `graph/refs.ts`, `graph/columns.ts`, `graph/timeBuckets.ts`, `graph/appear.ts`, `gitflow.ts`, `tree.ts`, `tags.ts`, `markdown.ts`, `images.ts`, `autoFetch.ts`, `flip.ts`, `toolbar.ts`, `tabGroups.ts` and `i18n.svelte.ts`):
 
 ```bash
 npm test
@@ -286,6 +286,13 @@ Two independent selections, don't conflate them: `diffTarget` (centre) and `sele
 `CenterPanel` keeps **both** views mounted and toggles `visibility`, never `display: none`: the graph must keep its scroll position and its measured height across a diff.
 
 **A Markdown file can be read rendered.** The diff header carries a Code | Preview toggle for `.md` / `.markdown` only — any other file has nothing but its code to show. The choice (`RepoStore.renderMarkdown`) survives from one file to the next and is per tab, like the selection; it has no effect on a non-Markdown file (`showPreview` = chosen *and* applicable). The rendering is `CommitBody`, the same `{@html}`-free Markdown subset as commit descriptions — a README comes from outside as much as a message does. Its content comes from `file_content(path, source)`, a new command, and **the source is the diff's**: `FileSource` mirrors `DiffTarget` (index for a staged file, worktree otherwise, the commit for a commit file), so a preview never shows the disk while the diff shows the index. The read is capped at 1 MiB and uses Git's binary heuristic (a NUL in the first 8 KB); `text: null` means there is nothing to render — binary, absent from that source, or too large — and the viewer says which. `loadDiff` reloads the preview with the diff, and a late answer for a file that is no longer selected is dropped.
+
+**An image is shown, before and after, instead of its diff.** PNG, JPEG, GIF, WebP, BMP and ICO (`imageKind` in `src/lib/images.ts`, pure and tested, by extension) replace the diff outright — a binary diff has nothing to say — with two panes side by side: *Before* in red, *After* in green, each on a checkerboard (transparency must show), never upscaled, scaled down to fit. Under each: the dimensions (read from the decoded `<img>`, the backend only sends bytes), the weight (`formatBytes`, decimal units like the Finder, through `Intl`), and on the *After* side the signed difference. An added file has only *Added*, a deleted one only *Deleted*.
+
+- **The two sides are the diff's, resolved by the backend** — `image_versions(path, target)`, `ImageTarget` being `DiffTarget` without its path: HEAD ↔ index for a staged file, index ↔ disk otherwise, first parent ↔ commit for a commit file (no *Before* for a root commit). A stash's untracked file is read from its third parent, where `commit_diff` finds it. The readers (`read_disk`, `read_index`, `read_tree`) are shared with `file_content`.
+- **Bytes travel in base64 inside the JSON** (`base64`, already in the dependency tree through Tauri), capped at 10 MiB per side (`MAX_IMAGE_BYTES`): past it `data` is `null` but `size` is still there, and the pane says *too large* with the weight. No `fs` plugin, no asset protocol: the `<img>` gets a data URL.
+- **An SVG is shown too, but keeps a Code | Preview toggle** — it is text, its diff means something. Preview is the default; the choice (`RepoStore.svgAsCode`) survives from one SVG to the next, per tab, like `renderMarkdown`. **It is only ever rendered through `<img>`**, where a SVG runs no script — the webview has `invoke` access, so never inline it in the DOM.
+- `showImage` decides what the centre shows; `loadImages` runs beside `loadPreview` in `loadDiff`, with the same guard against a late answer. Selecting another file clears `images` first, so a previous image never shows under the new name; a mere refresh keeps it until the new one lands.
 
 ### Fetch and push are the commands that don't do their own work
 

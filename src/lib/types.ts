@@ -80,6 +80,29 @@ export interface FileContent {
   binary: boolean;
 }
 
+/**
+ * Quelles versions d'une image comparer : celles du diff affiché. Miroir de
+ * `ImageTarget` côté backend — un `DiffTarget` sans son chemin.
+ */
+export type ImageTarget =
+  | { kind: "worktree"; staged: boolean }
+  | { kind: "commit"; oid: string };
+
+/**
+ * Une version d'image : son poids en octets, toujours ; son contenu en base64,
+ * seulement sous le plafond d'aperçu (10 Mo).
+ */
+export interface ImageBlob {
+  size: number;
+  data: string | null;
+}
+
+/** Avant / après d'une image. `before` manque pour un ajout, `after` pour une suppression. */
+export interface ImageVersions {
+  before: ImageBlob | null;
+  after: ImageBlob | null;
+}
+
 export interface CommitResult {
   oid: string;
   summary: string;

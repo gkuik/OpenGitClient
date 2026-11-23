@@ -11,6 +11,7 @@ import {
   normalizeGroups,
   GROUP_NAME_MAX,
 } from "../tabGroups";
+import { imageKind, type ImageKind } from "../images";
 import { countStatuses, type TreeCounts } from "../tree";
 import {
   defaultFlowConfig,
@@ -35,6 +36,7 @@ import type {
   FileDiff,
   FileEntry,
   FileSource,
+  ImageVersions,
   FileStatus,
   GitFlowConfig,
   GraphCommit,
@@ -298,6 +300,19 @@ export class RepoStore {
    */
   preview = $state<FileContent | null>(null);
 
+  /**
+   * Un SVG est montré rendu, comme toute image, mais c'est aussi du texte :
+   * ce choix-là le montre en code (son diff). Il survit d'un SVG à l'autre,
+   * comme `renderMarkdown`, et ne concerne aucune autre image — une image
+   * bitmap n'a pas de code à montrer.
+   */
+  svgAsCode = $state(false);
+  /**
+   * L'avant et l'après de l'image affichée. Chargés seulement quand l'image
+   * est ce qui s'affiche au centre (`showImage`).
+   */
+  images = $state<ImageVersions | null>(null);
+
   // Fetch et push : la commande rend la main tout de suite, le backend
   // travaillant sur un thread dédié. Ces drapeaux couvrent donc l'aller *et*
   // l'attente du résultat. Deux drapeaux distincts, mais le backend n'en laisse
@@ -542,6 +557,27 @@ export class RepoStore {
   /** L'aperçu est ce qui s'affiche au centre : demandé, et applicable. */
   get showPreview(): boolean {
     return this.renderMarkdown && this.selectedIsMarkdown;
+  }
+
+  /** Le fichier affiché est une image — et laquelle. */
+  get selectedImageKind(): ImageKind | null {
+    const path = this.selectedPath;
+    return path ? imageKind(path) : null;
+  }
+
+  /**
+   * L'image est ce qui s'affiche au centre : toujours pour une image bitmap,
+   * dont le diff n'a rien à montrer ; pour un SVG, tant qu'on n'a pas demandé
+   * son code.
+   */
+  get showImage(): boolean {
+    const kind = this.selectedImageKind;
+    return kind === "raster" || (kind === "svg" && !this.svgAsCode);
+  }
+
+  setSvgAsCode(on: boolean) {
+    this.svgAsCode = on;
+    if (!on) void this.loadImages();
   }
 
   setRenderMarkdown(on: boolean) {
@@ -851,12 +887,16 @@ export class RepoStore {
   /** Ouvre le diff d'un fichier du working directory (colonne de droite). */
   async select(path: string, staged: boolean) {
     this.diffTarget = { kind: "worktree", path, staged };
+    // Une autre image ne doit pas rester affichée sous ce nom le temps de
+    // l'aller-retour ; un simple refresh, lui, garde la sienne jusqu'au bout.
+    this.images = null;
     await this.loadDiff();
   }
 
   /** Ouvre le diff d'un fichier au sein d'un commit (détail du commit). */
   async selectCommitFile(oid: string, path: string) {
     this.diffTarget = { kind: "commit", oid, path };
+    this.images = null;
     await this.loadDiff();
   }
 
@@ -869,6 +909,7 @@ export class RepoStore {
     this.diffTarget = null;
     this.diff = null;
     this.preview = null;
+    this.images = null;
   }
 
   // ── Graph ───────────────────────────────────────────────────────────────────
@@ -2661,6 +2702,7 @@ export class RepoStore {
     if (!target) {
       this.diff = null;
       this.preview = null;
+      this.images = null;
       return;
     }
     try {
@@ -2674,7 +2716,37 @@ export class RepoStore {
     }
     // L'aperçu suit le diff : même fichier, même source, rechargé avec lui
     // — un refresh du status peut avoir changé le contenu sur le disque.
-    await this.loadPreview();
+    // L'image aussi, et les deux ne s'excluent pas d'avance : chacun ne
+    // charge que si c'est lui qui s'affiche.
+    await Promise.all([this.loadPreview(), this.loadImages()]);
+  }
+
+  /**
+   * Charge l'avant et l'après de l'image affichée, si c'est elle qui
+   * s'affiche ; sinon les vide. Les deux côtés sont ceux du diff, que le
+   * backend résout depuis la même cible : HEAD ↔ index, index ↔ disque, ou
+   * premier parent ↔ commit.
+   */
+  private async loadImages() {
+    const target = this.diffTarget;
+    if (!target || !this.showImage) {
+      this.images = null;
+      return;
+    }
+    try {
+      const images = await api.imageVersions(
+        this.repoId,
+        target.path,
+        target.kind === "commit"
+          ? { kind: "commit", oid: target.oid }
+          : { kind: "worktree", staged: target.staged },
+      );
+      // Même garde que l'aperçu : la sélection a pu changer entre-temps.
+      if (this.diffTarget === target) this.images = images;
+    } catch (e) {
+      this.error = e as AppError;
+      this.images = null;
+    }
   }
 
   /**

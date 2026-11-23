@@ -16,7 +16,7 @@ use tauri::{AppHandle, Emitter, Manager, State};
 
 use crate::dto::{
     AutoFetchEvent, BranchEntry, CommitDetails, CredentialCheck, ExternalApps, RemoteBranchDeleteEvent, CommitGraphPage, CommitResult, FetchEvent, FileContent, FileDiff,
-    FileSource, GitFlowConfig, Identity,
+    FileSource, GitFlowConfig, Identity, ImageTarget, ImageVersions,
     MergeMode, MergeReport, PrMergeMethod, PrMergedEvent, Profile, PullEvent, PullMode, PullRequestEvent, PushEvent, PushMode, RecentRepo,
     RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, SessionInfo, SidebarWidths, StashEntry, TabGroup,
     TagEntry, TagPushEvent,
@@ -1293,6 +1293,19 @@ pub fn file_content(
     lock(&state)?
         .backend(&repo_id)?
         .file_content(&path, &source)
+}
+
+/// L'avant et l'après d'une image, depuis les deux côtés du diff affiché.
+#[tauri::command]
+pub fn image_versions(
+    repo_id: String,
+    path: String,
+    target: ImageTarget,
+    state: State<'_, Mutex<AppState>>,
+) -> Result<ImageVersions, AppError> {
+    lock(&state)?
+        .backend(&repo_id)?
+        .image_versions(&path, &target)
 }
 
 // ── Pull requests ───────────────────────────────────────────────────────────
