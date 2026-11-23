@@ -1040,9 +1040,10 @@ impl GitBackend for Libgit2Backend {
         {
             let state = Rc::clone(&cred_state);
             let mut attempts = 0u32;
+            let mut ssh = SshCursor::default();
             callbacks.credentials(move |url, username, allowed| {
                 attempts += 1;
-                credentials(url, username, allowed, attempts, &state)
+                credentials(url, username, allowed, attempts, &mut ssh, &state)
             });
         }
 
@@ -1704,9 +1705,10 @@ fn fetch_one(repo: &Repository, name: &str) -> Result<Vec<FetchedRef>, AppError>
     {
         let state = Rc::clone(&cred_state);
         let mut attempts = 0u32;
+        let mut ssh = SshCursor::default();
         callbacks.credentials(move |url, username, allowed| {
             attempts += 1;
-            credentials(url, username, allowed, attempts, &state)
+            credentials(url, username, allowed, attempts, &mut ssh, &state)
         });
     }
 
@@ -1791,9 +1793,10 @@ fn push_refspec(
     {
         let state = Rc::clone(&cred_state);
         let mut attempts = 0u32;
+        let mut ssh = SshCursor::default();
         callbacks.credentials(move |url, username, allowed| {
             attempts += 1;
-            credentials(url, username, allowed, attempts, &state)
+            credentials(url, username, allowed, attempts, &mut ssh, &state)
         });
     }
     if let Some(guard) = guard {
@@ -1938,13 +1941,15 @@ fn resolve_remote(repo: &Repository, wanted: Option<&str>) -> Result<String, App
 /// dépendre l'application d'une installation de Git. Tout passe donc par
 /// libssh2/libgit2, déjà liés dans le binaire.
 ///
-/// Le callback est rappelé après chaque refus : `attempts` sert à faire défiler
-/// les identifiants candidats plutôt qu'à représenter éternellement le même.
+/// Le callback est rappelé après chaque refus : `attempts` plafonne le nombre
+/// d'allers-retours, `ssh` fait défiler les clés SSH candidates plutôt que de
+/// représenter éternellement la même.
 fn credentials(
     url: &str,
     username: Option<&str>,
     allowed: CredentialType,
     attempts: u32,
+    ssh: &mut SshCursor,
     state: &Cell<CredState>,
 ) -> Result<Cred, git2::Error> {
     if attempts > MAX_CRED_ATTEMPTS {
@@ -1960,20 +1965,30 @@ fn credentials(
 
     if allowed.contains(CredentialType::SSH_KEY) {
         let user = username.unwrap_or("git");
-        // Premier essai : l'agent, s'il détient une identité.
-        if attempts == 1 {
-            if let Ok(cred) = Cred::ssh_key_from_agent(user) {
-                state.set(CredState::Offered);
-                return Ok(cred);
+        let dir = std::env::var_os("HOME").map(|home| Path::new(&home).join(".ssh"));
+        loop {
+            match ssh.next(dir.as_deref()) {
+                SshCandidate::Agent => {
+                    // Un agent vide donne quand même un identifiant : c'est
+                    // l'authentification qui échoue, et libgit2 rappelle alors
+                    // pour le candidat suivant.
+                    if let Ok(cred) = Cred::ssh_key_from_agent(user) {
+                        state.set(CredState::Offered);
+                        return Ok(cred);
+                    }
+                }
+                SshCandidate::Key(path) => {
+                    // La clé publique, quand elle est à côté : libssh2 n'a alors
+                    // pas à la redériver de la clé privée, ce que tous ses
+                    // moteurs cryptographiques ne savent pas faire pour tous les
+                    // formats.
+                    let public = path.with_extension("pub");
+                    let public = public.is_file().then_some(public);
+                    state.set(CredState::Offered);
+                    return Cred::ssh_key(user, public.as_deref(), &path, None);
+                }
+                SshCandidate::Exhausted => break,
             }
-        }
-        // Puis les clés du disque, une par rappel. Indispensable : libgit2 ne lit
-        // pas `~/.ssh/config` et ne cherche pas ces fichiers de lui-même, donc
-        // sans ça seuls les utilisateurs dont l'agent est déjà chargé peuvent se
-        // connecter.
-        if let Some(path) = nth_ssh_key((attempts - 1) as usize) {
-            state.set(CredState::Offered);
-            return Cred::ssh_key(user, None, &path, None);
         }
         state.set(CredState::NothingToOffer);
         return Err(git2::Error::from_str("no usable SSH key"));
@@ -2022,15 +2037,52 @@ enum CredState {
 /// Noms conventionnels des clés SSH, dans l'ordre de préférence moderne.
 const SSH_KEY_NAMES: [&str; 3] = ["id_ed25519", "id_ecdsa", "id_rsa"];
 
-/// Chemin de la `index`-ième clé SSH existante dans `~/.ssh`.
-fn nth_ssh_key(index: usize) -> Option<PathBuf> {
-    let home = std::env::var_os("HOME")?;
-    nth_ssh_key_in(&Path::new(&home).join(".ssh"), index)
+/// Où en est le défilement des clés SSH d'une connexion : l'agent d'abord, puis
+/// les clés du disque, une par rappel.
+///
+/// Un compteur à part, et non le nombre d'appels du callback : libgit2 l'appelle
+/// aussi pour le seul nom d'utilisateur, et l'essai de l'agent consomme un appel
+/// — dériver l'index de la clé du nombre d'appels sautait `id_ed25519` dès que
+/// l'agent était vide, et une machine qui n'a que cette clé n'en proposait
+/// aucune.
+#[derive(Default)]
+struct SshCursor {
+    agent_tried: bool,
+    next_key: usize,
 }
 
-/// Ne renvoie que des fichiers **présents**, afin que l'index parcoure des
-/// candidats réels : sans ce filtre, un rappel serait gâché sur un emplacement
-/// vide et la clé suivante ne serait jamais essayée.
+/// Le prochain identifiant SSH à proposer.
+#[derive(Debug, PartialEq)]
+enum SshCandidate {
+    Agent,
+    Key(PathBuf),
+    Exhausted,
+}
+
+impl SshCursor {
+    /// Avance d'un candidat. `dir` est `~/.ssh` (absent sans `HOME`).
+    ///
+    /// L'agent passe en premier : libgit2 ne lit pas `~/.ssh/config` et ne
+    /// cherche pas ces fichiers de lui-même, mais l'agent est ce que
+    /// l'utilisateur a choisi de charger. Les clés du disque sont le repli
+    /// indispensable — sur macOS, l'agent est vide par défaut.
+    fn next(&mut self, dir: Option<&Path>) -> SshCandidate {
+        if !self.agent_tried {
+            self.agent_tried = true;
+            return SshCandidate::Agent;
+        }
+        match dir.and_then(|d| nth_ssh_key_in(d, self.next_key)) {
+            Some(path) => {
+                self.next_key += 1;
+                SshCandidate::Key(path)
+            }
+            None => SshCandidate::Exhausted,
+        }
+    }
+}
+
+/// Chemin de la `index`-ième clé SSH existante dans `dir`, dans l'ordre de
+/// `SSH_KEY_NAMES`.
 fn nth_ssh_key_in(dir: &Path, index: usize) -> Option<PathBuf> {
     SSH_KEY_NAMES
         .iter()
@@ -4532,10 +4584,38 @@ mod tests {
     }
 
     #[test]
+    fn ssh_cursor_tries_the_agent_then_every_disk_key() {
+        // Le cas qui échouait : agent vide, une seule clé sur le disque.
+        let dir = unique_dir("ssh-curseur");
+        fs::create_dir_all(&dir).unwrap();
+        fs::write(dir.join("id_ed25519"), "x").unwrap();
+
+        let mut cursor = SshCursor::default();
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Agent);
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Key(dir.join("id_ed25519")));
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Exhausted);
+
+        // Deux clés : les deux sont proposées, dans l'ordre de préférence.
+        fs::write(dir.join("id_rsa"), "x").unwrap();
+        let mut cursor = SshCursor::default();
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Agent);
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Key(dir.join("id_ed25519")));
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Key(dir.join("id_rsa")));
+        assert_eq!(cursor.next(Some(&dir)), SshCandidate::Exhausted);
+
+        // Sans `HOME` : l'agent seul.
+        let mut cursor = SshCursor::default();
+        assert_eq!(cursor.next(None), SshCandidate::Agent);
+        assert_eq!(cursor.next(None), SshCandidate::Exhausted);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
     fn credentials_without_any_key_reports_nothing_to_offer() {
         let state = Cell::new(CredState::Untouched);
         // Aucune méthode acceptée par le serveur : rien ne peut être proposé.
-        let out = credentials("", None, CredentialType::empty(), 1, &state);
+        let out = credentials("", None, CredentialType::empty(), 1, &mut SshCursor::default(), &state);
         assert!(out.is_err());
         assert!(state.get() == CredState::NothingToOffer);
     }
@@ -4543,7 +4623,7 @@ mod tests {
     #[test]
     fn credentials_give_up_after_the_attempt_cap() {
         let state = Cell::new(CredState::Untouched);
-        let out = credentials("", None, CredentialType::USER_PASS_PLAINTEXT, MAX_CRED_ATTEMPTS + 1, &state);
+        let out = credentials("", None, CredentialType::USER_PASS_PLAINTEXT, MAX_CRED_ATTEMPTS + 1, &mut SshCursor::default(), &state);
         assert!(out.is_err());
         // Plafond atteint = tout ce qui a été proposé a été refusé.
         assert!(state.get() == CredState::Refused);
