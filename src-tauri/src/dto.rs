@@ -112,6 +112,34 @@ pub struct FileContent {
     pub binary: bool,
 }
 
+/// Quelles versions d'une image comparer : celles du diff affiché. Le
+/// `DiffTarget` du frontend, sous forme d'argument — un fichier du working
+/// directory (indexé ou non) ou un fichier de commit.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(rename_all = "camelCase", tag = "kind")]
+pub enum ImageTarget {
+    Worktree { staged: bool },
+    Commit { oid: String },
+}
+
+/// Une version d'image. `size` est toujours là, en octets ; `data` (le
+/// fichier en base64) manque au-delà du plafond d'aperçu.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageBlob {
+    pub size: u64,
+    pub data: Option<String>,
+}
+
+/// L'avant et l'après d'une image, côte à côte. `before` manque pour un
+/// fichier ajouté, `after` pour un fichier supprimé.
+#[derive(Debug, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ImageVersions {
+    pub before: Option<ImageBlob>,
+    pub after: Option<ImageBlob>,
+}
+
 #[derive(Debug, Serialize)]
 pub struct CommitResult {
     pub oid: String,

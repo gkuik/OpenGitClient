@@ -17,7 +17,7 @@ use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, DiffHunk, DiffLine, DiffLineKind,
     FetchAllReport, FetchReport, FetchedRef, FileContent, FileDiff, FileEntry, FileSource, FileStatus, GraphCommit,
     GraphRef, GraphRefKind,
-    Identity, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
+    Identity, ImageBlob, ImageTarget, ImageVersions, MergeMode, MergeOutcome, MergeReport, PullMode, PullOutcome, PullReport, PushMode, PushReport,
     RemoteBranchDeleteReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo, RepoStatus, StashEntry, TagEntry,
     TagPushReport, Upstream,
 };
@@ -956,30 +956,11 @@ impl GitBackend for Libgit2Backend {
         // Le disque n'est pas un blob : on le lit tel quel, avec l'heuristique
         // de Git pour le binaire (un octet nul dans les premiers 8 Ko).
         let bytes: Option<Vec<u8>> = match source {
-            FileSource::Worktree => match repo.workdir() {
-                Some(workdir) => match std::fs::read(workdir.join(rel)) {
-                    Ok(b) => Some(b),
-                    Err(e) if e.kind() == std::io::ErrorKind::NotFound => None,
-                    Err(e) => return Err(e.into()),
-                },
-                None => None,
-            },
-            FileSource::Index => {
-                let index = repo.index()?;
-                match index.get_path(rel, 0) {
-                    Some(entry) => Some(repo.find_blob(entry.id)?.content().to_vec()),
-                    None => None,
-                }
-            }
+            FileSource::Worktree => read_disk(&repo, rel)?,
+            FileSource::Index => read_index(&repo, rel)?,
             FileSource::Commit { oid } => {
                 let tree = find_commit(&repo, oid)?.tree()?;
-                match tree.get_path(rel) {
-                    Ok(entry) => entry
-                        .to_object(&repo)?
-                        .as_blob()
-                        .map(|b| b.content().to_vec()),
-                    Err(_) => None,
-                }
+                read_tree(&repo, &tree, rel)?
             }
         };
 
@@ -995,6 +976,48 @@ impl GitBackend for Libgit2Backend {
         Ok(FileContent {
             text: Some(String::from_utf8_lossy(&bytes).into_owned()),
             binary: false,
+        })
+    }
+
+    fn image_versions(&self, path: &str, target: &ImageTarget) -> Result<ImageVersions, AppError> {
+        let repo = self.repo()?;
+        let rel = Path::new(path);
+
+        // Les deux côtés que le diff compare, exactement : HEAD ↔ index pour un
+        // fichier indexé, index ↔ disque sinon, premier parent ↔ commit pour
+        // un fichier de commit (un commit racine n'a pas d'« avant »).
+        let (before, after) = match target {
+            ImageTarget::Worktree { staged: true } => {
+                let head_tree = repo.head().ok().and_then(|h| h.peel_to_tree().ok());
+                let before = match head_tree {
+                    Some(tree) => read_tree(&repo, &tree, rel)?,
+                    None => None,
+                };
+                (before, read_index(&repo, rel)?)
+            }
+            ImageTarget::Worktree { staged: false } => (read_index(&repo, rel)?, read_disk(&repo, rel)?),
+            ImageTarget::Commit { oid } => {
+                let commit = find_commit(&repo, oid)?;
+                let before = match commit.parent(0) {
+                    Ok(parent) => read_tree(&repo, &parent.tree()?, rel)?,
+                    Err(_) => None,
+                };
+                let mut after = read_tree(&repo, &commit.tree()?, rel)?;
+                // Un fichier non suivi mis dans un stash vit dans son troisième
+                // parent, pas dans son arbre : `commit_diff` le compte en
+                // ajout, l'aperçu doit le trouver au même endroit.
+                if after.is_none() {
+                    if let Some(untracked) = stash_untracked_tree(&commit) {
+                        after = read_tree(&repo, &untracked, rel)?;
+                    }
+                }
+                (before, after)
+            }
+        };
+
+        Ok(ImageVersions {
+            before: before.map(image_blob),
+            after: after.map(image_blob),
         })
     }
 
@@ -2045,6 +2068,57 @@ fn short_oid(oid: Oid) -> String {
 /// plusieurs mégaoctets pour en rendre le Markdown.
 const MAX_PREVIEW_BYTES: usize = 1 << 20;
 
+/// Au-delà, pas d'aperçu d'image : une capture d'écran pèse quelques
+/// mégaoctets, mais le webview n'a pas à recevoir un asset de jeu de 80 Mo.
+const MAX_IMAGE_BYTES: usize = 10 << 20;
+
+/// Une version d'image pour l'aperçu : son poids toujours, son contenu en
+/// base64 seulement sous le plafond — le frontend dit alors « trop lourde »
+/// en donnant le poids.
+fn image_blob(bytes: Vec<u8>) -> ImageBlob {
+    use base64::Engine;
+    let data = (bytes.len() <= MAX_IMAGE_BYTES)
+        .then(|| base64::engine::general_purpose::STANDARD.encode(&bytes));
+    ImageBlob {
+        size: bytes.len() as u64,
+        data,
+    }
+}
+
+/// Le fichier tel qu'il est sur le disque ; `None` s'il n'y est pas (supprimé,
+/// ou dépôt sans working directory).
+fn read_disk(repo: &Repository, rel: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    let Some(workdir) = repo.workdir() else {
+        return Ok(None);
+    };
+    match std::fs::read(workdir.join(rel)) {
+        Ok(b) => Ok(Some(b)),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(e) => Err(e.into()),
+    }
+}
+
+/// La version indexée (stage 0) ; `None` pour un fichier que l'index ignore.
+fn read_index(repo: &Repository, rel: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    let index = repo.index()?;
+    match index.get_path(rel, 0) {
+        Some(entry) => Ok(Some(repo.find_blob(entry.id)?.content().to_vec())),
+        None => Ok(None),
+    }
+}
+
+/// La version d'un arbre ; `None` si le chemin n'y est pas, ou n'y est pas un
+/// fichier (un sous-module, un dossier).
+fn read_tree(repo: &Repository, tree: &Tree, rel: &Path) -> Result<Option<Vec<u8>>, AppError> {
+    match tree.get_path(rel) {
+        Ok(entry) => Ok(entry
+            .to_object(repo)?
+            .as_blob()
+            .map(|b| b.content().to_vec())),
+        Err(_) => Ok(None),
+    }
+}
+
 /// L'heuristique de Git : un octet nul dans les premiers 8 Ko fait un binaire.
 fn is_binary(bytes: &[u8]) -> bool {
     bytes.iter().take(8000).any(|&b| b == 0)
@@ -2607,6 +2681,69 @@ mod tests {
         fs::write(dir.join("blob.bin"), b"\x00\x01\x02").unwrap();
         let bin = git.file_content("blob.bin", &FileSource::Worktree).unwrap();
         assert!(bin.text.is_none() && bin.binary);
+
+        fs::remove_dir_all(&dir).ok();
+    }
+
+    #[test]
+    fn image_versions_are_the_two_sides_of_the_diff() {
+        use base64::Engine;
+        let b64 = |b: &[u8]| base64::engine::general_purpose::STANDARD.encode(b);
+        let data = |side: &Option<ImageBlob>| side.as_ref().and_then(|s| s.data.clone());
+
+        let (dir, git) = temp_repo();
+        let staged = ImageTarget::Worktree { staged: true };
+        let unstaged = ImageTarget::Worktree { staged: false };
+
+        // Fichier neuf, non suivi : pas d'avant.
+        fs::write(dir.join("logo.png"), b"\x89PNG v1").unwrap();
+        let v = git.image_versions("logo.png", &unstaged).unwrap();
+        assert!(v.before.is_none());
+        assert_eq!(data(&v.after), Some(b64(b"\x89PNG v1")));
+        assert_eq!(v.after.as_ref().unwrap().size, 7);
+
+        git.stage("logo.png").unwrap();
+        let first = git.commit("c1", None, false).unwrap();
+
+        // Commit racine : pas d'avant non plus.
+        let c1 = ImageTarget::Commit { oid: first.oid.clone() };
+        let v = git.image_versions("logo.png", &c1).unwrap();
+        assert!(v.before.is_none());
+        assert_eq!(data(&v.after), Some(b64(b"\x89PNG v1")));
+
+        // Trois versions à la fois : HEAD, index, disque.
+        fs::write(dir.join("logo.png"), b"\x89PNG v2").unwrap();
+        git.stage("logo.png").unwrap();
+        fs::write(dir.join("logo.png"), b"\x89PNG v3").unwrap();
+
+        let v = git.image_versions("logo.png", &staged).unwrap();
+        assert_eq!(data(&v.before), Some(b64(b"\x89PNG v1")));
+        assert_eq!(data(&v.after), Some(b64(b"\x89PNG v2")));
+        let v = git.image_versions("logo.png", &unstaged).unwrap();
+        assert_eq!(data(&v.before), Some(b64(b"\x89PNG v2")));
+        assert_eq!(data(&v.after), Some(b64(b"\x89PNG v3")));
+
+        // Un commit compare à son premier parent.
+        git.stage("logo.png").unwrap();
+        let second = git.commit("c2", None, false).unwrap();
+        let c2 = ImageTarget::Commit { oid: second.oid.clone() };
+        let v = git.image_versions("logo.png", &c2).unwrap();
+        assert_eq!(data(&v.before), Some(b64(b"\x89PNG v1")));
+        assert_eq!(data(&v.after), Some(b64(b"\x89PNG v3")));
+
+        // Supprimé sur le disque : pas d'après.
+        fs::remove_file(dir.join("logo.png")).unwrap();
+        let v = git.image_versions("logo.png", &unstaged).unwrap();
+        assert!(v.after.is_none());
+        assert!(v.before.is_some());
+
+        // Au-delà du plafond : le poids sans le contenu.
+        let big = vec![1u8; MAX_IMAGE_BYTES + 1];
+        fs::write(dir.join("big.png"), &big).unwrap();
+        let v = git.image_versions("big.png", &unstaged).unwrap();
+        let after = v.after.unwrap();
+        assert_eq!(after.size, big.len() as u64);
+        assert!(after.data.is_none());
 
         fs::remove_dir_all(&dir).ok();
     }

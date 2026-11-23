@@ -16,6 +16,8 @@ import type {
   FileContent,
   FileDiff,
   FileSource,
+  ImageTarget,
+  ImageVersions,
   GitFlowConfig,
   Identity,
   MergeMode,
@@ -468,4 +470,7 @@ export const api = {
   /** Contenu d'un fichier depuis la source que le diff compare (aperçu Markdown). */
   fileContent: (repoId: string, path: string, source: FileSource) =>
     call<FileContent>("file_content", { repoId, path, source }),
+  /** Les deux versions d'une image que le diff compare (aperçu avant / après). */
+  imageVersions: (repoId: string, path: string, target: ImageTarget) =>
+    call<ImageVersions>("image_versions", { repoId, path, target }),
 };

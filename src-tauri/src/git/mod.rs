@@ -10,7 +10,7 @@ use std::path::{Path, PathBuf};
 
 use crate::dto::{
     BranchEntry, CommitDetails, CommitGraphPage, CommitResult, FetchAllReport, FetchReport, FileContent, FileDiff,
-    FileSource, Identity,
+    FileSource, Identity, ImageTarget, ImageVersions,
     MergeMode, MergeReport, PullMode, PullReport, PushMode, PushReport, RemoteBranchDeleteReport, RemoteBranchEntry, RemoteEntry, RemoteInfo, RepoInfo,
     RepoStatus, StashEntry, TagEntry, TagPushReport,
 };
@@ -286,6 +286,11 @@ pub trait GitBackend: Send {
     /// pour l'aperçu rendu d'un Markdown. Plafonné : un aperçu n'a pas à
     /// charger un fichier de plusieurs mégaoctets dans le webview.
     fn file_content(&self, path: &str, source: &FileSource) -> Result<FileContent, AppError>;
+
+    /// Les deux versions d'une image que le diff compare, pour l'aperçu avant
+    /// / après. Chaque côté est plafonné à part : son poids est toujours dit,
+    /// son contenu seulement sous le plafond.
+    fn image_versions(&self, path: &str, target: &ImageTarget) -> Result<ImageVersions, AppError>;
 
     /// Récupère les références du dépôt distant (`git fetch`). `remote` à `None`
     /// laisse l'implémentation résoudre le distant à interroger.
