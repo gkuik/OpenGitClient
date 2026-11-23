@@ -1,0 +1,69 @@
+<!--
+  Source de l'icône, générée par app-icon.py : une double hélice d'ADN dont les
+  deux brins sont deux branches et les barreaux des commits.
+  app-icon.png en est le rendu 1024 px, dont
+  `npm run tauri icon src-tauri/icons/app-icon.png` tire toutes les tailles.
+  Grille macOS : tuile de 824 px à 100 px du bord, rayon 185, ombre dans la marge.
+  Aucun flou sur le motif : réduit dans le Dock, un halo rend l'icône floue.
+-->
+<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024">
+  <defs>
+    <linearGradient id="tile" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#2a2c33"/>
+      <stop offset="0.5" stop-color="#1e1f24"/>
+      <stop offset="1" stop-color="#18191d"/>
+    </linearGradient>
+    <linearGradient id="rim" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.2"/>
+      <stop offset="0.1" stop-color="#ffffff" stop-opacity="0.05"/>
+      <stop offset="0.9" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#000000" stop-opacity="0.3"/>
+    </linearGradient>
+    <!-- Un seul dégradé pour tout le motif : la couleur dit de quel côté on est. -->
+    <linearGradient id="helix" gradientUnits="userSpaceOnUse" x1="349.0" y1="0" x2="675.0" y2="0">
+      <stop offset="0" stop-color="#5d5fd8"/>
+      <stop offset="0.5" stop-color="#4790d2"/>
+      <stop offset="1" stop-color="#2ccdb0"/>
+    </linearGradient>
+    <!-- Reflet discret, plus clair en haut des brins. -->
+    <linearGradient id="light" gradientUnits="userSpaceOnUse" x1="0" y1="196" x2="0" y2="828">
+      <stop offset="0" stop-color="#ffffff" stop-opacity="0.1"/>
+      <stop offset="1" stop-color="#ffffff" stop-opacity="0"/>
+    </linearGradient>
+    <radialGradient id="commit" cx="0.38" cy="0.32" r="0.75">
+      <stop offset="0" stop-color="#f4f9ff"/>
+      <stop offset="1" stop-color="#c2dbf6"/>
+    </radialGradient>
+    <!-- Profondeur : le brin de derrière est effacé là où l'autre passe. -->
+    <mask id="behind" maskUnits="userSpaceOnUse" x="0" y="0" width="1024" height="1024">
+      <rect width="1024" height="1024" fill="#fff"/>
+      <path d="M658 196 V318 C658 430 596 462 512 512 C428 562 366 594 366 706 V828" fill="none" stroke="#000" stroke-width="58"/>
+    </mask>
+    <filter id="shadow" x="-20%" y="-20%" width="140%" height="140%">
+      <feGaussianBlur in="SourceAlpha" stdDeviation="14"/>
+      <feOffset dy="12"/>
+      <feComponentTransfer><feFuncA type="linear" slope="0.38"/></feComponentTransfer>
+      <feMerge><feMergeNode/><feMergeNode in="SourceGraphic"/></feMerge>
+    </filter>
+  </defs>
+
+  <!-- Tuile -->
+  <rect x="100" y="100" width="824" height="824" rx="185" fill="url(#tile)" filter="url(#shadow)"/>
+  <rect x="101.5" y="101.5" width="821" height="821" rx="183.5" fill="none" stroke="url(#rim)" stroke-width="3"/>
+
+  <!-- Barreaux, sous les brins -->
+  <g stroke="url(#helix)" stroke-width="22"><line x1="366.0" y1="244" x2="658.0" y2="244"/><line x1="366.0" y1="320" x2="658.0" y2="320"/><line x1="390.4" y1="416" x2="633.6" y2="416"/><line x1="398.0" y1="597" x2="626.0" y2="597"/><line x1="366.6" y1="688" x2="657.4" y2="688"/><line x1="366.0" y1="770" x2="658.0" y2="770"/></g>
+
+  <!-- Brins -->
+  <g fill="none" stroke-width="34" stroke-linecap="round">
+    <g mask="url(#behind)">
+      <path d="M366 196 V318 C366 430 428 462 512 512 C596 562 658 594 658 706 V828" stroke="url(#helix)"/>
+      <path d="M366 196 V318 C366 430 428 462 512 512 C596 562 658 594 658 706 V828" stroke="url(#light)"/>
+    </g>
+    <path d="M658 196 V318 C658 430 596 462 512 512 C428 562 366 594 366 706 V828" stroke="url(#helix)"/>
+    <path d="M658 196 V318 C658 430 596 462 512 512 C428 562 366 594 366 706 V828" stroke="url(#light)"/>
+  </g>
+
+  <!-- Commits -->
+  <g fill="url(#commit)"><circle cx="512" cy="244" r="23"/><circle cx="570" cy="320" r="23"/><circle cx="512" cy="416" r="23"/><circle cx="512" cy="597" r="23"/><circle cx="552" cy="688" r="23"/><circle cx="463" cy="770" r="23"/></g>
+</svg>
