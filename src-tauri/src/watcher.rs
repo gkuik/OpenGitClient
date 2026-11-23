@@ -237,7 +237,23 @@ fn classify_gitdir(rel: &Path) -> Option<Change> {
             worktree: true,
             refs: false,
         }),
-        "HEAD" | "ORIG_HEAD" | "packed-refs" | "refs" => Some(Change {
+        // HEAD et les branches locales : la section « staged » est un diff
+        // HEAD↔index, donc déplacer HEAD change le statut **même sans toucher à
+        // l'index**. C'est le cas d'un `git commit` lancé ailleurs : l'index est
+        // réécrit au début (avant les hooks), la branche n'avance qu'à la fin,
+        // et les deux tombent dans deux lots séparés. Le premier relit un
+        // statut où HEAD n'a pas encore bougé ; sans ce `worktree`, le second
+        // ne le relisait pas, et les fichiers commités restaient « staged ».
+        // `packed-refs` en est : la branche courante peut y vivre.
+        "HEAD" | "packed-refs" => Some(Change {
+            worktree: true,
+            refs: true,
+        }),
+        "refs" => Some(Change {
+            worktree: is_local_branch(rel),
+            refs: true,
+        }),
+        "ORIG_HEAD" => Some(Change {
             worktree: false,
             refs: true,
         }),
@@ -249,6 +265,14 @@ fn classify_gitdir(rel: &Path) -> Option<Change> {
         }),
         _ => None,
     }
+}
+
+/// `refs/heads/**` ? Seules les branches locales peuvent être HEAD : un fetch
+/// (`refs/remotes/**`), un tag ou un stash ne déplacent pas la base du statut,
+/// et l'auto-fetch n'a pas à le relire chaque minute.
+fn is_local_branch(rel: &Path) -> bool {
+    let mut parts = rel.components().map(|c| c.as_os_str());
+    parts.next().is_some_and(|p| p == "refs") && parts.next().is_some_and(|p| p == "heads")
 }
 
 #[cfg(test)]
@@ -325,12 +349,38 @@ mod tests {
         let index = classify_gitdir(Path::new("index")).unwrap();
         assert!(index.worktree && !index.refs);
 
-        let refs = classify_gitdir(Path::new("refs/heads/main")).unwrap();
-        assert!(refs.refs && !refs.worktree);
+        // Une référence qui ne peut pas être HEAD ne touche pas au statut.
+        for path in ["refs/remotes/origin/main", "refs/tags/v1.0.0", "refs/stash", "ORIG_HEAD"] {
+            let refs = classify_gitdir(Path::new(path)).unwrap();
+            assert!(refs.refs && !refs.worktree, "{path}");
+        }
 
         // Une fusion en cours change les deux à la fois.
         let merge = classify_gitdir(Path::new("MERGE_HEAD")).unwrap();
         assert!(merge.worktree && merge.refs);
+    }
+
+    #[test]
+    fn deplacer_head_relit_le_statut() {
+        // Un commit fait au terminal : seule la branche avance dans ce lot,
+        // l'index ayant été réécrit dans le précédent. Le « staged » est un diff
+        // HEAD↔index, il doit être relu.
+        for path in ["HEAD", "packed-refs", "refs/heads/main", "refs/heads/feature/x"] {
+            let change = classify_gitdir(Path::new(path)).unwrap();
+            assert!(change.refs && change.worktree, "{path}");
+        }
+    }
+
+    #[test]
+    fn un_commit_exterieur_relit_le_statut() {
+        let (dir, repos) = temp_registry();
+        let events = batch(&repos, &[".git/refs/heads/main", ".git/logs/HEAD"]);
+
+        let out = changes(&repos, events);
+        assert_eq!(out.len(), 1);
+        assert!(out[0].1.worktree && out[0].1.refs);
+
+        fs::remove_dir_all(&dir).ok();
     }
 
     #[test]
